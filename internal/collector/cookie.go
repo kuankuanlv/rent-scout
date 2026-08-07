@@ -23,8 +23,7 @@ func NewCookieProvider(mode, cookieFile string, cfg config.DoubanCookieConfig) (
 	case "file":
 		return fileProvider{path: cookieFile}, nil
 	case "cookiecloud":
-		// 任务 8 实现 CookieCloud 同步；当前显式报错，不静默降级
-		return nil, fmt.Errorf("cookiecloud 待实现（任务 8）")
+		return newCookiecloudProvider(cfg), nil
 	default:
 		return nil, fmt.Errorf("未知 cookie_mode: %q", mode)
 	}

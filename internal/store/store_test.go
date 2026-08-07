@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -222,4 +223,59 @@ func seedPost(t *testing.T, s *Store) int64 {
 		t.Fatal(err)
 	}
 	return id
+}
+
+// AddressTags 读写往返：插入后拉回，标签保持（调整规格 2.3）
+func TestAddressTagsRoundTrip(t *testing.T) {
+	s := newTestStore(t)
+	defer s.Close()
+	p := models.RentPost{Source: "douban", ExternalID: "tag-1", Title: "t",
+		CollectedAt: time.Now(), Status: models.PostStatusCollected,
+		AddressTags: []string{"望京", "14号线"}}
+	if _, err := s.InsertPost(p); err != nil {
+		t.Fatal(err)
+	}
+	batch, err := s.FetchPendingByStatus(models.PostStatusCollected, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(batch) != 1 {
+		t.Fatalf("批数 = %d, want 1", len(batch))
+	}
+	if got := batch[0].AddressTags; len(got) != 2 || got[0] != "望京" {
+		t.Errorf("AddressTags = %v, want [望京 14号线]", got)
+	}
+}
+
+// 已有库（无 address_tags 列）重复 Open：ALTER 补列，数据不丢
+func TestMigrateAddsColumnToLegacyDB(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "legacy.db")
+	// 先建旧版 posts 表（无 address_tags 列）
+	legacy, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := legacy.Exec(`CREATE TABLE posts (
+	    id INTEGER PRIMARY KEY AUTOINCREMENT,
+	    source TEXT NOT NULL, external_id TEXT NOT NULL,
+	    url TEXT NOT NULL DEFAULT '', title TEXT NOT NULL DEFAULT '',
+	    content TEXT NOT NULL DEFAULT '', author TEXT NOT NULL DEFAULT '',
+	    author_url TEXT NOT NULL DEFAULT '', published_at DATETIME,
+	    collected_at DATETIME NOT NULL, status TEXT NOT NULL DEFAULT 'collected',
+	    raw TEXT NOT NULL DEFAULT '', UNIQUE(source, external_id)
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	legacy.Close()
+
+	// 用新版本 Open：应自动 ALTER 补列
+	s, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open 旧库失败: %v", err)
+	}
+	defer s.Close()
+	ok, err := s.columnExists("posts", "address_tags")
+	if err != nil || !ok {
+		t.Fatalf("旧库补列失败: ok=%v err=%v", ok, err)
+	}
 }

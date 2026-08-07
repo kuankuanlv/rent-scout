@@ -113,5 +113,38 @@ func (s *Store) migrate() error {
 			return fmt.Errorf("迁移建表: %w", err)
 		}
 	}
+	// 追加列（调整规格 2.3）：CREATE IF NOT EXISTS 对已有库不加列，须显式 ALTER；
+	// 检查 PRAGMA table_info 存在性，幂等安全
+	colExists, err := s.columnExists("posts", "address_tags")
+	if err != nil {
+		return err
+	}
+	if !colExists {
+		if _, err := s.db.Exec(`ALTER TABLE posts ADD COLUMN address_tags TEXT NOT NULL DEFAULT '[]'`); err != nil {
+			return fmt.Errorf("追加 address_tags 列: %w", err)
+		}
+	}
 	return nil
+}
+
+// columnExists 检查表是否已存在指定列（迁移幂等辅助）
+func (s *Store) columnExists(table, column string) (bool, error) {
+	rows, err := s.db.Query(`PRAGMA table_info(` + table + `)`)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dflt any
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return false, err
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }

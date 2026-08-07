@@ -145,3 +145,81 @@ func newTestStore(t *testing.T) *Store {
 	}
 	return s
 }
+
+// 规则 CRUD + 按启用过滤 + 优先级排序
+func TestRulesCRUD(t *testing.T) {
+	s := newTestStore(t)
+	defer s.Close()
+	r1, err := s.CreateRule(models.Rule{Name: "黑中介", Type: models.RuleTypeHardBlacklist, Mode: models.RuleModeExclude, Value: "中介", Enabled: true, Priority: 10})
+	if err != nil { t.Fatalf("建规则1: %v", err) }
+	_, err = s.CreateRule(models.Rule{Name: "地铁近", Type: models.RuleTypeHardWhitelist, Mode: models.RuleModeInclude, Value: "地铁", Enabled: true, Priority: 1})
+	if err != nil { t.Fatalf("建规则2: %v", err) }
+	r3, err := s.CreateRule(models.Rule{Name: "停用规则", Type: models.RuleTypeHardBlacklist, Mode: models.RuleModeExclude, Value: "x", Enabled: false})
+	if err != nil { t.Fatalf("建规则3: %v", err) }
+
+	rules, err := s.ListRules(true) // 只取启用
+	if err != nil { t.Fatal(err) }
+	if len(rules) != 2 { t.Errorf("启用规则 = %d, want 2", len(rules)) }
+	// 优先级降序：Priority 大的先执行（10 在 1 前）
+	if rules[0].Priority != 10 || rules[1].Priority != 1 {
+		t.Errorf("优先级排序错误: %+v", rules)
+	}
+	// 更新 + 删除
+	if err := s.UpdateRule(models.Rule{ID: r1.ID, Name: "黑中介", Type: models.RuleTypeHardBlacklist, Mode: models.RuleModeExclude, Value: "中介,代理", Enabled: true, Priority: 10}); err != nil {
+		t.Fatalf("更新: %v", err)
+	}
+	if err := s.DeleteRule(r3.ID); err != nil { t.Fatalf("删除: %v", err) }
+	rules, _ = s.ListRules(false)
+	if len(rules) != 2 { t.Errorf("删除后规则数 = %d, want 2", len(rules)) }
+}
+
+// 通知插入幂等（postID+channel 唯一）+ 失败拉取 + 状态更新
+func TestNotifications(t *testing.T) {
+	s := newTestStore(t)
+	defer s.Close()
+	postID := seedPost(t, s)
+
+	if _, err := s.InsertNotification(postID, "feishu"); err != nil { t.Fatal(err) }
+	if _, err := s.InsertNotification(postID, "feishu"); err != nil {
+		t.Fatalf("重复插入应幂等: %v", err)
+	}
+	var cnt int
+	s.db.QueryRow(`SELECT COUNT(*) FROM notifications WHERE post_id=?`, postID).Scan(&cnt)
+	if cnt != 1 { t.Errorf("通知数 = %d, want 1", cnt) }
+
+	// 标失败后可拉取重试，成功后不再拉取
+	if err := s.MarkNotificationFailed(postID, "feishu", "webhook 403", 1); err != nil { t.Fatal(err) }
+	pending, err := s.FetchPendingNotifications("feishu", 10)
+	if err != nil { t.Fatal(err) }
+	if len(pending) != 1 { t.Errorf("失败待重试 = %d, want 1", len(pending)) }
+	if err := s.MarkNotificationSent(postID, "feishu"); err != nil { t.Fatal(err) }
+	pending, _ = s.FetchPendingNotifications("feishu", 10)
+	if len(pending) != 0 { t.Errorf("发送后待重试 = %d, want 0", len(pending)) }
+}
+
+// 反馈写入 + 游标读写
+func TestFeedbackAndCursor(t *testing.T) {
+	s := newTestStore(t)
+	defer s.Close()
+	postID := seedPost(t, s)
+
+	if err := s.InsertFeedback(models.Feedback{PostID: postID, Channel: "feishu", Action: models.FeedbackUseless, Reason: "价格虚假"}); err != nil {
+		t.Fatalf("写反馈: %v", err)
+	}
+	if err := s.SetCursor("douban", "page:3"); err != nil { t.Fatalf("写游标: %v", err) }
+	cursor, ok, err := s.GetCursor("douban")
+	if err != nil || !ok { t.Fatalf("读游标: ok=%v err=%v", ok, err) }
+	if cursor != "page:3" { t.Errorf("游标 = %q, want page:3", cursor) }
+}
+
+// 辅助：插入一条帖子返回 id
+func seedPost(t *testing.T, s *Store) int64 {
+	t.Helper()
+	p := models.RentPost{Source: "douban", ExternalID: fmt.Sprintf("seed-%d", time.Now().UnixNano()), Title: "t", CollectedAt: time.Now(), Status: models.PostStatusPassed}
+	if _, err := s.InsertPost(p); err != nil { t.Fatal(err) }
+	var id int64
+	if err := s.db.QueryRow(`SELECT id FROM posts WHERE source='douban' ORDER BY id DESC LIMIT 1`).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}

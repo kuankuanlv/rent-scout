@@ -279,3 +279,33 @@ func TestMigrateAddsColumnToLegacyDB(t *testing.T) {
 		t.Fatalf("旧库补列失败: ok=%v err=%v", ok, err)
 	}
 }
+
+// 批量查重：只返回已存在的 ID 集合；空输入不报错
+func TestExistsByExternalIDs(t *testing.T) {
+	s := newTestStore(t)
+	defer s.Close()
+	for i := 0; i < 3; i++ {
+		p := models.RentPost{Source: "douban", ExternalID: fmt.Sprintf("e%d", i), Title: "t",
+			CollectedAt: time.Now(), Status: models.PostStatusCollected}
+		if _, err := s.InsertPost(p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// 混合：2 个存在 + 1 个不存在 + 1 个其他源的同名 ID
+	ids := []string{"e0", "e2", "nope", "x"}
+	existing, err := s.ExistsByExternalIDs("douban", ids)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !existing["e0"] || !existing["e2"] {
+		t.Errorf("e0/e2 应存在: %v", existing)
+	}
+	if existing["nope"] || existing["x"] {
+		t.Errorf("nope/x 不应存在: %v", existing)
+	}
+	// 空输入
+	empty, err := s.ExistsByExternalIDs("douban", nil)
+	if err != nil || len(empty) != 0 {
+		t.Errorf("空输入: %v %v", empty, err)
+	}
+}

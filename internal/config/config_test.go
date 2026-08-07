@@ -44,7 +44,7 @@ level = "debug"
 	if cfg.Collector.Sources[0] != "douban" || cfg.Collector.Interval != 600 {
 		t.Errorf("Collector 解析错误: %+v", cfg.Collector)
 	}
-	if cfg.Filter.AIEnabled {
+	if cfg.Filter.AIEnabled == nil || *cfg.Filter.AIEnabled {
 		t.Error("Filter.AIEnabled 应为 false")
 	}
 	if cfg.Log.Level != "debug" {
@@ -68,8 +68,8 @@ func TestDefaultValues(t *testing.T) {
 	if cfg.Collector.JitterRatio != 0.2 {
 		t.Errorf("默认 JitterRatio = %v, want 0.2", cfg.Collector.JitterRatio)
 	}
-	if cfg.Filter.AIEnabled {
-		t.Error("默认 AIEnabled 应为 false（未配置默认关闭）")
+	if cfg.Filter.AIEnabled == nil || !*cfg.Filter.AIEnabled {
+		t.Error("默认 AIEnabled 应为 true")
 	}
 	if cfg.Pipeline.BatchSize != 20 {
 		t.Errorf("默认 BatchSize = %d, want 20", cfg.Pipeline.BatchSize)
@@ -88,6 +88,21 @@ func TestDefaultValues(t *testing.T) {
 func TestLoadMissingFile(t *testing.T) {
 	if _, err := Load(filepath.Join(t.TempDir(), "nope.toml")); err == nil {
 		t.Fatal("文件缺失应报错")
+	}
+}
+
+// 显式 ai_enabled = false 必须保留，不被默认值覆盖
+func TestAIEnabledExplicitFalse(t *testing.T) {
+	path := writeConfig(t, `
+[filter]
+ai_enabled = false
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Filter.AIEnabled == nil || *cfg.Filter.AIEnabled {
+		t.Error("显式 ai_enabled = false 必须保留为 false")
 	}
 }
 

@@ -51,7 +51,7 @@ type DoubanConfig struct {
 
 // FilterConfig 过滤：AI 开关与效率
 type FilterConfig struct {
-	AIEnabled   bool              `toml:"ai_enabled"`
+	AIEnabled   *bool             `toml:"ai_enabled"` // nil = 未配置，默认启用；显式 false 保留
 	AIBatchSize int               `toml:"ai_batch_size"`
 	TrimLimits  map[string]int    `toml:"trim_limits"` // 每源 LLM 输入截断字数
 }
@@ -106,6 +106,11 @@ func applyDefaults(cfg *AppConfig) {
 	}
 	if cfg.Filter.AIBatchSize == 0 {
 		cfg.Filter.AIBatchSize = 10
+	}
+	// AI 默认启用（配了 LLM key 才真正生效，未配自动跳过）；显式 false 保留
+	if cfg.Filter.AIEnabled == nil {
+		enabled := true
+		cfg.Filter.AIEnabled = &enabled
 	}
 	if cfg.Filter.TrimLimits == nil {
 		cfg.Filter.TrimLimits = map[string]int{"douban": 800}

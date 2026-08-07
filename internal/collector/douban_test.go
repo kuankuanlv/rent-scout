@@ -176,3 +176,11 @@ func TestDoubanDetail(t *testing.T) {
 		t.Error("Raw 应保留原始 HTML")
 	}
 }
+
+// 真实豆瓣链接带 _spm_id 查询串：topicID 提取应忽略查询串（冒烟验证发现）
+func TestTopicIDFromURLWithQuery(t *testing.T) {
+	id := topicIDFromURL("https://www.douban.com/group/topic/496325305/?_spm_id=MTk3MDc1NDk3")
+	if id != "496325305" {
+		t.Errorf("topicIDFromURL = %q, want 496325305", id)
+	}
+}

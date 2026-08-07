@@ -135,3 +135,57 @@ interval = 300
 		t.Errorf("缺省 douban 间隔 = %d, want 1800", got)
 	}
 }
+
+func TestLoadEnvLocal(t *testing.T) {
+	dir := t.TempDir()
+	pub := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(pub, []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env := filepath.Join(dir, "config.env.local.toml")
+	if err := os.WriteFile(env, []byte(`
+[admin]
+auth_required = true
+token = "secret-token"
+
+[collector.douban]
+cookie_mode = "file"
+cookie_file = "db/cookies/douban.txt"
+
+[filter.llm]
+api_key = "sk-test"
+model = "deepseek-chat"
+
+[notifier.feishu]
+webhook = "https://open.feishu.cn/hook/test"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	envCfg, err := LoadEnvLocal(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !envCfg.Admin.AuthRequired || envCfg.Admin.Token != "secret-token" {
+		t.Errorf("Admin 解析错误: %+v", envCfg.Admin)
+	}
+	if envCfg.Collector.Douban.CookieMode != "file" {
+		t.Errorf("CookieMode = %q, want file", envCfg.Collector.Douban.CookieMode)
+	}
+	if envCfg.Filter.LLM.APIKey != "sk-test" || envCfg.Filter.LLM.Model != "deepseek-chat" {
+		t.Errorf("LLM 解析错误: %+v", envCfg.Filter.LLM)
+	}
+	if envCfg.Notifier.Feishu.Webhook != "https://open.feishu.cn/hook/test" {
+		t.Errorf("飞书 webhook 解析错误")
+	}
+}
+
+// 敏感文件缺失不算错误：未配的渠道/能力自动关闭（规格 7.2 约定）
+func TestLoadEnvLocalMissingFile(t *testing.T) {
+	envCfg, err := LoadEnvLocal(filepath.Join(t.TempDir(), "nope.toml"))
+	if err != nil {
+		t.Fatalf("敏感文件缺失应静默: %v", err)
+	}
+	if envCfg == nil {
+		t.Fatal("应返回空结构而非 nil")
+	}
+}

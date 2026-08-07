@@ -90,3 +90,26 @@ func TestHardKeywordModes(t *testing.T) {
 		t.Errorf("exclude 未命中应通过: %v %v", v, err)
 	}
 }
+
+// 多条 exclude 规则：第一条未命中不立即通过，须全部评估（P3-2 审查发现）
+func TestHardMultipleExcludeRules(t *testing.T) {
+	rules := []models.Rule{
+		{ID: 1, Type: models.RuleTypeHardKeyword, Mode: models.RuleModeExclude, Value: "合租", Priority: 10},
+		{ID: 2, Type: models.RuleTypeHardKeyword, Mode: models.RuleModeExclude, Value: "中介", Priority: 5},
+	}
+	// 命中第二条 exclude：第一条未命中后仍评估后续 → 拒绝
+	v, _, _, _, err := EvaluateHard(models.RentPost{ID: 1, Title: "中介房源", Content: "x"}, rules)
+	if err != nil || v.Passed {
+		t.Errorf("命中后续 exclude 应拒绝: %v %v", v, err)
+	}
+	// 全部 exclude 未命中 → 通过
+	v, _, _, _, err = EvaluateHard(models.RentPost{ID: 2, Title: "普通整租房源", Content: "x"}, rules)
+	if err != nil || !v.Passed {
+		t.Errorf("全部 exclude 未命中应通过: %v %v", v, err)
+	}
+	// 命中第一条 exclude → 拒绝（既有行为）
+	v, _, _, _, err = EvaluateHard(models.RentPost{ID: 3, Title: "合租单间", Content: "x"}, rules)
+	if err != nil || v.Passed {
+		t.Errorf("命中首条 exclude 应拒绝: %v %v", v, err)
+	}
+}

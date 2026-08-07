@@ -35,6 +35,7 @@ func EvaluateHard(post models.RentPost, rules []models.Rule) (v HardVerdict, tag
 		return HardVerdict{Passed: true, Decided: true}, dedup(tags), hits, "", nil
 	}
 	// ② 黑名单 + 关键词（仅白名单未命中时评估）
+	excludeEvaluated := false // 有 exclude 关键词规则被评估且未命中（需全部检查后再定案）
 	for _, r := range rules {
 		if r.Type == models.RuleTypeHardWhitelist {
 			continue
@@ -49,18 +50,23 @@ func EvaluateHard(post models.RentPost, rules []models.Rule) (v HardVerdict, tag
 		case models.RuleTypeHardKeyword:
 			if kw := matchAny(post, r.Value); kw != "" {
 				hits = append(hits, models.RuleHit{RuleID: r.ID, Mode: r.Mode, Reason: kw})
-				if r.Mode == models.RuleModeExclude {
-					return HardVerdict{Passed: false, Decided: true}, nil, hits, "黑名单命中:" + kw, nil
+				if r.Mode == models.RuleModeInclude {
+					return HardVerdict{Passed: true, Decided: true}, nil, hits, "", nil
 				}
-				return HardVerdict{Passed: true, Decided: true}, nil, hits, "", nil
+				// exclude 命中 → 拒绝
+				return HardVerdict{Passed: false, Decided: true}, nil, hits, "关键词排除:" + kw, nil
 			}
-			// 未命中：exclude → 明确通过（负向过滤：无不想要的关键字即放行）；include → 未定案继续
 			if r.Mode == models.RuleModeExclude {
-				return HardVerdict{Passed: true, Decided: true}, nil, hits, "", nil
+				// exclude 未命中：不立即 return——继续评估后续规则（多条 exclude 时防跳过，P3-2 审查发现）
+				excludeEvaluated = true
 			}
+			// include 未命中 → 未定案，继续
 		}
 	}
-	// 无命中：未定案（等待 AI 或默认放行）
+	// 全部规则评估完：存在被评估且均未命中的 exclude → 明确通过（负向过滤）；否则未定案待 AI
+	if excludeEvaluated {
+		return HardVerdict{Passed: true, Decided: true}, nil, hits, "", nil
+	}
 	return HardVerdict{Passed: false, Decided: false}, nil, hits, "", nil
 }
 

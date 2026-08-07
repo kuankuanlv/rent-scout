@@ -59,6 +59,7 @@ type RentPost struct {
 	PublishedAt time.Time // 源发布时间
 	CollectedAt time.Time // 采集时间
 	Status      string    // 主状态（见常量）
+	AddressTags []string  `json:"addressTags"` // 地址标签（调整规格 2.3）：白名单命中地点，多值；分组主键 = [0]
 	Raw         string    // 源适配器完整原始输出（JSON，供重放/排查）
 }
 

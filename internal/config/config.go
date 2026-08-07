@@ -38,9 +38,10 @@ type PipelineConfig struct {
 // CollectorConfig 收集：源清单 + 全局频率 + 每源配置
 type CollectorConfig struct {
 	Sources     []string      `toml:"sources"`
-	Interval    int           `toml:"interval"`     // 全局默认采集间隔（秒）
-	JitterRatio float64       `toml:"jitter_ratio"` // 间隔随机抖动比例
-	Douban      DoubanConfig  `toml:"douban"`       // 豆瓣源（新增源在此扩展）
+	Interval    int           `toml:"interval"`      // 全局默认采集间隔（秒）
+	JitterRatio float64       `toml:"jitter_ratio"`  // 间隔随机抖动比例
+	MaxAgeDays  int           `toml:"max_age_days"`  // 时间窗：超过此天数的帖子不再采集（规格 4.5）
+	Douban      DoubanConfig  `toml:"douban"`        // 豆瓣源（新增源在此扩展）
 }
 
 // DoubanConfig 豆瓣源公开配置
@@ -99,6 +100,9 @@ func applyDefaults(cfg *AppConfig) {
 	}
 	if cfg.Collector.JitterRatio == 0 {
 		cfg.Collector.JitterRatio = 0.2
+	}
+	if cfg.Collector.MaxAgeDays == 0 {
+		cfg.Collector.MaxAgeDays = 7 // 时间窗默认 7 天（0 会过滤掉全部帖子）
 	}
 	// 豆瓣默认启用内置小组；覆盖了 interval 才用覆盖值
 	if len(cfg.Collector.Douban.Groups) == 0 {

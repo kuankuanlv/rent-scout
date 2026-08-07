@@ -190,9 +190,14 @@ func (d *Douban) get(ctx context.Context, rawURL string) (string, error) {
 	return body, nil
 }
 
-// topicIDFromURL 从详情链接提取 topic ID（/group/topic/111/ → 111）
+// topicIDFromURL 从详情链接提取 topic ID（/group/topic/111/ → 111）。
+// 真实豆瓣链接带查询串（?_spm_id=...），须按 path 取末段（冒烟验证发现）
 func topicIDFromURL(link string) string {
-	parts := strings.Split(strings.TrimSuffix(link, "/"), "/")
+	u, err := url.Parse(link)
+	if err != nil {
+		return link
+	}
+	parts := strings.Split(strings.TrimSuffix(u.Path, "/"), "/")
 	return parts[len(parts)-1]
 }
 

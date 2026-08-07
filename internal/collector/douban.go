@@ -11,7 +11,12 @@ import (
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
+
+	"rent-scout/internal/models"
 )
+
+// 编译断言：Douban 满足 Source 接口
+var _ Source = (*Douban)(nil)
 
 // DoubanOptions douban 适配器参数
 type DoubanOptions struct {
@@ -42,6 +47,37 @@ func NewDouban(opts DoubanOptions) (*Douban, error) {
 }
 
 func (d *Douban) Name() string { return "douban" }
+
+// Detail 抓取详情页并归一化为 RentPost（只对未存在的新帖调用）。
+// 正文 = 首帖正文 HTML（含图片链接，不含评论）；Raw = 原始 HTML（规格 3.1）
+func (d *Douban) Detail(ctx context.Context, item ListItem) (models.RentPost, error) {
+	body, err := d.get(ctx, item.URL)
+	if err != nil {
+		return models.RentPost{}, err
+	}
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(body))
+	if err != nil {
+		return models.RentPost{}, fmt.Errorf("解析详情页: %w", err)
+	}
+	// 正文：.topic-content 的 HTML（保留 <img> 图片链接）
+	content, _ := doc.Find(".topic-content").First().Html()
+	// 标题兜底：详情页 h1（列表标题优先）
+	title := item.Title
+	if title == "" {
+		title = strings.TrimSpace(doc.Find("h1").First().Text())
+	}
+	return models.RentPost{
+		Source:      d.Name(),
+		ExternalID:  item.ExternalID,
+		URL:         item.URL,
+		Title:       title,
+		Content:     strings.TrimSpace(content),
+		Author:      item.Author,
+		PublishedAt: item.PublishedAt,
+		Status:      models.PostStatusCollected,
+		Raw:         body,
+	}, nil
+}
 
 // riskDetected 风控检测：响应体含异常关键字即触发（参考仓库 detail.go）
 func riskDetected(body string) bool {

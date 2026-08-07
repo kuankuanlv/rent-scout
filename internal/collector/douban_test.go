@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // 豆瓣讨论列表页 fixture（参照参考仓库 service_test.go 结构）
@@ -131,4 +132,47 @@ type staticCookie string
 
 func (c staticCookie) Get(ctx context.Context, source string) (string, error) {
 	return string(c), nil
+}
+
+const detailPageHTML = `<html><head><title>望京整租两居</title></head><body>
+<div class="topic-content">
+  <p>望京西园四区，两居整租，月租 4500，近 14 号线望京站，<img src="https://img.example.com/1.jpg"></p>
+</div>
+<div class="from">
+  <a href="https://www.douban.com/people/user1/">user1</a>
+</div>
+<span class="create-time">2026-08-06 10:00:00</span>
+</body></html>`
+
+// 详情页归一化：RentPost 字段完整（标题/正文/作者/ID/源标识）
+func TestDoubanDetail(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(detailPageHTML))
+	}))
+	defer srv.Close()
+	d, _ := NewDouban(DoubanOptions{GroupURLs: []string{srv.URL + "/x"}, Client: srv.Client()})
+
+	item := ListItem{ExternalID: "111", URL: srv.URL + "/group/topic/111/",
+		Title: "望京整租两居", Author: "user1", PublishedAt: time.Now()}
+	post, err := d.Detail(context.Background(), item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if post.Source != "douban" || post.ExternalID != "111" {
+		t.Errorf("源标识错误: %+v", post)
+	}
+	if !strings.Contains(post.Content, "望京西园四区") || !strings.Contains(post.Content, "4500") {
+		t.Errorf("正文缺失: %s", post.Content)
+	}
+	// 图片链接保留（正文 HTML 含 img）
+	if !strings.Contains(post.Content, "img.example.com") {
+		t.Error("正文应保留图片链接")
+	}
+	if post.Title != "望京整租两居" || post.Author != "user1" {
+		t.Errorf("标题/作者错误: %+v", post)
+	}
+	// Raw 保留原文（重放/排查，规格 3.1）
+	if !strings.Contains(post.Raw, "topic-content") {
+		t.Error("Raw 应保留原始 HTML")
+	}
 }

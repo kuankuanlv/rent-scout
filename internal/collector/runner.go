@@ -93,6 +93,14 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 			fresh = append(fresh, it)
 		}
 		if len(fresh) == 0 {
+			// 空页/超窗页：本页无新帖。跟随源协议推进游标（douban 空组 next 指向下一组），
+			// 避免多组配置下卡死在空组（P2-9 审查发现）；next=="" 表示已到末尾
+			if next != "" {
+				cursorVal = next
+				if err := r.store.SetCursor(src.Name(), cursorVal); err != nil {
+					return err
+				}
+			}
 			break
 		}
 		// 列表页先行批量查重：已存在的零详情页请求（调整规格 E）

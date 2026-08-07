@@ -309,3 +309,85 @@ func TestExistsByExternalIDs(t *testing.T) {
 		t.Errorf("空输入: %v %v", empty, err)
 	}
 }
+
+// 筛选结果 upsert：同帖重复判定覆盖（1:1 posts，规格 3.2）
+func TestSaveFilterResult(t *testing.T) {
+	s := newTestStore(t)
+	defer s.Close()
+	postID := seedPost(t, s)
+
+	r1 := models.FilterResult{
+		PostID: postID, Status: models.PostStatusRejected, Stage: models.StageHardRule,
+		RejectedBy: "黑名单命中:中介", DecidedAt: time.Now(),
+		HardRules: []models.RuleHit{{RuleID: 3, Mode: models.RuleModeExclude, Reason: "中介"}},
+	}
+	if err := s.SaveFilterResult(r1); err != nil {
+		t.Fatalf("首次保存: %v", err)
+	}
+	// 同帖再次判定（AI 复核通过场景）：覆盖
+	r2 := models.FilterResult{PostID: postID, Status: models.PostStatusPassed,
+		Stage: models.StageAIRule, DecidedAt: time.Now(),
+		AI: &models.AIResult{Passed: true, Reason: "近地铁", Price: 4500, Confidence: 0.9}}
+	if err := s.SaveFilterResult(r2); err != nil {
+		t.Fatalf("覆盖保存: %v", err)
+	}
+	got, ok, err := s.FilterResultByPostID(postID)
+	if err != nil || !ok {
+		t.Fatalf("回读: ok=%v err=%v", ok, err)
+	}
+	if got.Status != models.PostStatusPassed || got.Stage != models.StageAIRule {
+		t.Errorf("覆盖未生效: %+v", got)
+	}
+	if got.AI == nil || got.AI.Price != 4500 || !got.AI.Passed {
+		t.Errorf("AI 详情丢失: %+v", got.AI)
+	}
+}
+
+// 地址标签写回：白名单命中后入库（调整规格 A）
+func TestUpdatePostAddressTags(t *testing.T) {
+	s := newTestStore(t)
+	defer s.Close()
+	postID := seedPost(t, s)
+	if err := s.UpdatePostAddressTags(postID, []string{"望京", "14号线"}); err != nil {
+		t.Fatal(err)
+	}
+	// seedPost 建的是 passed 状态帖子，按该状态回读验证写回
+	batch, err := s.FetchPendingByStatus(models.PostStatusPassed, 10)
+	if err != nil || len(batch) != 1 {
+		t.Fatalf("回读失败: %v %d", err, len(batch))
+	}
+	if len(batch[0].AddressTags) != 2 || batch[0].AddressTags[0] != "望京" {
+		t.Errorf("标签未写回: %v", batch[0].AddressTags)
+	}
+}
+
+// 规则命中统计：passed 帖子的 hard_rules 按规则聚合 + 负向反馈归因
+func TestRuleHitStats(t *testing.T) {
+	s := newTestStore(t)
+	defer s.Close()
+	// 两条 passed 帖子命中同一规则；其一被标 useless
+	p1 := seedPost(t, s)
+	p2 := seedPost(t, s)
+	for _, id := range []int64{p1, p2} {
+		if err := s.SaveFilterResult(models.FilterResult{
+			PostID: id, Status: models.PostStatusPassed, Stage: models.StageHardRule,
+			DecidedAt: time.Now(),
+			HardRules: []models.RuleHit{{RuleID: 1, Mode: models.RuleModeInclude, Reason: "望京"}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.InsertFeedback(models.Feedback{PostID: p1, Channel: "feishu", Action: models.FeedbackUseless, Reason: "假房源"}); err != nil {
+		t.Fatal(err)
+	}
+	stats, err := s.RuleHitStats()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stats) != 1 || stats[0].RuleID != 1 {
+		t.Fatalf("统计 = %+v, want 规则1", stats)
+	}
+	if stats[0].Hits != 2 || stats[0].UselessCount != 1 {
+		t.Errorf("统计错误: hits=%d useless=%d, want 2/1", stats[0].Hits, stats[0].UselessCount)
+	}
+}

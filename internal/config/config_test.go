@@ -191,8 +191,8 @@ func TestLoadEnvLocalMissingFile(t *testing.T) {
 	}
 }
 
-// 改文件后 10s 内热加载生效：轮询间隔 50ms 加速验证
-func TestWatchReload(t *testing.T) {
+// Runtime：改文件后热加载生效，Get() 返回新快照（并发安全读取）
+func TestRuntimeWatch(t *testing.T) {
 	dir := t.TempDir()
 	pub := filepath.Join(dir, "config.toml")
 	if err := os.WriteFile(pub, []byte("[server]\naddr = \":8080\"\n"), 0o644); err != nil {
@@ -202,8 +202,9 @@ func TestWatchReload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	rt := NewRuntime(cfg)
 	updated := make(chan struct{}, 1)
-	stop := WatchReload(cfg, pub, "", 50*time.Millisecond, func() {
+	stop := rt.Watch(pub, "", 50*time.Millisecond, func() {
 		select {
 		case updated <- struct{}{}:
 		default:
@@ -220,8 +221,11 @@ func TestWatchReload(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("热加载未触发")
 	}
-	// 变更生效：cfg 指针内容已更新
-	if cfg.Server.Addr != ":9090" {
-		t.Errorf("热加载后 Addr = %q, want :9090", cfg.Server.Addr)
+	if got := rt.Get().Server.Addr; got != ":9090" {
+		t.Errorf("热加载后 Addr = %q, want :9090", got)
+	}
+	// 原始指针不应被原地修改（快照语义）
+	if cfg.Server.Addr != ":8080" {
+		t.Error("原 cfg 不应被修改（应替换指针而非原地写）")
 	}
 }

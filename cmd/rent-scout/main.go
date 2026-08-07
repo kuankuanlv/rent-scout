@@ -29,6 +29,9 @@ func main() {
 	logger := pkglog.New(cfg.Log)
 	logger.Info("rent-scout 启动", "addr", cfg.Server.Addr, "sources", cfg.Collector.Sources)
 
+	// 配置并发安全容器：模块 goroutine 经 rt.Get() 读快照（计划 2 起 collector/filter/notifier 消费）
+	rt := config.NewRuntime(cfg)
+
 	// 打开数据库：建表幂等，重复启动安全
 	db, err := store.Open(dbPath)
 	if err != nil {
@@ -38,8 +41,8 @@ func main() {
 	defer db.Close()
 	logger.Info("数据库就绪", "path", dbPath)
 
-	// 配置热加载：10s 轮询，改配置即时生效（规格 7.2）
-	stopReload := config.WatchReload(cfg, pubConfigPath, envConfigPath, 10_000_000_000, nil)
+	// 配置热加载：10s 轮询替换快照指针，改配置即时生效（规格 7.2）
+	stopReload := rt.Watch(pubConfigPath, envConfigPath, 10_000_000_000, nil)
 	defer stopReload()
 
 	// 优雅退出：SIGINT/SIGTERM 后排空收尾（后续计划接入 collector/filter/notifier）

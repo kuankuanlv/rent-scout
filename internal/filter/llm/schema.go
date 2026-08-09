@@ -46,7 +46,7 @@ func ParseAIResults(raw string, expected int) ([]models.AIResult, error) {
 		results[idx] = models.AIResult{
 			Passed: r.Passed, Reason: r.Reason, Price: r.Price,
 			Contact: r.Contact, Commuting: r.Commuting, Confidence: r.Confidence,
-			RawResponse: raw,
+			Model: r.Model, RawResponse: raw,
 		}
 	}
 	return results, nil

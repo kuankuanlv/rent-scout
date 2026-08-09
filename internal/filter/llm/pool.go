@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -42,6 +43,9 @@ func NewPool(opts []ClientOptions, poolOpts PoolOptions) *Pool {
 // Chat 依次尝试各模型；全部失败记录一次连续失败（达到阈值开熔断）。
 // 熔断中直接返回错误（不请求，AI 链暂停）
 func (p *Pool) Chat(ctx context.Context, system, user string) (string, error) {
+	if len(p.clients) == 0 {
+		return "", fmt.Errorf("llm pool: no clients configured")
+	}
 	p.mu.Lock()
 	if p.circuitOpen {
 		if time.Now().After(p.circuitTill) {

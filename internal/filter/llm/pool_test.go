@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -36,6 +37,16 @@ func TestPoolFallback(t *testing.T) {
 	}
 	if mainCalls.Load() != 1 || backupCalls.Load() != 1 {
 		t.Errorf("fallback 调用数: main=%d backup=%d", mainCalls.Load(), backupCalls.Load())
+	}
+}
+
+// 空客户端池：Chat 必须返回显式错误，不能静默放行（nil error + 空字符串）
+func TestPoolEmptyClients(t *testing.T) {
+	p := NewPool(nil, PoolOptions{})
+	if _, err := p.Chat(context.Background(), "s", "u"); err == nil {
+		t.Fatal("空池 Chat 应返回错误，不能静默放行")
+	} else if !strings.Contains(err.Error(), "no clients") {
+		t.Errorf("错误消息应包含 no clients, got: %v", err)
 	}
 }
 

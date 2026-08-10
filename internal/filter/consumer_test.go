@@ -2,6 +2,7 @@ package filter
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -236,6 +237,74 @@ func TestConsumerAIBatch(t *testing.T) {
 		default:
 		}
 	})
+}
+
+// K1（最终审查）：rules 读取失败（DB 层故障）→ 整批保持待判定，不流转、不写 filter_results、不发 notify。
+// 规格 5.6 仅授权"AI 链不可用/无启用规则"时默认放行；DB 故障不得静默放行
+func TestConsumerRulesReadErrorKeepsBatchPending(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "rules-fail.db")
+	st, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// AI 已启用 + AI 规则已入库：正常路径应走 AI 批而非宽松放行
+	chain := NewRuleChain(&fakeAIEvaluator{})
+	if _, err := st.CreateRule(models.Rule{Name: "AI筛选", Type: models.RuleTypeAINatural,
+		Mode: models.RuleModeExclude, Value: "只要地铁1公里内", Enabled: true, Priority: 10}); err != nil {
+		t.Fatal(err)
+	}
+	for _, eid := range []string{"r1", "r2"} {
+		if _, err := st.InsertPost(models.RentPost{Source: "douban", ExternalID: eid,
+			Title: "回龙观两居", Content: "五环外普通两居", CollectedAt: time.Now(), Status: models.PostStatusCollected}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	batch, err := st.FetchPendingByStatus(models.PostStatusCollected, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	notify := make(chan struct{}, 10)
+	c := NewConsumer(chain, st, notify, 500)
+
+	// 注入规则读取故障：关闭 DB → c.rules()（ListRules）报错
+	st.Close()
+
+	if err := c.processBatch(context.Background(), batch); err != nil {
+		t.Fatalf("processBatch 应只记录告警不返回 error: %v", err)
+	}
+
+	// 用新连接验证（已关闭的 store 不能再查）：状态无变更、无 filter_results、无 notify
+	verify, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer verify.Close()
+	// ① 帖子仍为 collected（未流转到 passed/rejected）
+	still, err := verify.FetchPendingByStatus(models.PostStatusCollected, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(still) != 2 {
+		t.Errorf("collected 数 = %d, want 2（整批保持待判定，不流转）", len(still))
+	}
+	if passed, _ := verify.FetchPendingByStatus(models.PostStatusPassed, 10); len(passed) != 0 {
+		t.Errorf("passed 数 = %d, want 0（DB 故障不得默认放行）", len(passed))
+	}
+	if rejected, _ := verify.FetchPendingByStatus(models.PostStatusRejected, 10); len(rejected) != 0 {
+		t.Errorf("rejected 数 = %d, want 0", len(rejected))
+	}
+	// ② 无 filter_results
+	for _, p := range batch {
+		if _, ok, err := verify.FilterResultByPostID(p.ID); err != nil || ok {
+			t.Errorf("post %d 规则读取失败批不应写 filter_results: ok=%v err=%v", p.ID, ok, err)
+		}
+	}
+	// ③ 无 notify 信号
+	select {
+	case <-notify:
+		t.Error("规则读取失败批不应触发 notify")
+	default:
+	}
 }
 
 func contains(s, sub string) bool {

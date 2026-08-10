@@ -21,7 +21,7 @@ func (s *Store) RuleHitStats() ([]RuleStat, error) {
 	    FROM filter_results fr
 	    JOIN json_each(fr.hard_rules) AS hr
 	    LEFT JOIN feedbacks f ON f.post_id = fr.post_id AND f.action = 'useless'
-	    WHERE fr.status = 'passed'
+	    WHERE fr.status = 'passed' AND hr.value IS NOT NULL
 	    GROUP BY rule_id
 	    ORDER BY rule_id`)
 	if err != nil {

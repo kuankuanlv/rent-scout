@@ -37,7 +37,13 @@ func (c *Consumer) ProcessBatch(ctx context.Context, batch []models.RentPost) er
 // processBatch 批处理（测试可见）：硬编码逐帖定案 → AI 批聚合 → 状态流转。
 // 返回 error 仅记录；单帖失败不影响批内其余
 func (c *Consumer) processBatch(ctx context.Context, batch []models.RentPost) error {
-	rules := c.rules()
+	rules, err := c.rules()
+	if err != nil {
+		// 规则读取失败（DB 层故障）：整批保持待判定下轮重试——不流转、不写 filter_results、不发 notify。
+		// 规格 5.6 仅授权"AI 链不可用/无启用规则"时默认放行；DB 故障不得静默放行（审查 K1）
+		slog.Error("规则读取失败，整批保持待判定（不放行）", "count", len(batch), "err", err)
+		return nil
+	}
 	var passedIDs, rejectedIDs, pendingIDs []int64
 	var aiPending []models.RentPost
 
@@ -141,12 +147,12 @@ func aiReason(ai *models.AIResult) string {
 	return ai.Reason
 }
 
-// rules 拉取启用规则（每次批处理读取——规则可在 /admin 热变更，规格 3.3）
-func (c *Consumer) rules() []models.Rule {
+// rules 拉取启用规则（每次批处理读取——规则可在 /admin 热变更，规格 3.3）。
+// 返回 error = 规则读取失败（DB 层故障），调用方须整批保持待判定，不得默认放行
+func (c *Consumer) rules() ([]models.Rule, error) {
 	rules, err := c.store.ListRules(true)
 	if err != nil {
-		slog.Error("拉取规则失败", "err", err)
-		return nil
+		return nil, err
 	}
-	return rules
+	return rules, nil
 }

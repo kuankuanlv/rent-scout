@@ -72,7 +72,7 @@ func main() {
 
 	// 启动筛选模块（规格 5.x）：消费 collector 信号 + linger 兜底。
 	// 桥接 goroutine：collector 的 trigger 信号 → pipeline 内部 trigger（Signal 非阻塞，满则丢靠 linger）
-	fc := newFilterConsumer(rt, envCfg, db, trigger, notifyTrigger)
+	fc := newFilterConsumer(rt, envCfg, db, notifyTrigger)
 	if fc != nil {
 		go func() {
 			for {
@@ -126,13 +126,15 @@ func newCollectorRunner(rt *config.Runtime, env *config.EnvLocalConfig, db *stor
 }
 
 // newFilterConsumer 按配置构造筛选消费器；AI 未配置/未启用时只走硬编码链。
-// trigger：collector 信号（pipeline Consumer 消费）；notifyTrigger：passed 帖子信号（计划 4）
+// collector 的 trigger 信号由 main 的桥接 goroutine 消费（此处无需再传）。
+// notifyTrigger：passed 帖子信号（计划 4）
 func newFilterConsumer(rt *config.Runtime, env *config.EnvLocalConfig, db *store.Store,
-	trigger <-chan struct{}, notifyTrigger chan<- struct{}) *pipeline.Consumer[models.RentPost] {
+	notifyTrigger chan<- struct{}) *pipeline.Consumer[models.RentPost] {
 
 	cfg := rt.Get()
 	// AI 链：ai_enabled 默认 true；未配 LLM key → 自动跳过 AI（WARN，规格 7.2 约定）
 	var ai filter.AIEvaluator
+	// 注意：applyDefaults 保证 AIEnabled 非 nil（nil 语义"未配置=默认启用"已被遮蔽）；此守卫仅为防御
 	if cfg.Filter.AIEnabled != nil && *cfg.Filter.AIEnabled && env.Filter.LLM.APIKey != "" {
 		baseURL := env.Filter.LLM.BaseURL
 		if baseURL == "" {

@@ -87,6 +87,10 @@ func (s *Store) MarkStatus(ids []int64, status string) error {
 
 // FetchPendingByStatuses 拉取多个主状态的一批帖子（filter 消费：collected+pending），按 id 升序限量
 func (s *Store) FetchPendingByStatuses(statuses []string, limit int) ([]models.RentPost, error) {
+	// 防御：空 statuses 会生成无效的 IN () 查询，直接返回空结果不查库
+	if len(statuses) == 0 {
+		return nil, nil
+	}
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(statuses)), ",")
 	args := make([]any, 0, len(statuses))
 	for _, st := range statuses {

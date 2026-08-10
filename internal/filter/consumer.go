@@ -90,7 +90,8 @@ func (c *Consumer) processBatch(ctx context.Context, batch []models.RentPost) er
 		}
 	}
 
-	// ③ 批量状态流转（原子，规格 2.4）
+	// ③ 批量状态流转：passed/rejected/pending 三次独立 UPDATE（非原子，状态机见规格 2.4）。
+	// SQLite 单写者 + 批处理单 goroutine 下可接受；若需整批原子需改事务变体（不建议，失败态可重试收敛）
 	if len(passedIDs) > 0 {
 		if err := c.store.MarkStatus(passedIDs, models.PostStatusPassed); err != nil {
 			return err

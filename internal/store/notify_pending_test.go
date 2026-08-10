@@ -43,6 +43,58 @@ func TestFetchNotifyBatch(t *testing.T) {
 	}
 }
 
+// 终止态排除：全渠道 sent 或 sent+dead 的帖子不再拉出
+func TestFetchNotifyBatchTerminalExcluded(t *testing.T) {
+	s := newTestStore(t)
+	defer s.Close()
+	p1 := seedPostWithStatus(t, s, models.PostStatusPassed) // feishu+wecom 双 sent
+	p2 := seedPostWithStatus(t, s, models.PostStatusPassed) // feishu sent + wecom dead
+	p3 := seedPostWithStatus(t, s, models.PostStatusPassed) // feishu sent + wecom failed → 应拉出（failed 可重试）
+	for _, p := range []models.RentPost{p1, p2, p3} {
+		if _, err := s.InsertNotification(p.ID, "feishu"); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.MarkNotificationSent(p.ID, "feishu"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.InsertNotification(p1.ID, "wecom"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkNotificationSent(p1.ID, "wecom"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.InsertNotification(p2.ID, "wecom"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkNotificationDead(p2.ID, "wecom", "webhook 403 超限"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.InsertNotification(p3.ID, "wecom"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkNotificationFailed(p3.ID, "wecom", "网络超时", 1); err != nil {
+		t.Fatal(err)
+	}
+	batch, err := s.FetchNotifyBatch([]string{"feishu", "wecom"}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := map[int64]bool{}
+	for _, p := range batch {
+		ids[p.ID] = true
+	}
+	if ids[p1.ID] {
+		t.Error("p1（全渠道 sent）不应被拉出")
+	}
+	if ids[p2.ID] {
+		t.Error("p2（sent+dead 均为终止态）不应被拉出")
+	}
+	if !ids[p3.ID] {
+		t.Error("p3（feishu sent + wecom failed）应被拉出（failed 可重试）")
+	}
+}
+
 // 批内渠道状态：返回每帖每渠道当前通知状态
 func TestNotificationStatuses(t *testing.T) {
 	s := newTestStore(t)

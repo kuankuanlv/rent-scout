@@ -11,7 +11,13 @@ import (
 // SaveFilterResult 写入/覆盖筛选结果（1:1 posts，upsert）。
 // hard_rules 与 ai_result 以 JSON 存储（规格 3.2）
 func (s *Store) SaveFilterResult(r models.FilterResult) error {
-	hardJSON, err := json.Marshal(r.HardRules)
+	// nil HardRules 归一化为空数组（与 InsertPost 的 nil→[] 一致）：JSON 存 "[]" 而非 "null"。
+	// 否则 json_each('null') 会产出 value=NULL 的假行 → RuleHitStats 幽灵 rule_id=0 统计（审查 K2）
+	hardRules := r.HardRules
+	if hardRules == nil {
+		hardRules = []models.RuleHit{}
+	}
+	hardJSON, err := json.Marshal(hardRules)
 	if err != nil {
 		return fmt.Errorf("序列化命中规则: %w", err)
 	}

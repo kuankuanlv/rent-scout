@@ -418,3 +418,55 @@ func TestRuleHitStats(t *testing.T) {
 		t.Errorf("统计错误: hits=%d useless=%d, want 2/1", stats[0].Hits, stats[0].UselessCount)
 	}
 }
+
+// K2（最终审查）：AI 判定帖 hard_rules 为 null/空 → RuleHitStats 不产生 rule_id=0 幽灵统计行。
+// 双保险验证：SaveFilterResult 归一化（nil→[]）+ 统计侧 WHERE hr.value IS NOT NULL 过滤老库 "null" 残留
+func TestRuleHitStatsAIPostsNoGhost(t *testing.T) {
+	s := newTestStore(t)
+	defer s.Close()
+	// 一条正常 hard 命中（规则1，应统计）
+	p1 := seedPost(t, s)
+	if err := s.SaveFilterResult(models.FilterResult{
+		PostID: p1, Status: models.PostStatusPassed, Stage: models.StageHardRule,
+		DecidedAt: time.Now(),
+		HardRules: []models.RuleHit{{RuleID: 1, Mode: models.RuleModeInclude, Reason: "望京"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// 一条 AI 判定帖（hard_rules nil → 归一化为 "[]"，不得产生统计行）
+	p2 := seedPost(t, s)
+	if err := s.SaveFilterResult(models.FilterResult{
+		PostID: p2, Status: models.PostStatusPassed, Stage: models.StageAIRule,
+		DecidedAt: time.Now(), AI: &models.AIResult{Passed: true, Reason: "近地铁"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// 归一化断言：库里存的是 "[]" 而非 "null"
+	var raw string
+	if err := s.db.QueryRow(`SELECT hard_rules FROM filter_results WHERE post_id=?`, p2).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	if raw != "[]" {
+		t.Errorf("AI 帖 hard_rules = %q, want \"[]\"（nil 归一化）", raw)
+	}
+	// 一条老库残留 hard_rules="null" 的 passed 帖（统计侧 WHERE 过滤，双保险）
+	p3 := seedPost(t, s)
+	if err := s.SaveFilterResult(models.FilterResult{PostID: p3, Status: models.PostStatusPassed,
+		Stage: models.StageAIRule, DecidedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE filter_results SET hard_rules='null' WHERE post_id=?`, p3); err != nil {
+		t.Fatal(err)
+	}
+
+	stats, err := s.RuleHitStats()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stats) != 1 || stats[0].RuleID != 1 {
+		t.Fatalf("统计 = %+v, want 仅规则1（无 rule_id=0 幽灵行）", stats)
+	}
+	if stats[0].Hits != 1 {
+		t.Errorf("hits = %d, want 1", stats[0].Hits)
+	}
+}

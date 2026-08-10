@@ -10,9 +10,9 @@ import (
 )
 
 // FetchNotifyBatch 拉取 passed 且对任一启用渠道未发送（无记录或 pending/failed）的帖子。
-// 语义（规格 6.5）：批内帖子至少有一个渠道待发；已全渠道 sent 的帖子不再返回。
-// 实现：已 sent 渠道数 < 启用渠道数（notifications 表 UNIQUE(post_id, channel)，每帖每渠道至多一条）
-// channels 为空时返回空批（防御，调用方恒传启用渠道列表）
+// 语义（规格 6.5）：批内帖子至少有一个渠道待发；终止态（sent/dead）渠道数 = 启用渠道数的帖子不再返回。
+// 实现：终止态渠道数 < 启用渠道数（notifications 表 UNIQUE(post_id, channel)，每帖每渠道至多一条）
+// channels 为空时返回空批（防御，调用方恒传启用渠道列表；调用方不得传重复渠道名）
 func (s *Store) FetchNotifyBatch(channels []string, limit int) ([]models.RentPost, error) {
 	if len(channels) == 0 {
 		return nil, nil
@@ -24,8 +24,8 @@ func (s *Store) FetchNotifyBatch(channels []string, limit int) ([]models.RentPos
 		       published_at, collected_at, status, address_tags, raw
 		FROM posts
 		WHERE status = 'passed'
-		  AND (SELECT COUNT(*) FROM notifications n
-		       WHERE n.post_id = posts.id AND n.channel IN (%s) AND n.status = 'sent') < ?
+		AND (SELECT COUNT(*) FROM notifications n
+		       WHERE n.post_id = posts.id AND n.channel IN (%s) AND n.status IN ('sent','dead')) < ?
 		ORDER BY id
 		LIMIT ?`, ph)
 	args := make([]any, 0, len(channels)+2)

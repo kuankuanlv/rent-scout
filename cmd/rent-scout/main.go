@@ -149,13 +149,14 @@ func newFilterConsumer(rt *config.Runtime, env *config.EnvLocalConfig, db *store
 			opts = append(opts, llm.ClientOptions{BaseURL: baseURL, APIKey: env.Filter.LLM.APIKey, Model: m})
 		}
 		pool := llm.NewPool(opts, llm.PoolOptions{})
-		ai = filter.NewAIBatchEvaluator(pool, trimLimitFor(cfg, "douban"))
+		ai = filter.NewAIBatchEvaluator(pool, trimLimits(cfg))
 		slog.Info("AI 筛选已启用", "model", model, "fallbacks", env.Filter.LLM.FallbackModels)
 	} else {
 		slog.Warn("AI 筛选未启用（未配 LLM key 或已关闭），只走硬编码规则")
 	}
 	chain := filter.NewRuleChain(ai)
-	fc := filter.NewConsumer(chain, db, notifyTrigger, trimLimitFor(cfg, "douban"))
+	fc := filter.NewConsumerWithOptions(chain, db, notifyTrigger, trimLimitFor(cfg, "douban"),
+		filter.ConsumerOptions{AIBatchSize: cfg.Filter.AIBatchSize})
 	// pipeline 协议：trigger 信号 + linger 兜底（规格 2.3）
 	return pipeline.New(
 		fc.FetchBatch,
@@ -172,4 +173,16 @@ func trimLimitFor(cfg *config.AppConfig, source string) int {
 		}
 	}
 	return 500
+}
+
+// trimLimits 每源 LLM 输入截断字数映射（trim_limits 配置，规格 5.2）。
+// 未配置的源由评估器按缺省 500 处理；>0 的配置才生效
+func trimLimits(cfg *config.AppConfig) map[string]int {
+	limits := map[string]int{}
+	for src, n := range cfg.Filter.TrimLimits {
+		if n > 0 {
+			limits[src] = n
+		}
+	}
+	return limits
 }

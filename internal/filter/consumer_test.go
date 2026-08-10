@@ -104,10 +104,13 @@ func TestConsumerRejects(t *testing.T) {
 }
 
 // fakeAIEvaluator 测试用：实现 AIEvaluator 接口，计数 EvaluateBatch 调用、记录入参，可注入整批失败。
-// results 按 PostID 预置判定（EvaluateAIBatch 要求每帖都有结果）；err 非 nil 时整批返回错误
+// results 按 PostID 预置判定（EvaluateAIBatch 要求每帖都有结果）；err 非 nil 时整批返回错误；
+// failOnce = 仅第一次调用失败（子批拆分容错断言用）
 type fakeAIEvaluator struct {
 	calls    int
+	batches  [][]models.RentPost // 每次调用的子批（子批拆分断言用）
 	err      error
+	failOnce bool
 	results  map[int64]*models.AIResult
 	gotPosts []models.RentPost
 	gotRules []models.Rule
@@ -115,10 +118,14 @@ type fakeAIEvaluator struct {
 
 func (f *fakeAIEvaluator) EvaluateBatch(ctx context.Context, posts []models.RentPost, aiRules []models.Rule) (map[int64]*models.AIResult, error) {
 	f.calls++
+	f.batches = append(f.batches, append([]models.RentPost(nil), posts...))
 	f.gotPosts = append([]models.RentPost(nil), posts...)
 	f.gotRules = append([]models.Rule(nil), aiRules...)
 	if f.err != nil {
 		return nil, f.err
+	}
+	if f.failOnce && f.calls == 1 {
+		return nil, context.DeadlineExceeded
 	}
 	out := make(map[int64]*models.AIResult, len(posts))
 	for _, p := range posts {
@@ -129,7 +136,7 @@ func (f *fakeAIEvaluator) EvaluateBatch(ctx context.Context, posts []models.Rent
 
 // setupAIConsumer 构造走 AI 批的消费器：1 条 AI 自然语言规则（启用 AI 批路径）+ 3 条未定案帖
 // （不命中任何硬编码规则 → 全部进 AI 批）。返回 consumer、store、批量帖与 notify 通道
-func setupAIConsumer(t *testing.T, ai AIEvaluator) (*Consumer, *store.Store, []models.RentPost, chan struct{}) {
+func setupAIConsumer(t *testing.T, ai AIEvaluator, opts ConsumerOptions) (*Consumer, *store.Store, []models.RentPost, chan struct{}) {
 	t.Helper()
 	st, err := store.Open(t.TempDir() + "/t.db")
 	if err != nil {
@@ -148,7 +155,7 @@ func setupAIConsumer(t *testing.T, ai AIEvaluator) (*Consumer, *store.Store, []m
 		}
 	}
 	notify := make(chan struct{}, 10)
-	c := NewConsumer(NewRuleChain(ai), st, notify, 500)
+	c := NewConsumerWithOptions(NewRuleChain(ai), st, notify, 500, opts)
 	batch, err := st.FetchPendingByStatus(models.PostStatusCollected, 10)
 	if err != nil {
 		t.Fatal(err)
@@ -161,7 +168,7 @@ func setupAIConsumer(t *testing.T, ai AIEvaluator) (*Consumer, *store.Store, []m
 func TestConsumerAIBatch(t *testing.T) {
 	t.Run("单次调用且结果正确流转", func(t *testing.T) {
 		fake := &fakeAIEvaluator{}
-		c, st, batch, notify := setupAIConsumer(t, fake)
+		c, st, batch, notify := setupAIConsumer(t, fake, ConsumerOptions{})
 		// AI 判定：a1/a3 通过，a2 拒绝（超预算）
 		fake.results = map[int64]*models.AIResult{
 			batch[0].ID: {Passed: true, Reason: "位置好", Price: 4500},
@@ -213,7 +220,7 @@ func TestConsumerAIBatch(t *testing.T) {
 
 	t.Run("失败整批保持 pending", func(t *testing.T) {
 		fake := &fakeAIEvaluator{err: context.DeadlineExceeded}
-		c, st, batch, notify := setupAIConsumer(t, fake)
+		c, st, batch, notify := setupAIConsumer(t, fake, ConsumerOptions{})
 		if err := c.processBatch(context.Background(), batch); err != nil {
 			t.Fatal(err)
 		}
@@ -237,6 +244,82 @@ func TestConsumerAIBatch(t *testing.T) {
 		default:
 		}
 	})
+}
+
+// I1（最终审查）：ai_batch_size 接线为 AI 子批上限——未定案帖数 > ai_batch_size 时
+// 拆分为多次 EvaluateAIBatch 调用（每次 ≤ ai_batch_size），不再整批一次
+func TestConsumerAISubBatchSplit(t *testing.T) {
+	t.Run("超过上限拆分为多次调用", func(t *testing.T) {
+		fake := &fakeAIEvaluator{}
+		c, st, batch, _ := setupAIConsumer(t, fake, ConsumerOptions{AIBatchSize: 2})
+		fake.results = map[int64]*models.AIResult{}
+		for _, p := range batch {
+			fake.results[p.ID] = &models.AIResult{Passed: true, Reason: "ok", Price: 4000}
+		}
+		if err := c.processBatch(context.Background(), batch); err != nil {
+			t.Fatal(err)
+		}
+		// 3 帖 / 上限 2 → 2 次调用（2+1），每次 ≤ 2
+		if fake.calls != 2 {
+			t.Errorf("EvaluateBatch 调用次数 = %d, want 2（3 帖按上限 2 拆分）", fake.calls)
+		}
+		for i, sub := range fake.batches {
+			if len(sub) > 2 {
+				t.Errorf("子批 %d 帖数 = %d, want ≤ 2", i, len(sub))
+			}
+		}
+		if len(fake.batches) != 2 || len(fake.batches[0]) != 2 || len(fake.batches[1]) != 1 {
+			t.Errorf("子批划分 = %v, want [2 1]", lens(fake.batches))
+		}
+		// 全部判定正常流转 passed
+		passed, _ := st.FetchPendingByStatus(models.PostStatusPassed, 10)
+		if len(passed) != 3 {
+			t.Errorf("passed 数 = %d, want 3", len(passed))
+		}
+	})
+	t.Run("未超上限整批一次调用", func(t *testing.T) {
+		fake := &fakeAIEvaluator{}
+		c, _, batch, _ := setupAIConsumer(t, fake, ConsumerOptions{AIBatchSize: 10})
+		fake.results = map[int64]*models.AIResult{}
+		for _, p := range batch {
+			fake.results[p.ID] = &models.AIResult{Passed: true, Reason: "ok", Price: 4000}
+		}
+		if err := c.processBatch(context.Background(), batch); err != nil {
+			t.Fatal(err)
+		}
+		if fake.calls != 1 {
+			t.Errorf("EvaluateBatch 调用次数 = %d, want 1（未超上限不拆分）", fake.calls)
+		}
+	})
+	t.Run("单子批失败仅该子批保持 pending", func(t *testing.T) {
+		fake := &fakeAIEvaluator{failOnce: true}
+		c, st, batch, _ := setupAIConsumer(t, fake, ConsumerOptions{AIBatchSize: 2})
+		fake.results = map[int64]*models.AIResult{}
+		for _, p := range batch {
+			fake.results[p.ID] = &models.AIResult{Passed: true, Reason: "ok", Price: 4000}
+		}
+		if err := c.processBatch(context.Background(), batch); err != nil {
+			t.Fatal(err)
+		}
+		// 第一个子批（2 帖）失败 → 该子批 pending；第二个子批（1 帖）继续成功 → passed。
+		// 子批相互独立，失败不拖累后续子批（规格 5.6 仅失败部分待重试）
+		if fake.calls != 2 {
+			t.Errorf("EvaluateBatch 调用次数 = %d, want 2（失败后仍继续下一子批）", fake.calls)
+		}
+		pending, _ := st.FetchPendingByStatus(models.PostStatusPending, 10)
+		passed, _ := st.FetchPendingByStatus(models.PostStatusPassed, 10)
+		if len(pending) != 2 || len(passed) != 1 {
+			t.Errorf("pending=%d passed=%d, want pending=2 passed=1（仅失败子批待重试）", len(pending), len(passed))
+		}
+	})
+}
+
+func lens(batches [][]models.RentPost) []int {
+	out := make([]int, len(batches))
+	for i, b := range batches {
+		out[i] = len(b)
+	}
+	return out
 }
 
 // K1（最终审查）：rules 读取失败（DB 层故障）→ 整批保持待判定，不流转、不写 filter_results、不发 notify。

@@ -40,11 +40,18 @@ func NewPool(opts []ClientOptions, poolOpts PoolOptions) *Pool {
 	return &Pool{clients: clients, opts: poolOpts}
 }
 
-// Chat 依次尝试各模型；全部失败记录一次连续失败（达到阈值开熔断）。
-// 熔断中直接返回错误（不请求，AI 链暂停）
+// Chat 依次尝试各模型（见 ChatWithModel）
 func (p *Pool) Chat(ctx context.Context, system, user string) (string, error) {
+	out, _, err := p.ChatWithModel(ctx, system, user)
+	return out, err
+}
+
+// ChatWithModel 依次尝试各模型；成功时返回输出与"实际命中的模型名"（主 → fallback，
+// 供 AIResult.Model 回填追溯——规格 3.2）。全部失败记录一次连续失败（达到阈值开熔断）。
+// 熔断中直接返回错误（不请求，AI 链暂停）
+func (p *Pool) ChatWithModel(ctx context.Context, system, user string) (string, string, error) {
 	if len(p.clients) == 0 {
-		return "", fmt.Errorf("llm pool: no clients configured")
+		return "", "", fmt.Errorf("llm pool: no clients configured")
 	}
 	p.mu.Lock()
 	if p.circuitOpen {
@@ -53,7 +60,7 @@ func (p *Pool) Chat(ctx context.Context, system, user string) (string, error) {
 			p.failures = 0
 		} else {
 			p.mu.Unlock()
-			return "", errCircuitOpen(p.circuitTill)
+			return "", "", errCircuitOpen(p.circuitTill)
 		}
 	}
 	p.mu.Unlock()
@@ -67,13 +74,13 @@ func (p *Pool) Chat(ctx context.Context, system, user string) (string, error) {
 			if i > 0 {
 				slog.Warn("LLM fallback 成功", "model", c.Model())
 			}
-			return out, nil
+			return out, c.Model(), nil
 		}
 		lastErr = err
 		slog.Warn("LLM 调用失败", "model", c.Model(), "err", err)
 	}
 	p.recordFailure()
-	return "", lastErr
+	return "", "", lastErr
 }
 
 // recordSuccess 重置连续失败计数

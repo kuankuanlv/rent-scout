@@ -98,8 +98,7 @@ func (c *Consumer) processBatch(ctx context.Context, batch []models.RentPost) er
 				}
 				for _, post := range sub {
 					res := results[post.ID]
-					slog.Info("post_decided", "post_id", post.ID, "stage", res.Stage, "result", res.Status,
-						"reason", res.RejectedBy, "ai_reason", aiReason(res.AI))
+					// post_decided 日志由 recordDecision 统一记录（含硬编码路径，避免重复）
 					c.recordDecision(res, &passedIDs, &rejectedIDs)
 				}
 			}

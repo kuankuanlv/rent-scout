@@ -102,6 +102,142 @@ func TestConsumerRejects(t *testing.T) {
 	}
 }
 
+// fakeAIEvaluator 测试用：实现 AIEvaluator 接口，计数 EvaluateBatch 调用、记录入参，可注入整批失败。
+// results 按 PostID 预置判定（EvaluateAIBatch 要求每帖都有结果）；err 非 nil 时整批返回错误
+type fakeAIEvaluator struct {
+	calls    int
+	err      error
+	results  map[int64]*models.AIResult
+	gotPosts []models.RentPost
+	gotRules []models.Rule
+}
+
+func (f *fakeAIEvaluator) EvaluateBatch(ctx context.Context, posts []models.RentPost, aiRules []models.Rule) (map[int64]*models.AIResult, error) {
+	f.calls++
+	f.gotPosts = append([]models.RentPost(nil), posts...)
+	f.gotRules = append([]models.Rule(nil), aiRules...)
+	if f.err != nil {
+		return nil, f.err
+	}
+	out := make(map[int64]*models.AIResult, len(posts))
+	for _, p := range posts {
+		out[p.ID] = f.results[p.ID]
+	}
+	return out, nil
+}
+
+// setupAIConsumer 构造走 AI 批的消费器：1 条 AI 自然语言规则（启用 AI 批路径）+ 3 条未定案帖
+// （不命中任何硬编码规则 → 全部进 AI 批）。返回 consumer、store、批量帖与 notify 通道
+func setupAIConsumer(t *testing.T, ai AIEvaluator) (*Consumer, *store.Store, []models.RentPost, chan struct{}) {
+	t.Helper()
+	st, err := store.Open(t.TempDir() + "/t.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	// AI 自然语言规则：Consumer 从 rules 表热拉取（c.rules → ListRules(true)），须先入库
+	if _, err := st.CreateRule(models.Rule{Name: "AI筛选", Type: models.RuleTypeAINatural,
+		Mode: models.RuleModeExclude, Value: "只要地铁 1 公里内的整租", Enabled: true, Priority: 10}); err != nil {
+		t.Fatal(err)
+	}
+	for _, eid := range []string{"a1", "a2", "a3"} {
+		if _, err := st.InsertPost(models.RentPost{Source: "douban", ExternalID: eid,
+			Title: "回龙观两居", Content: "五环外普通两居", CollectedAt: time.Now(), Status: models.PostStatusCollected}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	notify := make(chan struct{}, 10)
+	c := NewConsumer(NewRuleChain(ai), st, notify, 500)
+	batch, err := st.FetchPendingByStatus(models.PostStatusCollected, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c, st, batch, notify
+}
+
+// AI 聚合路径（规格 5.4/5.6 全局约束）：未定案帖子聚合为一次 EvaluateAIBatch 调用（杜绝每帖一次 LLM），
+// 结果正确流转到 passed/rejected + filter_results + notify；AI 失败则整批保持 pending 不误标记
+func TestConsumerAIBatch(t *testing.T) {
+	t.Run("单次调用且结果正确流转", func(t *testing.T) {
+		fake := &fakeAIEvaluator{}
+		c, st, batch, notify := setupAIConsumer(t, fake)
+		// AI 判定：a1/a3 通过，a2 拒绝（超预算）
+		fake.results = map[int64]*models.AIResult{
+			batch[0].ID: {Passed: true, Reason: "位置好", Price: 4500},
+			batch[1].ID: {Passed: false, Reason: "超出预算", Price: 9000},
+			batch[2].ID: {Passed: true, Reason: "通勤方便", Price: 4200},
+		}
+		if err := c.processBatch(context.Background(), batch); err != nil {
+			t.Fatal(err)
+		}
+		// 核心：多帖未定案只触发 1 次 EvaluateBatch（非每帖一次 LLM 调用）
+		if fake.calls != 1 {
+			t.Errorf("EvaluateBatch 调用次数 = %d, want 1（整批一次）", fake.calls)
+		}
+		if len(fake.gotPosts) != 3 {
+			t.Errorf("AI 批帖子数 = %d, want 3（整批聚合）", len(fake.gotPosts))
+		}
+		// 状态与结果：passed 帖 → passed + filter_results + notify；rejected 帖 → rejected + 原因
+		want := map[string]string{
+			batch[0].ExternalID: models.PostStatusPassed,
+			batch[1].ExternalID: models.PostStatusRejected,
+			batch[2].ExternalID: models.PostStatusPassed,
+		}
+		for _, p := range batch {
+			res, ok, err := st.FilterResultByPostID(p.ID)
+			if err != nil || !ok {
+				t.Fatalf("post %d filter_results 缺失: ok=%v err=%v", p.ID, ok, err)
+			}
+			if res.Status != want[p.ExternalID] {
+				t.Errorf("post %d 状态 = %s, want %s", p.ID, res.Status, want[p.ExternalID])
+			}
+			if res.Stage != models.StageAIRule || res.AI == nil {
+				t.Errorf("post %d 应记录 AI 阶段结果: %+v", p.ID, res)
+			}
+			if p.ExternalID == "a2" && !contains(res.RejectedBy, "AI拒绝") {
+				t.Errorf("a2 拒绝原因 = %q, want 含 AI拒绝", res.RejectedBy)
+			}
+		}
+		// posts 主状态一致（2 passed）+ notify 信号
+		passed, _ := st.FetchPendingByStatus(models.PostStatusPassed, 10)
+		if len(passed) != 2 {
+			t.Errorf("passed 数 = %d, want 2", len(passed))
+		}
+		select {
+		case <-notify:
+		default:
+			t.Error("passed 帖应触发 notify 信号")
+		}
+	})
+
+	t.Run("失败整批保持 pending", func(t *testing.T) {
+		fake := &fakeAIEvaluator{err: context.DeadlineExceeded}
+		c, st, batch, notify := setupAIConsumer(t, fake)
+		if err := c.processBatch(context.Background(), batch); err != nil {
+			t.Fatal(err)
+		}
+		if fake.calls != 1 {
+			t.Errorf("EvaluateBatch 调用次数 = %d, want 1", fake.calls)
+		}
+		// 整批保持 pending 下轮重试，不误标 passed/rejected（规格 5.6）
+		pending, _ := st.FetchPendingByStatus(models.PostStatusPending, 10)
+		if len(pending) != 3 {
+			t.Errorf("pending 数 = %d, want 3（整批保持待判定）", len(pending))
+		}
+		// 不写 filter_results、不触发 notify
+		for _, p := range batch {
+			if _, ok, err := st.FilterResultByPostID(p.ID); err != nil || ok {
+				t.Errorf("post %d 失败批不应写 filter_results: ok=%v err=%v", p.ID, ok, err)
+			}
+		}
+		select {
+		case <-notify:
+			t.Error("失败批不应触发 notify")
+		default:
+		}
+	})
+}
+
 func contains(s, sub string) bool {
 	return len(s) >= len(sub) && (s == sub || len(s) > 0 && containsIdx(s, sub))
 }

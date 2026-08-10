@@ -17,13 +17,24 @@ type llmChat interface {
 // AIBatchEvaluator AI 批量评估器（规格 5.4 + 调整 C）：
 // system 固定（规则集+判定标准+Schema，全批共享一次） + user 只放 N 条精简帖
 type AIBatchEvaluator struct {
-	llm     llmChat
-	trimLen int // 每帖截断字数（trim_limits[source]，缺省 500）
+	llm        llmChat
+	trimLimits map[string]int // 每源截断字数（trim_limits[source]，缺省 500——规格 5.2）
 }
 
-// NewAIBatchEvaluator 创建批量评估器
-func NewAIBatchEvaluator(c llmChat, trimLen int) *AIBatchEvaluator {
-	return &AIBatchEvaluator{llm: c, trimLen: trimLen}
+// NewAIBatchEvaluator 创建批量评估器；trimLimits 为每源 LLM 输入截断字数映射。
+// 未配置的源按 defaultTrimLimit（500）截断（规格 5.2 + 调整 C：每源独立 limit）
+func NewAIBatchEvaluator(c llmChat, trimLimits map[string]int) *AIBatchEvaluator {
+	return &AIBatchEvaluator{llm: c, trimLimits: trimLimits}
+}
+
+// trimLenFor 某源 LLM 输入截断字数（trim_limits[source]，缺省 500）
+func (e *AIBatchEvaluator) trimLenFor(source string) int {
+	if e.trimLimits != nil {
+		if n, ok := e.trimLimits[source]; ok && n > 0 {
+			return n
+		}
+	}
+	return defaultTrimLimit
 }
 
 // EvaluateBatch 批量判定：返回 map[PostID]*AIResult（index 与输入对齐）。
@@ -32,10 +43,10 @@ func (e *AIBatchEvaluator) EvaluateBatch(ctx context.Context, posts []models.Ren
 	if len(posts) == 0 {
 		return map[int64]*models.AIResult{}, nil
 	}
-	// 构造精简帖（Trim：去 HTML/图片，按源截断——调整规格 C 省 token）
+	// 构造精简帖（Trim：去 HTML/图片，按源截断——规格 5.2 每源独立 limit）
 	var sb strings.Builder
 	for i, p := range posts {
-		v := BuildLLMView(p, e.trimLen)
+		v := BuildLLMView(p, e.trimLenFor(p.Source))
 		sb.WriteString(fmt.Sprintf("第%d条 [%s] 标题：%s\n", i, v.Source, v.Title))
 		if v.URL != "" {
 			sb.WriteString("链接：" + v.URL + "\n")
@@ -47,7 +58,7 @@ func (e *AIBatchEvaluator) EvaluateBatch(ctx context.Context, posts []models.Ren
 			sb.WriteString("---\n")
 		}
 	}
-	raw, err := e.llm.Chat(ctx, buildSystemPrompt(aiRules), sb.String())
+	raw, model, err := e.chat(ctx, buildSystemPrompt(aiRules), sb.String())
 	if err != nil {
 		return nil, fmt.Errorf("AI 批量判定请求失败: %w", err)
 	}
@@ -55,12 +66,28 @@ func (e *AIBatchEvaluator) EvaluateBatch(ctx context.Context, posts []models.Ren
 	if err != nil {
 		return nil, fmt.Errorf("AI 批量判定解析失败: %w", err)
 	}
-	// index → PostID 对齐
+	// index → PostID 对齐；回填实际命中的模型名（规格 3.2 Model = 实际使用的模型）
 	results := make(map[int64]*models.AIResult, len(posts))
 	for i, ai := range parsed {
+		ai.Model = model
 		results[posts[i].ID] = &ai
 	}
 	return results, nil
+}
+
+// llmChatWithModel 可选接口：透传实际命中的模型名（Pool 实现；普通 client/fake 不实现）。
+// 通过类型断言探测 + 兜底，不破坏既有 llmChat 接口（测试 fake 无需改动）
+type llmChatWithModel interface {
+	ChatWithModel(ctx context.Context, system, user string) (string, string, error)
+}
+
+// chat 调用 LLM：优先探测 ChatWithModel（回填实际模型名），否则退化 Chat（Model 留空）
+func (e *AIBatchEvaluator) chat(ctx context.Context, system, user string) (string, string, error) {
+	if cwm, ok := e.llm.(llmChatWithModel); ok {
+		return cwm.ChatWithModel(ctx, system, user)
+	}
+	raw, err := e.llm.Chat(ctx, system, user)
+	return raw, "", err
 }
 
 // buildSystemPrompt 固定 system prompt（规则集共享一次，调整规格 C）：

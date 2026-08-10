@@ -36,7 +36,7 @@ func itoa(i int) string {
 // 批量判定：system 含全部自然语言规则（共享一次）；user 含 N 条精简帖；结果按 PostID 对齐
 func TestAIBatchEvaluate(t *testing.T) {
 	fl := &fakeLLM{}
-	ev := NewAIBatchEvaluator(fl, 500)
+	ev := NewAIBatchEvaluator(fl, map[string]int{})
 	posts := []models.RentPost{
 		{ID: 1, Source: "douban", Title: "望京整租", Content: "近14号线，4500"},
 		{ID: 2, Source: "douban", Title: "回龙观精装", Content: "两居"},
@@ -65,20 +65,77 @@ func TestAIBatchEvaluate(t *testing.T) {
 
 // LLM 失败：整批返回错误（调用方保持待判定，不误标记——规格 5.6）
 func TestAIBatchLLMFailure(t *testing.T) {
-	fl := &fakeLLM{}
-	ev := NewAIBatchEvaluator(fl, 500)
-	// 构造解析失败：fakeLLM 的 Chat 返回非法内容——用一个失败注入
-	fl2 := &failLLM{}
-	ev2 := NewAIBatchEvaluator(fl2, 500)
+	ev2 := NewAIBatchEvaluator(&failLLM{}, map[string]int{})
 	posts := []models.RentPost{{ID: 1, Source: "douban", Title: "t", Content: "c"}}
 	if _, err := ev2.EvaluateBatch(context.Background(), posts, []models.Rule{{Type: models.RuleTypeAINatural}}); err == nil {
 		t.Fatal("LLM 失败应整批报错")
 	}
-	_ = ev
 }
 
 type failLLM struct{}
 
 func (f *failLLM) Chat(ctx context.Context, system, user string) (string, error) {
 	return "", context.DeadlineExceeded
+}
+
+// I2（最终审查）：不同源按各自 trim_limits 限额截断（规格 5.2 每源独立 limit），
+// 不再是单一 trimLen 处理整批。douban=100 / beike=20，各按源限额截断
+func TestAIBatchEvaluatorPerSourceTrim(t *testing.T) {
+	fl := &fakeLLM{}
+	ev := NewAIBatchEvaluator(fl, map[string]int{"douban": 100, "beike": 20})
+	posts := []models.RentPost{
+		{ID: 1, Source: "douban", Title: "望京", Content: strings.Repeat("甲", 200)},
+		{ID: 2, Source: "beike", Title: "回龙观", Content: strings.Repeat("乙", 200)},
+	}
+	aiRules := []models.Rule{{ID: 10, Type: models.RuleTypeAINatural, Value: "只要整租", Enabled: true}}
+	if _, err := ev.EvaluateBatch(context.Background(), posts, aiRules); err != nil {
+		t.Fatal(err)
+	}
+	// douban 帖按 100 截断（不出现 101 个甲）；beike 帖按 20 截断（不出现 21 个乙）
+	if !strings.Contains(fl.user, strings.Repeat("甲", 100)) || strings.Contains(fl.user, strings.Repeat("甲", 101)) {
+		t.Error("douban 帖应按 100 字截断")
+	}
+	if !strings.Contains(fl.user, strings.Repeat("乙", 20)) || strings.Contains(fl.user, strings.Repeat("乙", 21)) {
+		t.Error("beike 帖应按 20 字截断")
+	}
+}
+
+// fakeLLMWithModel 测试用：实现可选接口 ChatWithModel（模拟 Pool 透传实际模型名）
+type fakeLLMWithModel struct {
+	fakeLLM
+	model string
+}
+
+func (f *fakeLLMWithModel) ChatWithModel(ctx context.Context, system, user string) (string, string, error) {
+	out, err := f.fakeLLM.Chat(ctx, system, user)
+	return out, f.model, err
+}
+
+// I3（最终审查）：AIResult.Model 回填实际命中的模型名（规格 3.2 Model = 实际使用的模型）。
+// 探测 ChatWithModel 接口 → 回填；未实现（普通 client/fake）→ 兜底留空，不破坏 llmChat
+func TestAIBatchEvaluatorModelBackfill(t *testing.T) {
+	t.Run("ChatWithModel 实现者回填模型名", func(t *testing.T) {
+		fl := &fakeLLMWithModel{model: "deepseek-chat"}
+		ev := NewAIBatchEvaluator(fl, map[string]int{})
+		posts := []models.RentPost{{ID: 1, Source: "douban", Title: "望京", Content: "近地铁"}}
+		results, err := ev.EvaluateBatch(context.Background(), posts, []models.Rule{{Type: models.RuleTypeAINatural, Enabled: true}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := results[1].Model; got != "deepseek-chat" {
+			t.Errorf("Model = %q, want deepseek-chat", got)
+		}
+	})
+	t.Run("仅实现 Chat 的 fake 兜底 Model 留空", func(t *testing.T) {
+		fl := &fakeLLM{}
+		ev := NewAIBatchEvaluator(fl, map[string]int{})
+		posts := []models.RentPost{{ID: 1, Source: "douban", Title: "望京", Content: "近地铁"}}
+		results, err := ev.EvaluateBatch(context.Background(), posts, []models.Rule{{Type: models.RuleTypeAINatural, Enabled: true}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := results[1].Model; got != "" {
+			t.Errorf("Model = %q, want 空（未实现 ChatWithModel）", got)
+		}
+	})
 }

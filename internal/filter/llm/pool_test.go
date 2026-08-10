@@ -50,6 +50,34 @@ func TestPoolEmptyClients(t *testing.T) {
 	}
 }
 
+// I3（最终审查）：ChatWithModel 透传实际命中的模型名——主模型 429 时返回 fallback 模型名，
+// 供 AIResult.Model 回填追溯（规格 3.2 Model = 实际使用的模型）
+func TestPoolChatWithModel(t *testing.T) {
+	main := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(429)
+	}))
+	defer main.Close()
+	backup := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
+	}))
+	defer backup.Close()
+
+	p := NewPool([]ClientOptions{
+		{BaseURL: main.URL, APIKey: "k", Model: "m1"},
+		{BaseURL: backup.URL, APIKey: "k", Model: "m2"},
+	}, PoolOptions{MaxFailures: 3, CircuitDuration: time.Hour})
+	out, model, err := p.ChatWithModel(context.Background(), "s", "u")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "ok" {
+		t.Errorf("out = %q", out)
+	}
+	if model != "m2" {
+		t.Errorf("model = %q, want m2（fallback 命中的模型）", model)
+	}
+}
+
 // 连续失败熔断：达到阈值后直接失败（不再请求），熔断期过后恢复
 func TestPoolCircuitBreaker(t *testing.T) {
 	var calls atomic.Int32

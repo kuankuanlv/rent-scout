@@ -13,15 +13,28 @@ import (
 // （EvaluateAIBatch）→ 状态流转 + 写结果 + passed 触发 notify。
 // AI 不可用/未定案 → 默认放行（宽松模式，宁可多通知不少通知）
 type Consumer struct {
-	chain   *RuleChain
-	store   *store.Store
-	notify  chan<- struct{} // passed 帖子信号（计划 4 notifier 消费）
-	trimLen int
+	chain       *RuleChain
+	store       *store.Store
+	notify      chan<- struct{} // passed 帖子信号（计划 4 notifier 消费）
+	trimLen     int             // 保留参数（旧签名兼容）；截断已下沉到 AIBatchEvaluator 按源处理
+	aiBatchSize int             // AI 子批上限（ai_batch_size）：未定案帖数超过时拆分多次 EvaluateAIBatch
 }
 
-// NewConsumer 创建 filter 消费器
+// ConsumerOptions 消费器选项（选项模式；零值 = 与旧版 NewConsumer 行为一致）
+type ConsumerOptions struct {
+	// AIBatchSize AI 子批上限：batch 内未定案帖数 > 该值时拆分为多次 EvaluateAIBatch
+	// 调用（每次 ≤ 该值，规格 7.2 ai_batch_size）。≤0 = 不拆分（整批一次调用，向后兼容）
+	AIBatchSize int
+}
+
+// NewConsumer 创建 filter 消费器（旧签名兼容：AI 未定案整批一次调用）
 func NewConsumer(chain *RuleChain, st *store.Store, notify chan<- struct{}, trimLen int) *Consumer {
-	return &Consumer{chain: chain, store: st, notify: notify, trimLen: trimLen}
+	return NewConsumerWithOptions(chain, st, notify, trimLen, ConsumerOptions{})
+}
+
+// NewConsumerWithOptions 创建 filter 消费器（main 传入 ai_batch_size 等选项）
+func NewConsumerWithOptions(chain *RuleChain, st *store.Store, notify chan<- struct{}, trimLen int, opts ConsumerOptions) *Consumer {
+	return &Consumer{chain: chain, store: st, notify: notify, trimLen: trimLen, aiBatchSize: opts.AIBatchSize}
 }
 
 // FetchBatch 拉批：collected（待首次判定）+ pending（瞬时失败待重试），按 id 升序限量
@@ -69,18 +82,21 @@ func (c *Consumer) processBatch(ctx context.Context, batch []models.RentPost) er
 		c.recordDecision(res, &passedIDs, &rejectedIDs)
 	}
 
-	// ② AI 批：未定案帖子一次 LLM 调用（规格 5.4 批量语义）
+	// ② AI 批：未定案帖子按 ai_batch_size 拆子批调用 LLM（规格 5.4 批量语义 + 7.2 ai_batch_size）。
+	// 子批相互独立：某子批瞬时失败仅该子批保持 pending 下轮重试，不误标记、不影响其余子批（规格 5.6）
 	if len(aiPending) > 0 {
 		if c.chain.HasAI() && len(enabledAIRules(rules)) > 0 {
-			results, err := c.chain.EvaluateAIBatch(ctx, aiPending, rules)
-			if err != nil {
-				// 瞬时失败（429/5xx/解析）：整批保持 pending 下轮重试，不误标记（规格 5.6）
-				slog.Warn("AI 批量判定失败，保持待判定", "count", len(aiPending), "err", err)
-				for _, post := range aiPending {
-					pendingIDs = append(pendingIDs, post.ID)
+			for _, sub := range splitBatches(aiPending, c.aiBatchSize) {
+				results, err := c.chain.EvaluateAIBatch(ctx, sub, rules)
+				if err != nil {
+					// 瞬时失败（429/5xx/解析）：该子批保持 pending 下轮重试，不误标记（规格 5.6）
+					slog.Warn("AI 批量判定失败，保持待判定", "count", len(sub), "err", err)
+					for _, post := range sub {
+						pendingIDs = append(pendingIDs, post.ID)
+					}
+					continue
 				}
-			} else {
-				for _, post := range aiPending {
+				for _, post := range sub {
 					res := results[post.ID]
 					slog.Info("post_decided", "post_id", post.ID, "stage", res.Stage, "result", res.Status,
 						"reason", res.RejectedBy, "ai_reason", aiReason(res.AI))
@@ -120,6 +136,22 @@ func (c *Consumer) processBatch(ctx context.Context, batch []models.RentPost) er
 		}
 	}
 	return nil
+}
+
+// splitBatches 按 size 切分子批；size<=0 或不足一批时整批一次（向后兼容，不改变旧行为）
+func splitBatches(posts []models.RentPost, size int) [][]models.RentPost {
+	if size <= 0 || len(posts) <= size {
+		return [][]models.RentPost{posts}
+	}
+	out := make([][]models.RentPost, 0, (len(posts)+size-1)/size)
+	for i := 0; i < len(posts); i += size {
+		end := i + size
+		if end > len(posts) {
+			end = len(posts)
+		}
+		out = append(out, posts[i:end])
+	}
+	return out
 }
 
 // recordDecision 记录单帖判定：写筛选结果（有内容时）+ 收集状态 ID + 日志（规格 8.3）

@@ -93,13 +93,16 @@ func (n *Notifier) sendChannel(ctx context.Context, ch Channel, batch []models.R
 	return firstErr
 }
 
-// sendGroup 单组发送：构造 NotifyItem（先幂等建记录）→ Send → 逐帖写状态
+// sendGroup 单组发送：构造 NotifyItem（先幂等建记录，失败跳过该帖）→ Send → 逐帖写状态。
+// 整组失败/成功路径均遍历 items（与 Send 的 failed 列表同序——items 已按 sortByPriority 排序）
 func (n *Notifier) sendGroup(ctx context.Context, ch Channel, tag string, posts []models.RentPost) error {
 	items := make([]NotifyItem, 0, len(posts))
 	for _, p := range posts {
-		// 幂等建记录（已存在则忽略；attempts 从 0 起，失败时 +1）
+		// 幂等建记录（已存在则忽略；attempts 从 0 起，失败时 +1）。
+		// 建记录失败：跳过该帖不发送（避免状态记录缺失导致下一轮重复通知）
 		if _, err := n.st.InsertNotification(p.ID, ch.Name()); err != nil {
-			slog.Error("建通知记录失败", "post_id", p.ID, "channel", ch.Name(), "err", err)
+			slog.Error("建通知记录失败，跳过该帖", "post_id", p.ID, "channel", ch.Name(), "err", err)
+			continue
 		}
 		item := NotifyItem{PostID: p.ID, Title: p.Title, URL: p.URL, AddressTag: tag}
 		// 展示字段来自 filter_results（价格/联系人/通勤/理由）
@@ -111,14 +114,17 @@ func (n *Notifier) sendGroup(ctx context.Context, ch Channel, tag string, posts 
 		}
 		items = append(items, item)
 	}
+	if len(items) == 0 {
+		return nil
+	}
 	items = sortByPriority(items)
 
 	slog.Info("channel_send", "channel", ch.Name(), "group", tag, "items", len(items))
 	sent, failed, err := ch.Send(ctx, items)
 	if err != nil && len(sent) == 0 {
-		// 整组失败：逐帖 failed（attempts+1，达阈值 dead）
-		for i, p := range posts {
-			n.recordOutcome(p.ID, ch.Name(), failedFor(i, failed, err))
+		// 整组失败：按 items 下标逐帖标记 failed（attempts+1，达阈值 dead）——items 与 failed 同序
+		for i, it := range items {
+			n.recordOutcome(it.PostID, ch.Name(), failedFor(i, failed, err))
 		}
 		return err
 	}
@@ -126,15 +132,15 @@ func (n *Notifier) sendGroup(ctx context.Context, ch Channel, tag string, posts 
 	for _, id := range sent {
 		sentSet[id] = true
 	}
-	for _, p := range posts {
-		if sentSet[p.ID] {
-			if err := n.st.MarkNotificationSent(p.ID, ch.Name()); err != nil {
-				slog.Error("标记已通知失败", "post_id", p.ID, "channel", ch.Name(), "err", err)
+	for _, it := range items {
+		if sentSet[it.PostID] {
+			if err := n.st.MarkNotificationSent(it.PostID, ch.Name()); err != nil {
+				slog.Error("标记已通知失败", "post_id", it.PostID, "channel", ch.Name(), "err", err)
 			}
-			slog.Info("item_sent", "channel", ch.Name(), "post_id", p.ID, "status", "sent")
+			slog.Info("item_sent", "channel", ch.Name(), "post_id", it.PostID, "status", "sent")
 			continue
 		}
-		n.recordOutcome(p.ID, ch.Name(), nil)
+		n.recordOutcome(it.PostID, ch.Name(), nil)
 	}
 	return nil
 }
@@ -155,7 +161,7 @@ func (n *Notifier) recordOutcome(postID int64, channel string, sendErr error) {
 		if err := n.st.MarkNotificationDead(postID, channel, msg); err != nil {
 			slog.Error("标记死信失败", "post_id", postID, "channel", channel, "err", err)
 		}
-		slog.Error("dead_letter", "channel", channel, "post_id", postID, "moved_to", "dead")
+		slog.Warn("dead_letter", "channel", channel, "post_id", postID, "moved_to", "dead")
 		return
 	}
 	if err := n.st.MarkNotificationFailed(postID, channel, msg, attempt); err != nil {

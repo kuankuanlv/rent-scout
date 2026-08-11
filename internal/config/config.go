@@ -15,6 +15,7 @@ type AppConfig struct {
 	Collector CollectorConfig `toml:"collector"` // 收集
 	Filter    FilterConfig    `toml:"filter"`    // 过滤
 	Notifier  NotifierConfig  `toml:"notifier"`  // 通知
+	Admin     AdminConfig     `toml:"admin"`     // 管理：鉴权
 }
 
 // ServerConfig HTTP 监听
@@ -62,6 +63,12 @@ type NotifierConfig struct {
 	MaxAttempts        int `toml:"max_attempts"`
 	RetryBaseInterval  int `toml:"retry_base_interval"`
 	Channels           []string `toml:"channels"` // 可选白名单；空 = 按已配 webhook 自动启用
+}
+
+// AdminConfig 管理面鉴权（规格 7.1；Docker 部署安全考虑）
+type AdminConfig struct {
+	AuthRequired bool   `toml:"auth_required"` // 是否启用鉴权；false=默认不鉴权（启动 WARN 强提醒）
+	Token        string `toml:"token"`         // 访问口令；auth_required=true 且为空时启动随机生成
 }
 
 // 内置默认豆瓣小组（迁移自现有系统，北京热门）

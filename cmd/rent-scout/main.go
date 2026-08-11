@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -51,6 +53,17 @@ func main() {
 	if err != nil {
 		logger.Error("加载敏感配置失败", "err", err)
 		os.Exit(1)
+	}
+
+	// 管理面鉴权（规格 7.1）：auth_required=true 且 token 空 → 随机生成并打印（重启失效）
+	adminToken := cfg.Admin.Token
+	if cfg.Admin.AuthRequired {
+		if adminToken == "" {
+			adminToken = randomHex(16)
+			logger.Warn("鉴权已启用但未配 token，已随机生成（重启后失效，建议配置固定 token）", "token", adminToken)
+		}
+	} else {
+		logger.Warn("鉴权未启用：/admin 与 /api 对网络可见，建议配置 auth_required=true（config.toml [admin]）")
 	}
 
 	// 配置热加载（Runtime 并发安全快照）
@@ -268,4 +281,13 @@ func trimLimits(cfg *config.AppConfig) map[string]int {
 		}
 	}
 	return limits
+}
+
+// randomHex 随机十六进制字符串（crypto/rand，16 字节）
+func randomHex(n int) string {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		panic(err) // 熵源故障：无法安全运行
+	}
+	return hex.EncodeToString(b)
 }

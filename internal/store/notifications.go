@@ -72,6 +72,20 @@ func (s *Store) MarkNotificationDead(postID int64, channel, errMsg string) error
 	return nil
 }
 
+// NotificationAttempts 查询渠道通知的当前尝试次数；无记录返回 0
+func (s *Store) NotificationAttempts(postID int64, channel string) (int, error) {
+	var attempts int
+	err := s.db.QueryRow(`SELECT attempts FROM notifications WHERE post_id=? AND channel=?`,
+		postID, channel).Scan(&attempts)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("查询尝试次数: %w", err)
+	}
+	return attempts, nil
+}
+
 // InsertFeedback 写入用户反馈（规格 5.5 自学习闭环入口）
 func (s *Store) InsertFeedback(f models.Feedback) error {
 	_, err := s.db.Exec(`INSERT INTO feedbacks (post_id, channel, action, reason, created_at) VALUES (?, ?, ?, ?, ?)`,

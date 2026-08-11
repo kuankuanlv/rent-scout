@@ -137,6 +137,30 @@ interval = 300
 	}
 }
 
+// [admin] 公开配置解析：显式值生效；缺失段 → 零值语义（false/""，applyDefaults 不处理）
+func TestAdminConfig(t *testing.T) {
+	path := writeConfig(t, `
+[admin]
+auth_required = true
+token = "x"
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Admin.AuthRequired || cfg.Admin.Token != "x" {
+		t.Errorf("Admin 显式解析错误: %+v", cfg.Admin)
+	}
+	// 缺失 [admin] 段 → 零值：auth_required=false（启动 WARN 强提醒）、token=""（启用时随机生成）
+	cfg2, err := Load(writeConfig(t, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg2.Admin.AuthRequired || cfg2.Admin.Token != "" {
+		t.Errorf("缺失 [admin] 段应为零值: %+v", cfg2.Admin)
+	}
+}
+
 func TestLoadEnvLocal(t *testing.T) {
 	dir := t.TempDir()
 	pub := filepath.Join(dir, "config.toml")

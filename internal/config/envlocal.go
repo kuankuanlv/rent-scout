@@ -14,12 +14,6 @@ type EnvLocalConfig struct {
 	Notifier  EnvNotifier     `toml:"notifier"`  // 通知：各渠道 webhook
 }
 
-// AdminConfig 管理面鉴权（规格 7.1）
-type AdminConfig struct {
-	AuthRequired bool   `toml:"auth_required"`
-	Token        string `toml:"token"`
-}
-
 // EnvCollector 每源敏感配置；新增源在此扩展字段
 type EnvCollector struct {
 	Douban DoubanCookieConfig `toml:"douban"`

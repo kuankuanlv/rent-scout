@@ -53,3 +53,9 @@ retry_base_interval = 300 # 重试退避基础间隔（秒）
 # 渠道启用遵循"约定大于配置"：config.env.local.toml 里配了 webhook 的渠道自动启用
 # 如需精确控制只启用部分渠道，取消下行注释并列出渠道名：
 # channels = ["feishu", "dingtalk"]
+
+# ---------- 管理 Admin（内部页面/API 鉴权；Docker 部署务必开启！） ----------
+
+[admin]
+auth_required = false     # 是否启用鉴权；false=默认不鉴权，/admin 与 /api 对网络可见（有风险！）
+token = ""                # 访问口令；auth_required=true 且为空时启动随机生成并打印到日志（重启后失效）

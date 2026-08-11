@@ -88,8 +88,19 @@ func main() {
 		go fc.Run(ctx)
 	}
 
-	// 启动通知模块（规格 6.x）：消费 notifyTrigger（passed 帖子信号，计划 4）
+	// notifier 消费 notifyTrigger（passed 帖子信号，计划 4）
 	if nc := newNotifierConsumer(rt, envCfg, db, notifyTrigger); nc != nil {
+		// 桥接 goroutine：filter 的 notifyTrigger 信号 → pipeline 内部 trigger（Signal 非阻塞，满则丢靠 linger 兜底）
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-notifyTrigger:
+					nc.Signal()
+				}
+			}
+		}()
 		go nc.Run(ctx)
 	}
 
@@ -212,7 +223,7 @@ func newNotifierConsumer(rt *config.Runtime, env *config.EnvLocalConfig, db *sto
 		}
 	}
 	if len(channels) == 0 {
-		slog.Warn("通知渠道未配置（env.local 无 webhook），通知停用")
+		slog.Warn("通知渠道未启用（env.local 未配置或白名单无匹配渠道），通知停用")
 		return nil
 	}
 	// 重试参数：max_attempts/retry_base_interval（默认 3/300 由 applyDefaults 保证）

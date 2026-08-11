@@ -13,6 +13,7 @@ import (
 	"rent-scout/internal/filter"
 	"rent-scout/internal/filter/llm"
 	"rent-scout/internal/models"
+	"rent-scout/internal/notifier"
 	"rent-scout/internal/pipeline"
 	"rent-scout/internal/pkglog"
 	"rent-scout/internal/store"
@@ -85,6 +86,11 @@ func main() {
 			}
 		}()
 		go fc.Run(ctx)
+	}
+
+	// 启动通知模块（规格 6.x）：消费 notifyTrigger（passed 帖子信号，计划 4）
+	if nc := newNotifierConsumer(rt, envCfg, db, notifyTrigger); nc != nil {
+		go nc.Run(ctx)
 	}
 
 	// 优雅退出：等待信号后收尾（模块 goroutine 已随 ctx 取消停止）
@@ -163,6 +169,72 @@ func newFilterConsumer(rt *config.Runtime, env *config.EnvLocalConfig, db *store
 		func(ctx context.Context, batch []models.RentPost) error { return fc.ProcessBatch(ctx, batch) },
 		pipeline.Options{BatchSize: cfg.Pipeline.BatchSize, Linger: time.Duration(cfg.Pipeline.LingerInterval) * time.Second},
 	)
+}
+
+// newNotifierConsumer 按配置构造通知消费器（规格 6.5）：
+// 拉批 passed 未发送帖 → 分组 → 各启用渠道发送；失败重试/死信（规格 6.6）
+func newNotifierConsumer(rt *config.Runtime, env *config.EnvLocalConfig, db *store.Store,
+	notifyTrigger <-chan struct{}) *pipeline.Consumer[models.RentPost] {
+
+	cfg := rt.Get()
+	// 启用渠道：显式 channels 白名单 > 已配 webhook 自动启用（规格 7.2 约定大于配置）
+	var channels []notifier.Channel
+	enabled := notifier.EnabledChannels(env.Notifier)
+	if len(cfg.Notifier.Channels) > 0 {
+		enabled = cfg.Notifier.Channels
+	}
+	for _, name := range enabled {
+		switch name {
+		case notifier.ChannelFeishu:
+			if env.Notifier.Feishu.Webhook != "" {
+				channels = append(channels, notifier.NewFeishuChannel(env.Notifier.Feishu.Webhook))
+			}
+		case notifier.ChannelDingtalk:
+			if env.Notifier.Dingtalk.Webhook != "" {
+				channels = append(channels, notifier.NewDingtalkChannel(env.Notifier.Dingtalk.Webhook, env.Notifier.Dingtalk.Secret))
+			}
+		case notifier.ChannelWecom:
+			if env.Notifier.Wecom.Webhook != "" {
+				channels = append(channels, notifier.NewWecomChannel(env.Notifier.Wecom.Webhook))
+			}
+		case notifier.ChannelPushplus:
+			if env.Notifier.Pushplus.Token != "" {
+				channels = append(channels, notifier.NewPushplusChannel("", env.Notifier.Pushplus.Token))
+			}
+		case notifier.ChannelServerchan:
+			if env.Notifier.Serverchan.Sendkey != "" {
+				channels = append(channels, notifier.NewServerchanChannel(env.Notifier.Serverchan.Sendkey))
+			}
+		case notifier.ChannelWebhook:
+			if env.Notifier.Webhook.URL != "" {
+				channels = append(channels, notifier.NewWebhookChannel(env.Notifier.Webhook.URL, env.Notifier.Webhook.Template))
+			}
+		}
+	}
+	if len(channels) == 0 {
+		slog.Warn("通知渠道未配置（env.local 无 webhook），通知停用")
+		return nil
+	}
+	// 重试参数：max_attempts/retry_base_interval（默认 3/300 由 applyDefaults 保证）
+	n := notifier.NewNotifier(db,
+		notifier.NotifierOptions{MaxAttempts: cfg.Notifier.MaxAttempts, RetryBaseInterval: cfg.Notifier.RetryBaseInterval},
+		channels...)
+	return pipeline.New(
+		func(ctx context.Context, limit int) ([]models.RentPost, error) {
+			return db.FetchNotifyBatch(channelNames(channels), limit)
+		},
+		n.ProcessBatch,
+		pipeline.Options{BatchSize: cfg.Pipeline.BatchSize, Linger: time.Duration(cfg.Pipeline.LingerInterval) * time.Second},
+	)
+}
+
+// channelNames 提取渠道名列表
+func channelNames(channels []notifier.Channel) []string {
+	names := make([]string, len(channels))
+	for i, c := range channels {
+		names[i] = c.Name()
+	}
+	return names
 }
 
 // trimLimitFor 某源 LLM 输入截断字数（trim_limits 配置，缺省 500——规格 7.2 注释语义）

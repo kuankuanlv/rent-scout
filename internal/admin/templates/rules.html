@@ -1,0 +1,29 @@
+{{define "rules"}}
+<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8"><title>规则管理</title>
+<style>body{font-family:system-ui;margin:1rem}table{border-collapse:collapse;width:100%}
+th,td{border:1px solid #ccc;padding:4px 8px;font-size:14px;vertical-align:top}
+form{display:inline}select,input[type=text],input[type=number]{font-size:13px}</style></head>
+<body>{{template "nav" .}}
+<h2>规则管理</h2>
+<p>说明：规则实时生效（filter 每批从 rules 表读取，规格 3.3），改完即用；Type: hard_keyword 关键词（逗号分隔）/ hard_blacklist 黑名单 / hard_whitelist 白名单 / ai_natural 自然语言。</p>
+<table><tr><th>ID</th><th>名称</th><th>类型</th><th>模式</th><th>值</th><th>优先级</th><th>启用</th><th>命中</th><th>标无用</th><th>操作</th></tr>
+{{range .Rules}}<tr><td>{{.ID}}</td><td>{{.Name}}</td><td>{{.Type}}</td><td>{{.Mode}}</td>
+<td><input form="f{{.ID}}" type="text" name="value" value="{{.Value}}"></td>
+<td><input form="f{{.ID}}" type="number" name="priority" value="{{.Priority}}" style="width:4em"></td>
+<td><input form="f{{.ID}}" type="checkbox" name="enabled" {{if .Enabled}}checked{{end}}></td>
+<td>{{.Hits}}</td><td>{{.UselessCount}}</td>
+<td><form id="f{{.ID}}" method="post" action="/admin/rules/{{.ID}}{{if $.Token}}?token={{$.Token}}{{end}}" style="display:inline">
+<input type="hidden" name="name" value="{{.Name}}">
+<input type="hidden" name="type" value="{{.Type}}">
+<input type="hidden" name="mode" value="{{.Mode}}">
+<button type="submit">保存</button></form>
+<form method="post" action="/admin/rules/{{.ID}}/delete{{if $.Token}}?token={{$.Token}}{{end}}" style="display:inline"><button type="submit">删除</button></form></td></tr>{{end}}</table>
+<h3>新增规则</h3>
+<form method="post" action="/admin/rules{{if .Token}}?token={{.Token}}{{end}}">
+名称<input type="text" name="name" required> 类型<select name="type">
+<option value="hard_keyword">hard_keyword</option><option value="hard_blacklist">hard_blacklist</option>
+<option value="hard_whitelist">hard_whitelist</option><option value="ai_natural">ai_natural</option></select>
+模式<select name="mode"><option value="exclude">exclude(命中即拒)</option><option value="include">include(命中即过)</option></select>
+值<input type="text" name="value" required> 优先级<input type="number" name="priority" value="10">
+<button type="submit">新增</button></form></body></html>
+{{end}}

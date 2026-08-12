@@ -68,6 +68,53 @@ func TestAPIFeedbacksAuth(t *testing.T) {
 	}
 }
 
+// TestAPIFeedbacksAuthOff 鉴权关闭（AuthRequired=false）时以开关为准：
+// 即使配置了 server token，无 sig / 带 sig 一律放行 201（不验证）；畸形 JSON 仍 400
+func TestAPIFeedbacksAuthOff(t *testing.T) {
+	s := newAdminTestStore(t)
+	defer s.Close()
+	rt := config.NewRuntime(&config.AppConfig{}) // AuthRequired 默认 false
+	srv := NewServer(s, rt, "secret", nil)       // 配了 token 也不验证
+
+	future := time.Now().Add(time.Hour).Unix()
+
+	cases := []struct {
+		name string
+		body string
+		sig  string
+		want int
+	}{
+		{"无 sig 放行", `{"post_id":1,"channel":"test","action":"useful"}`, "", http.StatusCreated},
+		{"带 sig 放行（不验证）", `{"post_id":1,"channel":"test","action":"useful"}`, "deadbeef", http.StatusCreated},
+		{"畸形 JSON", `{bad`, "", http.StatusBadRequest},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/api/feedbacks", strings.NewReader(tc.body))
+			if tc.sig != "" {
+				q := req.URL.Query()
+				q.Set("exp", fmt.Sprintf("%d", future))
+				q.Set("sig", tc.sig)
+				req.URL.RawQuery = q.Encode()
+			}
+			rec := httptest.NewRecorder()
+			srv.Handler().ServeHTTP(rec, req)
+			if rec.Code != tc.want {
+				t.Errorf("status = %d, want %d (body=%s)", rec.Code, tc.want, rec.Body.String())
+			}
+		})
+	}
+
+	// 两次 201 均真实写库（无 sig 与带 sig 各一条）
+	items, err := s.ListFeedbacksByPost(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 || items[0].Action != models.FeedbackUseful {
+		t.Errorf("DB 反馈 = %+v, want 2 条 useful post=1", items)
+	}
+}
+
 // TestAPIPostsList 列表：status 过滤 / limit+offset 分页 / 空 status 全量
 func TestAPIPostsList(t *testing.T) {
 	s := newAdminTestStore(t)

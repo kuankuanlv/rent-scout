@@ -29,11 +29,15 @@ func (s *Server) handleFeedbacks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	if s.rt.Get().Admin.AuthRequired && q.Get("sig") == "" {
-		// 无签名：由 auth 中间件已校验管理 token；此处只需通过
-	} else if err := s.verifyFeedbackSig(in.PostID, in.Action, q.Get("exp"), q.Get("sig")); err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
-		return
+	if !s.rt.Get().Admin.AuthRequired {
+		// 鉴权关闭：一律放行（开关为准，不验证）
+	} else if q.Get("sig") != "" {
+		// 带签名：HMAC 校验（卡片链接场景）
+		if err := s.verifyFeedbackSig(in.PostID, in.Action, q.Get("exp"), q.Get("sig")); err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+		// 无签名：auth 中间件已校验管理 token
 	}
 	if in.PostID <= 0 || (in.Action != "useful" && in.Action != "useless") {
 		http.Error(w, "post_id/action 无效", http.StatusBadRequest)

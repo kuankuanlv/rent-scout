@@ -120,3 +120,56 @@ func TestFeedbackBadAction(t *testing.T) {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
 }
+
+// TestFeedbackAuthDisabled：AuthRequired=false → 无效签名也放行（开关为准）
+func TestFeedbackAuthDisabled(t *testing.T) {
+	s := newAdminTestStore(t)
+	defer s.Close()
+
+	// 鉴权关闭 + token 非空（模拟有 token 但开关关闭的场景）
+	rt := config.NewRuntime(&config.AppConfig{Admin: config.AdminConfig{AuthRequired: false}})
+	srv := NewServer(s, rt, "secret", nil)
+
+	// 无效签名 → 应放行（开关为准）
+	future := time.Now().Add(time.Hour).Unix()
+	req := httptest.NewRequest(http.MethodGet,
+		fmt.Sprintf("/f?post=1&action=useful&exp=%d&sig=invalid", future), nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("AuthRequired=false 无效签名: status = %d, want 200", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "感谢反馈") {
+		t.Errorf("AuthRequired=false 无效签名: body 缺成功文案: %s", rec.Body.String())
+	}
+
+	// 完全无 sig → 也应放行
+	req = httptest.NewRequest(http.MethodGet, "/f?post=2&action=useless", nil)
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("AuthRequired=false 无sig: status = %d, want 200", rec.Code)
+	}
+}
+
+// TestFeedbackAuthEnabledInvalidSig：AuthRequired=true + token 非空 → 无效签名被拒绝
+func TestFeedbackAuthEnabledInvalidSig(t *testing.T) {
+	s := newAdminTestStore(t)
+	defer s.Close()
+
+	rt := config.NewRuntime(&config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}})
+	srv := NewServer(s, rt, "secret", nil)
+
+	// 无效签名 → 应拒绝
+	future := time.Now().Add(time.Hour).Unix()
+	req := httptest.NewRequest(http.MethodGet,
+		fmt.Sprintf("/f?post=1&action=useful&exp=%d&sig=invalid", future), nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("AuthRequired=true 无效签名: status = %d, want 200（失败页）", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "无效或已过期") {
+		t.Errorf("AuthRequired=true 无效签名: body 缺失败文案: %s", rec.Body.String())
+	}
+}

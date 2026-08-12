@@ -48,7 +48,10 @@ func (s *Server) handleFeedback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "参数无效", http.StatusBadRequest)
 		return
 	}
-	if err := s.verifyFeedbackSig(postID, action, q.Get("exp"), q.Get("sig")); err != nil {
+	// 开关为准：鉴权关闭时跳过签名校验
+	if !s.rt.Get().Admin.AuthRequired {
+		// 放行：不验证签名，直接处理
+	} else if err := s.verifyFeedbackSig(postID, action, q.Get("exp"), q.Get("sig")); err != nil {
 		s.renderFeedbackResult(w, "反馈链接无效或已过期（有效期 7 天），请联系管理员", false)
 		return
 	}

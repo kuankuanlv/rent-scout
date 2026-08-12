@@ -17,15 +17,16 @@ const GroupUnknown = "未分组"
 
 // NotifyItem 单帖通知内容（规格 6.2 + 调整 B 3.3：增加 AddressTag）
 type NotifyItem struct {
-	PostID      int64
-	Title       string
-	URL         string
-	Price       int
-	Contact     string
-	Commuting   string
-	Reason      string // AI 推荐理由
-	AddressTag  string // 分组主 tag（AddressTags[0]；无 tag = GroupUnknown）
-	FeedbackURL string // 卡片内嵌反馈链接（HMAC 签名，规格 7.1）
+	PostID             int64
+	Title              string
+	URL                string
+	Price              int
+	Contact            string
+	Commuting          string
+	Reason             string // AI 推荐理由
+	AddressTag         string // 分组主 tag（AddressTags[0]；无 tag = GroupUnknown）
+	FeedbackURL        string // 卡片内嵌「有用」反馈链接（action=useful，HMAC 签名，规格 7.1）
+	FeedbackUselessURL string // 卡片内嵌「无用」反馈链接（action=useless，规格 5.5 负向归因数据源）
 }
 
 // Channel 通知渠道接口（规格 6.2）：新增渠道 = 新增一个实现。

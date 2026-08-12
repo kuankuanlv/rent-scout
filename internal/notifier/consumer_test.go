@@ -153,3 +153,155 @@ func TestNotifierGroupIsolation(t *testing.T) {
 		t.Errorf("回龙观组失败应 dead（MaxAttempts=1）: %q", st[pB.ID][ChannelFeishu])
 	}
 }
+
+// 双链接协议：ProcessBatch 生成的消息同时包含有用和无用反馈链接
+func TestDualFeedbackLinksPresent(t *testing.T) {
+	s := newNotifierTestStore(t)
+	defer s.Close()
+	p := seedNotifierPost(t, s, models.PostStatusPassed)
+
+	var capturedText string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if content, ok := body["content"].(map[string]interface{}); ok {
+			if text, ok := content["text"].(string); ok {
+				capturedText = text
+			}
+		}
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+
+	n := NewNotifier(s, NotifierOptions{MaxAttempts: 3}, NewFeishuChannel(srv.URL))
+	err := n.ProcessBatch(context.Background(), []models.RentPost{p})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if capturedText == "" {
+		t.Fatal("未捕获到消息文本")
+	}
+
+	// 验证双链接都存在于消息文本中（textPayload 格式）
+	if !strings.Contains(capturedText, "反馈: 有用") {
+		t.Error("消息应包含「有用」反馈链接")
+	}
+	if !strings.Contains(capturedText, "反馈: 无用") {
+		t.Error("消息应包含「无用」反馈链接")
+	}
+}
+
+// 双链接协议：feedbackSecret 非空时，两个 URL 都包含 exp 和 sig 参数
+func TestDualFeedbackLinksWithSignature(t *testing.T) {
+	s := newNotifierTestStore(t)
+	defer s.Close()
+	p := seedNotifierPost(t, s, models.PostStatusPassed)
+
+	var capturedText string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if content, ok := body["content"].(map[string]interface{}); ok {
+			if text, ok := content["text"].(string); ok {
+				capturedText = text
+			}
+		}
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+
+	// 使用非空的 feedbackSecret
+	n := NewNotifier(s, NotifierOptions{MaxAttempts: 3, FeedbackSecret: "test-secret-123"}, NewFeishuChannel(srv.URL))
+	err := n.ProcessBatch(context.Background(), []models.RentPost{p})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if capturedText == "" {
+		t.Fatal("未捕获到消息文本")
+	}
+
+	// 验证两个 URL 都包含签名参数（exp 和 sig）
+	lines := strings.Split(capturedText, "\n")
+	var usefulURL, uselessURL string
+	for _, line := range lines {
+		if strings.Contains(line, "反馈: 有用") {
+			usefulURL = strings.TrimSpace(strings.TrimPrefix(line, "反馈: 有用 "))
+		}
+		if strings.Contains(line, "反馈: 无用") {
+			uselessURL = strings.TrimSpace(strings.TrimPrefix(line, "反馈: 无用 "))
+		}
+	}
+
+	if usefulURL == "" {
+		t.Fatal("未找到有用反馈 URL")
+	}
+	if uselessURL == "" {
+		t.Fatal("未找到无用反馈 URL")
+	}
+
+	if !strings.Contains(usefulURL, "exp=") || !strings.Contains(usefulURL, "sig=") {
+		t.Errorf("有用 URL 应包含 exp 和 sig 参数: %s", usefulURL)
+	}
+	if !strings.Contains(uselessURL, "exp=") || !strings.Contains(uselessURL, "sig=") {
+		t.Errorf("无用 URL 应包含 exp 和 sig 参数: %s", uselessURL)
+	}
+}
+
+// 双链接协议：feedbackSecret 为空时，两个 URL 不包含签名参数（降级模式）
+func TestDualFeedbackLinksNoSignature(t *testing.T) {
+	s := newNotifierTestStore(t)
+	defer s.Close()
+	p := seedNotifierPost(t, s, models.PostStatusPassed)
+
+	var capturedText string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if content, ok := body["content"].(map[string]interface{}); ok {
+			if text, ok := content["text"].(string); ok {
+				capturedText = text
+			}
+		}
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+
+	// 使用空的 feedbackSecret（降级模式）
+	n := NewNotifier(s, NotifierOptions{MaxAttempts: 3, FeedbackSecret: ""}, NewFeishuChannel(srv.URL))
+	err := n.ProcessBatch(context.Background(), []models.RentPost{p})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if capturedText == "" {
+		t.Fatal("未捕获到消息文本")
+	}
+
+	// 验证两个 URL 都不包含签名参数
+	lines := strings.Split(capturedText, "\n")
+	var usefulURL, uselessURL string
+	for _, line := range lines {
+		if strings.Contains(line, "反馈: 有用") {
+			usefulURL = strings.TrimSpace(strings.TrimPrefix(line, "反馈: 有用 "))
+		}
+		if strings.Contains(line, "反馈: 无用") {
+			uselessURL = strings.TrimSpace(strings.TrimPrefix(line, "反馈: 无用 "))
+		}
+	}
+
+	if usefulURL == "" {
+		t.Fatal("未找到有用反馈 URL")
+	}
+	if uselessURL == "" {
+		t.Fatal("未找到无用反馈 URL")
+	}
+
+	if strings.Contains(usefulURL, "sig=") {
+		t.Errorf("降级模式下有用 URL 不应包含 sig 参数: %s", usefulURL)
+	}
+	if strings.Contains(uselessURL, "sig=") {
+		t.Errorf("降级模式下无用 URL 不应包含 sig 参数: %s", uselessURL)
+	}
+}

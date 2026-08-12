@@ -128,14 +128,15 @@ func (s *Server) updateRule(w http.ResponseWriter, r *http.Request, id int64) {
 	rtype := r.PostFormValue("type")
 	mode := r.PostFormValue("mode")
 	value := r.PostFormValue("value")
+	name := r.PostFormValue("name")
 	priority, err := strconv.Atoi(r.PostFormValue("priority"))
 	enabled := r.PostFormValue("enabled") != ""
-	if err != nil || !ruleTypes[rtype] ||
+	if err != nil || name == "" || !ruleTypes[rtype] ||
 		(mode != models.RuleModeInclude && mode != models.RuleModeExclude) || value == "" {
 		http.Error(w, "参数无效", http.StatusBadRequest)
 		return
 	}
-	if err := s.db.UpdateRule(models.Rule{ID: id, Name: r.PostFormValue("name"), Type: rtype, Mode: mode, Value: value, Enabled: enabled, Priority: priority}); err != nil {
+	if err := s.db.UpdateRule(models.Rule{ID: id, Name: name, Type: rtype, Mode: mode, Value: value, Enabled: enabled, Priority: priority}); err != nil {
 		slog.Error("更新规则失败", "id", id, "err", err)
 		http.Error(w, "写入失败", http.StatusInternalServerError)
 		return

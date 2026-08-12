@@ -255,6 +255,15 @@ func TestRulesUpdateInvalid(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("坏 type status = %d, want 400", rec.Code)
 	}
+	// 缺 name（hidden 篡改面：与 createRule 校验对称）
+	form2 := url.Values{"type": {models.RuleTypeHardBlacklist}, "mode": {models.RuleModeExclude}, "value": {"v2"}, "priority": {"1"}}
+	req1 := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/admin/rules/%d", r.ID), strings.NewReader(form2.Encode()))
+	req1.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec1 := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec1, req1)
+	if rec1.Code != http.StatusBadRequest {
+		t.Errorf("缺 name status = %d, want 400", rec1.Code)
+	}
 	// id <= 0
 	req2 := httptest.NewRequest(http.MethodPost, "/admin/rules/0", strings.NewReader(form.Encode()))
 	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")

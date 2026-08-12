@@ -4,12 +4,15 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"rent-scout/internal/admin"
 	"rent-scout/internal/collector"
 	"rent-scout/internal/config"
 	"rent-scout/internal/filter"
@@ -117,9 +120,25 @@ func main() {
 		go nc.Run(ctx)
 	}
 
-	// 优雅退出：等待信号后收尾（模块 goroutine 已随 ctx 取消停止）
+	// 启动管理面 HTTP（规格 7.x）：admin server 装配全部路由；优雅关停走 Shutdown。
+	// ctrl 暂传 nil：SourceController 需 runner 实现接口方法（任务 9 注入）；nil 时 /api/sources 返回 503
+	srv := admin.NewServer(db, rt, adminToken, nil)
+	httpSrv := &http.Server{Addr: cfg.Server.Addr, Handler: srv.Handler()}
+	go func() {
+		logger.Info("HTTP 服务启动", "addr", cfg.Server.Addr)
+		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("HTTP 服务异常退出", "err", err)
+		}
+	}()
+
+	// 优雅退出：等待信号后收尾（模块 goroutine 已随 ctx 取消停止；HTTP 排空请求）
 	<-ctx.Done()
 	logger.Info("收到退出信号，正在关闭")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
+		logger.Warn("HTTP 关停超时", "err", err)
+	}
 }
 
 // newCollectorRunner 按配置构造采集调度器；无可用源时返回 nil（不启动采集）

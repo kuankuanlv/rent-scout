@@ -18,7 +18,7 @@ func (s *Store) ListPosts(status string, limit, offset int) ([]models.RentPost, 
 		return nil, fmt.Errorf("帖子列表: %w", err)
 	}
 	defer rows.Close()
-	var posts []models.RentPost
+	posts := make([]models.RentPost, 0)
 	for rows.Next() {
 		var p models.RentPost
 		var published sql.NullTime

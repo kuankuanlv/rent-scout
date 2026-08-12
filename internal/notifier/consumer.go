@@ -12,15 +12,17 @@ import (
 
 // NotifierOptions 通知重试参数（规格 6.6）
 type NotifierOptions struct {
-	MaxAttempts       int // 单渠道失败重试次数（超过进死信）；<=0 用 3
-	RetryBaseInterval int // 重试退避基础间隔（秒）；<=0 用 300
+	MaxAttempts       int    // 单渠道失败重试次数（超过进死信）；<=0 用 3
+	RetryBaseInterval int    // 重试退避基础间隔（秒）；<=0 用 300
+	FeedbackSecret    string // 卡片反馈链接签名 secret（有效 admin token；空 = 不签名，鉴权关闭场景）
 }
 
 // Notifier 通知消费器：按渠道过滤未 sent → 地址分组 → 每组 Send → 状态写库（规格 6.5/6.6）
 type Notifier struct {
-	st       *store.Store
-	channels []Channel
-	opts     NotifierOptions
+	st             *store.Store
+	channels       []Channel
+	opts           NotifierOptions
+	feedbackSecret string
 }
 
 // NewNotifier 创建通知消费器；channels 为启用渠道（至少一个）
@@ -31,7 +33,7 @@ func NewNotifier(st *store.Store, opts NotifierOptions, channels ...Channel) *No
 	if opts.RetryBaseInterval <= 0 {
 		opts.RetryBaseInterval = 300
 	}
-	return &Notifier{st: st, channels: channels, opts: opts}
+	return &Notifier{st: st, channels: channels, opts: opts, feedbackSecret: opts.FeedbackSecret}
 }
 
 // ProcessBatch 处理一批 passed 帖子（pipeline.BatchFunc）：
@@ -104,7 +106,14 @@ func (n *Notifier) sendGroup(ctx context.Context, ch Channel, tag string, posts 
 			slog.Error("建通知记录失败，跳过该帖", "post_id", p.ID, "channel", ch.Name(), "err", err)
 			continue
 		}
-		item := NotifyItem{PostID: p.ID, Title: p.Title, URL: p.URL, AddressTag: tag}
+		item := NotifyItem{
+			PostID:             p.ID,
+			Title:              p.Title,
+			URL:                p.URL,
+			AddressTag:         tag,
+			FeedbackURL:        BuildFeedbackURL(p.ID, "useful", n.feedbackSecret),
+			FeedbackUselessURL: BuildFeedbackURL(p.ID, "useless", n.feedbackSecret),
+		}
 		// 展示字段来自 filter_results（价格/联系人/通勤/理由）
 		if fr, ok, err := n.st.FilterResultByPostID(p.ID); err == nil && ok && fr.AI != nil {
 			item.Price = fr.AI.Price

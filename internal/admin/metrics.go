@@ -28,16 +28,16 @@ func (s *Server) handleMetrics(w http.ResponseWriter, _ *http.Request) {
 	}
 
 	fmt.Fprintf(w, "# HELP rent_scout_posts_collected_total 今日采集帖子总数\n")
-	fmt.Fprintf(w, "# TYPE rent_scout_posts_collected_total counter\n")
+	fmt.Fprintf(w, "# TYPE rent_scout_posts_collected_total gauge\n")
 	fmt.Fprintf(w, "rent_scout_posts_collected_total %d\n", stats.Collected)
 	fmt.Fprintf(w, "# HELP rent_scout_posts_passed_total 今日筛选通过帖子数\n")
-	fmt.Fprintf(w, "# TYPE rent_scout_posts_passed_total counter\n")
+	fmt.Fprintf(w, "# TYPE rent_scout_posts_passed_total gauge\n")
 	fmt.Fprintf(w, "rent_scout_posts_passed_total %d\n", stats.Passed)
 	fmt.Fprintf(w, "# HELP rent_scout_posts_rejected_total 今日筛选拒绝帖子数\n")
-	fmt.Fprintf(w, "# TYPE rent_scout_posts_rejected_total counter\n")
+	fmt.Fprintf(w, "# TYPE rent_scout_posts_rejected_total gauge\n")
 	fmt.Fprintf(w, "rent_scout_posts_rejected_total %d\n", stats.Rejected)
 	fmt.Fprintf(w, "# HELP rent_scout_posts_pending_total 今日待判定帖子数\n")
-	fmt.Fprintf(w, "# TYPE rent_scout_posts_pending_total counter\n")
+	fmt.Fprintf(w, "# TYPE rent_scout_posts_pending_total gauge\n")
 	fmt.Fprintf(w, "rent_scout_posts_pending_total %d\n", stats.Pending)
 
 	fmt.Fprintf(w, "# HELP rent_scout_notify_sent_total 渠道发送总数（历史累计）\n")

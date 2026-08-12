@@ -105,7 +105,7 @@ func main() {
 	}
 
 	// notifier 消费 notifyTrigger（passed 帖子信号，计划 4）
-	if nc := newNotifierConsumer(rt, envCfg, db, notifyTrigger); nc != nil {
+	if nc := newNotifierConsumer(rt, envCfg, db, notifyTrigger, adminToken); nc != nil {
 		// 桥接 goroutine：filter 的 notifyTrigger 信号 → pipeline 内部 trigger（Signal 非阻塞，满则丢靠 linger 兜底）
 		go func() {
 			for {
@@ -218,7 +218,7 @@ func newFilterConsumer(rt *config.Runtime, env *config.EnvLocalConfig, db *store
 // newNotifierConsumer 按配置构造通知消费器（规格 6.5）：
 // 拉批 passed 未发送帖 → 分组 → 各启用渠道发送；失败重试/死信（规格 6.6）
 func newNotifierConsumer(rt *config.Runtime, env *config.EnvLocalConfig, db *store.Store,
-	notifyTrigger <-chan struct{}) *pipeline.Consumer[models.RentPost] {
+	notifyTrigger <-chan struct{}, adminToken string) *pipeline.Consumer[models.RentPost] {
 
 	cfg := rt.Get()
 	// 启用渠道：显式 channels 白名单 > 已配 webhook 自动启用（规格 7.2 约定大于配置）
@@ -261,7 +261,7 @@ func newNotifierConsumer(rt *config.Runtime, env *config.EnvLocalConfig, db *sto
 	}
 	// 重试参数：max_attempts/retry_base_interval（默认 3/300 由 applyDefaults 保证）
 	n := notifier.NewNotifier(db,
-		notifier.NotifierOptions{MaxAttempts: cfg.Notifier.MaxAttempts, RetryBaseInterval: cfg.Notifier.RetryBaseInterval},
+		notifier.NotifierOptions{MaxAttempts: cfg.Notifier.MaxAttempts, RetryBaseInterval: cfg.Notifier.RetryBaseInterval, FeedbackSecret: adminToken},
 		channels...)
 	return pipeline.New(
 		func(ctx context.Context, limit int) ([]models.RentPost, error) {

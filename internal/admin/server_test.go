@@ -153,6 +153,10 @@ func TestMetrics(t *testing.T) {
 		t.Errorf("Content-Type = %q, want text/plain", ct)
 	}
 	for _, want := range []string{
+		"# TYPE rent_scout_posts_collected_total gauge",
+		"# TYPE rent_scout_posts_passed_total gauge",
+		"# TYPE rent_scout_posts_rejected_total gauge",
+		"# TYPE rent_scout_posts_pending_total gauge",
 		"rent_scout_posts_collected_total 3",
 		"rent_scout_posts_passed_total 1",
 		"rent_scout_posts_rejected_total 1",

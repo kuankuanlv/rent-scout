@@ -35,6 +35,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/healthz", s.handleHealthz)
 	mux.HandleFunc("/metrics", s.handleMetrics)
 	mux.HandleFunc("/f", s.handleFeedback)
-	// 后续任务在此追加路由
+	mux.HandleFunc("/api/posts", s.handlePosts)
+	mux.HandleFunc("/api/posts/", s.handlePost) // 前缀匹配，handler 内解析 id
+	mux.HandleFunc("/api/feedbacks", s.handleFeedbacks)
 	return s.auth(mux)
 }

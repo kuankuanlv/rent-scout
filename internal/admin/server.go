@@ -24,9 +24,10 @@ type Server struct {
 	tmpl  *template.Template // embed 模板（任务 6-8 装配，可 nil 直到页面任务）
 }
 
-// NewServer 创建管理面服务
+// NewServer 创建管理面服务（装配 embed 页面模板）
 func NewServer(db *store.Store, rt *config.Runtime, token string, ctrl SourceController) *Server {
-	return &Server{db: db, rt: rt, token: token, ctrl: ctrl}
+	return &Server{db: db, rt: rt, token: token, ctrl: ctrl,
+		tmpl: template.Must(template.ParseFS(templatesFS, "templates/*.html"))}
 }
 
 // Handler 路由装配（任务 4-9 逐步挂 handler；本任务先挂 healthz/metrics）
@@ -38,5 +39,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/posts", s.handlePosts)
 	mux.HandleFunc("/api/posts/", s.handlePost) // 前缀匹配，handler 内解析 id
 	mux.HandleFunc("/api/feedbacks", s.handleFeedbacks)
+	mux.HandleFunc("/admin", s.handleAdmin)       // 页面：帖子全览（鉴权覆盖内）
+	mux.HandleFunc("/admin/mark", s.handleMark)   // 页面：标记反馈（POST，PRG）
 	return s.auth(mux)
 }

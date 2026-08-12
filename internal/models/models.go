@@ -20,10 +20,10 @@ const (
 
 // 规则类型（Rule.Type）
 const (
-	RuleTypeHardKeyword  = "hard_keyword"  // 关键词（本地匹配）
+	RuleTypeHardKeyword   = "hard_keyword"   // 关键词（本地匹配）
 	RuleTypeHardBlacklist = "hard_blacklist" // 黑名单（本地匹配）
 	RuleTypeHardWhitelist = "hard_whitelist" // 白名单（本地匹配）
-	RuleTypeAINatural    = "ai_natural"    // 自然语言规则（LLM 判定）
+	RuleTypeAINatural     = "ai_natural"     // 自然语言规则（LLM 判定）
 )
 
 // 规则模式（Rule.Mode）
@@ -42,18 +42,18 @@ const (
 
 // 反馈动作（Feedback.Action）
 const (
-	FeedbackUseful   = "useful"
-	FeedbackUseless  = "useless"
+	FeedbackUseful  = "useful"
+	FeedbackUseless = "useless"
 )
 
 // RentPost 归一化房源帖子（规格 3.1，collector 的输出）
 type RentPost struct {
-	ID          int64     // 自增主键
-	Source      string    // 源标识：douban / beike / ...
-	ExternalID  string    // 源内唯一 ID
-	URL         string    // 原文链接
+	ID          int64  // 自增主键
+	Source      string // 源标识：douban / beike / ...
+	ExternalID  string // 源内唯一 ID
+	URL         string // 原文链接
 	Title       string
-	Content     string    // 原文正文（HTML 或纯文本）
+	Content     string // 原文正文（HTML 或纯文本）
 	Author      string
 	AuthorURL   string
 	PublishedAt time.Time // 源发布时间
@@ -90,12 +90,12 @@ type AIResult struct {
 // FilterResult 筛选结果（规格 3.2，1:1 posts）
 type FilterResult struct {
 	PostID     int64
-	Status     string     // pending / passed / rejected
-	Stage      string     // 拒绝阶段：hard_rule / ai_rule
-	RejectedBy string     // 拒绝原因摘要（人类可读）
+	Status     string // pending / passed / rejected
+	Stage      string // 拒绝阶段：hard_rule / ai_rule
+	RejectedBy string // 拒绝原因摘要（人类可读）
 	DecidedAt  time.Time
-	HardRules  []RuleHit  // 硬编码规则命中详情
-	AI         *AIResult  // AI 判定详情（nil = 未执行）
+	HardRules  []RuleHit // 硬编码规则命中详情
+	AI         *AIResult // AI 判定详情（nil = 未执行）
 }
 
 // Rule 筛选规则（规格 3.3，rules 表，运行时增删改）

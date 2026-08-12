@@ -8,10 +8,10 @@ import (
 
 // EnvLocalConfig 敏感配置（config.env.local.toml，gitignore，不入库）
 type EnvLocalConfig struct {
-	Admin     AdminConfig     `toml:"admin"`     // 常规：鉴权
-	Collector EnvCollector    `toml:"collector"` // 收集：每源 cookie
-	Filter    EnvFilter       `toml:"filter"`    // 过滤：LLM
-	Notifier  EnvNotifier     `toml:"notifier"`  // 通知：各渠道 webhook
+	Admin     AdminConfig  `toml:"admin"`     // 常规：鉴权
+	Collector EnvCollector `toml:"collector"` // 收集：每源 cookie
+	Filter    EnvFilter    `toml:"filter"`    // 过滤：LLM
+	Notifier  EnvNotifier  `toml:"notifier"`  // 通知：各渠道 webhook
 }
 
 // EnvCollector 每源敏感配置；新增源在此扩展字段
@@ -21,11 +21,11 @@ type EnvCollector struct {
 
 // DoubanCookieConfig 豆瓣 cookie 三种模式（规格 4.4）
 type DoubanCookieConfig struct {
-	CookieMode       string `toml:"cookie_mode"` // none / file / cookiecloud
-	CookieFile       string `toml:"cookie_file"`
-	CookiecloudURL   string `toml:"cookiecloud_url"`
-	CookiecloudKey   string `toml:"cookiecloud_key"`
-	CookiecloudPass  string `toml:"cookiecloud_password"`
+	CookieMode      string `toml:"cookie_mode"` // none / file / cookiecloud
+	CookieFile      string `toml:"cookie_file"`
+	CookiecloudURL  string `toml:"cookiecloud_url"`
+	CookiecloudKey  string `toml:"cookiecloud_key"`
+	CookiecloudPass string `toml:"cookiecloud_password"`
 }
 
 // EnvFilter 过滤敏感配置
@@ -43,12 +43,12 @@ type LLMConfig struct {
 
 // EnvNotifier 各渠道 webhook；配了的渠道自动启用（规格 7.2 约定大于配置）
 type EnvNotifier struct {
-	Feishu    WebhookSecretConfig `toml:"feishu"`
-	Dingtalk  DingtalkConfig      `toml:"dingtalk"`
-	Wecom     WebhookSecretConfig `toml:"wecom"`
-	Pushplus  PushplusConfig      `toml:"pushplus"`
-	Serverchan ServerchanConfig   `toml:"serverchan"`
-	Webhook   CustomWebhookConfig `toml:"webhook"`
+	Feishu     WebhookSecretConfig `toml:"feishu"`
+	Dingtalk   DingtalkConfig      `toml:"dingtalk"`
+	Wecom      WebhookSecretConfig `toml:"wecom"`
+	Pushplus   PushplusConfig      `toml:"pushplus"`
+	Serverchan ServerchanConfig    `toml:"serverchan"`
+	Webhook    CustomWebhookConfig `toml:"webhook"`
 }
 
 // WebhookSecretConfig 普通 webhook 渠道

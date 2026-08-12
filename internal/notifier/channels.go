@@ -14,10 +14,10 @@ import (
 
 // webhookChannel 基于 webhook 的渠道：JSON 载荷 + 可选签名；Send 按组发一条
 type webhookChannel struct {
-	name     string
-	url      string
-	build    func(items []NotifyItem) ([]byte, error) // 构造载荷
-	signURL  func(rawURL string) (string, error)      // 可选 URL 签名（钉钉加签）
+	name    string
+	url     string
+	build   func(items []NotifyItem) ([]byte, error) // 构造载荷
+	signURL func(rawURL string) (string, error)      // 可选 URL 签名（钉钉加签）
 }
 
 func (c *webhookChannel) Name() string { return c.name }
@@ -74,7 +74,10 @@ func textPayload(items []NotifyItem) string {
 			fmt.Fprintf(&sb, "推荐理由: %s\n", it.Reason)
 		}
 		if it.FeedbackURL != "" {
-			fmt.Fprintf(&sb, "反馈: %s\n", it.FeedbackURL)
+			fmt.Fprintf(&sb, "反馈: 有用 %s\n", it.FeedbackURL)
+		}
+		if it.FeedbackUselessURL != "" {
+			fmt.Fprintf(&sb, "反馈: 无用 %s\n", it.FeedbackUselessURL)
 		}
 	}
 	return sb.String()

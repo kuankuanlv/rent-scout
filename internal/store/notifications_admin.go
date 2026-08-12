@@ -30,7 +30,7 @@ func (s *Store) FetchDeadNotifications(limit int) ([]models.Notification, error)
 	return items, rows.Err()
 }
 
-// ResetNotification 死信重发：dead → pending，attempts=0、last_error=''。
+// ResetNotification 死信重发：dead → pending，attempts=0、last_error=”。
 // 下轮 FetchNotifyBatch 自动捞回重发；幂等：非 dead 状态返回 false 不报错
 func (s *Store) ResetNotification(postID int64, channel string) (bool, error) {
 	res, err := s.db.Exec(`UPDATE notifications SET status='pending', attempts=0, last_error=''

@@ -215,10 +215,10 @@ func TestAPIPostDetail(t *testing.T) {
 		t.Fatalf("status = %d, want 200 (body=%s)", rec.Code, rec.Body.String())
 	}
 	var out struct {
-		Post         models.RentPost       `json:"post"`
-		FilterResult models.FilterResult   `json:"filter_result"`
+		Post          models.RentPost       `json:"post"`
+		FilterResult  models.FilterResult   `json:"filter_result"`
 		Notifications []models.Notification `json:"notifications"`
-		Feedbacks    []models.Feedback     `json:"feedbacks"`
+		Feedbacks     []models.Feedback     `json:"feedbacks"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("解析详情响应失败: %v (body=%s)", err, rec.Body.String())

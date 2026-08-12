@@ -10,8 +10,8 @@ import (
 // ListItem 列表页条目（调整规格 E 分层）：轻量信息，Runner 据此
 // 做时间窗过滤与批量查重，仅新帖才调 Detail
 type ListItem struct {
-	ExternalID  string    // 源内唯一 ID（详情页/去重键依据）
-	URL         string    // 详情页链接
+	ExternalID  string // 源内唯一 ID（详情页/去重键依据）
+	URL         string // 详情页链接
 	Title       string
 	Author      string
 	PublishedAt time.Time // 源发布时间（窗口过滤依据）

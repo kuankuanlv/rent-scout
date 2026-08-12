@@ -13,7 +13,9 @@ type HardVerdict struct {
 }
 
 // EvaluateHard 硬编码规则链（规格 5.3）：
-//   白名单（命中 → 直接 passed 短路，产出 AddressTags）→ 黑名单（命中 → rejected）→ 关键词（include/exclude）
+//
+//	白名单（命中 → 直接 passed 短路，产出 AddressTags）→ 黑名单（命中 → rejected）→ 关键词（include/exclude）
+//
 // 返回：判定结果、命中的地点标签（白名单）、命中详情、拒绝原因
 func EvaluateHard(post models.RentPost, rules []models.Rule) (v HardVerdict, tags []string, hits []models.RuleHit, rejectedBy string, err error) {
 	// ① 白名单：评估全部白名单规则收集地点标签（多值，按传入顺序=优先级降序）；任一命中 → 短路通过

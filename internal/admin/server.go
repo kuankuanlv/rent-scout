@@ -40,13 +40,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/posts", s.handlePosts)
 	mux.HandleFunc("/api/posts/", s.handlePost) // 前缀匹配，handler 内解析 id
 	mux.HandleFunc("/api/feedbacks", s.handleFeedbacks)
-	mux.HandleFunc("/api/sources", s.handleSources)          // 源列表（GET）
-	mux.HandleFunc("/api/sources/", s.handleSourceAction)    // 源动作（POST trigger/enable/disable）
-	mux.HandleFunc("/admin", s.handleAdmin)          // 页面：帖子全览（鉴权覆盖内）
-	mux.HandleFunc("/admin/mark", s.handleMark)      // 页面：标记反馈（POST，PRG）
-	mux.HandleFunc("/admin/rules", s.handleRules)    // 页面：规则管理（GET）+ 新增（POST，PRG）
-	mux.HandleFunc("/admin/rules/", s.handleRulesID) // 更新/删除（POST，前缀匹配，handler 内解析 {id}）
-	mux.HandleFunc("/admin/stats", s.handleStats)    // 页面：统计报表 + 死信（GET）
+	mux.HandleFunc("/api/sources", s.handleSources)        // 源列表（GET）
+	mux.HandleFunc("/api/sources/", s.handleSourceAction)  // 源动作（POST trigger/enable/disable）
+	mux.HandleFunc("/admin", s.handleAdmin)                // 页面：帖子全览（鉴权覆盖内）
+	mux.HandleFunc("/admin/mark", s.handleMark)            // 页面：标记反馈（POST，PRG）
+	mux.HandleFunc("/admin/rules", s.handleRules)          // 页面：规则管理（GET）+ 新增（POST，PRG）
+	mux.HandleFunc("/admin/rules/", s.handleRulesID)       // 更新/删除（POST，前缀匹配，handler 内解析 {id}）
+	mux.HandleFunc("/admin/stats", s.handleStats)          // 页面：统计报表 + 死信（GET）
 	mux.HandleFunc("/admin/dead/reset", s.handleDeadReset) // 死信重发（POST，PRG）
 	return s.auth(mux)
 }

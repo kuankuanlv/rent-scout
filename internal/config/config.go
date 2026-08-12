@@ -38,31 +38,31 @@ type PipelineConfig struct {
 
 // CollectorConfig 收集：源清单 + 全局频率 + 每源配置
 type CollectorConfig struct {
-	Sources     []string      `toml:"sources"`
-	Interval    int           `toml:"interval"`      // 全局默认采集间隔（秒）
-	JitterRatio float64       `toml:"jitter_ratio"`  // 间隔随机抖动比例
-	MaxAgeDays  int           `toml:"max_age_days"`  // 时间窗：超过此天数的帖子不再采集（规格 4.5）
-	Douban      DoubanConfig  `toml:"douban"`        // 豆瓣源（新增源在此扩展）
+	Sources     []string     `toml:"sources"`
+	Interval    int          `toml:"interval"`     // 全局默认采集间隔（秒）
+	JitterRatio float64      `toml:"jitter_ratio"` // 间隔随机抖动比例
+	MaxAgeDays  int          `toml:"max_age_days"` // 时间窗：超过此天数的帖子不再采集（规格 4.5）
+	Douban      DoubanConfig `toml:"douban"`       // 豆瓣源（新增源在此扩展）
 }
 
 // DoubanConfig 豆瓣源公开配置
 type DoubanConfig struct {
-	Groups   []string `toml:"groups"` // 豆瓣租房小组 URL
+	Groups   []string `toml:"groups"`   // 豆瓣租房小组 URL
 	Interval int      `toml:"interval"` // 覆盖全局间隔（0 = 用全局）
 }
 
 // FilterConfig 过滤：AI 开关与效率
 type FilterConfig struct {
-	AIEnabled   *bool             `toml:"ai_enabled"` // nil = 未配置，默认启用；显式 false 保留
-	AIBatchSize int               `toml:"ai_batch_size"`
-	TrimLimits  map[string]int    `toml:"trim_limits"` // 每源 LLM 输入截断字数
+	AIEnabled   *bool          `toml:"ai_enabled"` // nil = 未配置，默认启用；显式 false 保留
+	AIBatchSize int            `toml:"ai_batch_size"`
+	TrimLimits  map[string]int `toml:"trim_limits"` // 每源 LLM 输入截断字数
 }
 
 // NotifierConfig 通知：重试参数；渠道启用遵循约定（配了 webhook 自动启用）
 type NotifierConfig struct {
-	MaxAttempts        int `toml:"max_attempts"`
-	RetryBaseInterval  int `toml:"retry_base_interval"`
-	Channels           []string `toml:"channels"` // 可选白名单；空 = 按已配 webhook 自动启用
+	MaxAttempts       int      `toml:"max_attempts"`
+	RetryBaseInterval int      `toml:"retry_base_interval"`
+	Channels          []string `toml:"channels"` // 可选白名单；空 = 按已配 webhook 自动启用
 }
 
 // AdminConfig 管理面鉴权（规格 7.1；Docker 部署安全考虑）

@@ -17,8 +17,8 @@ type PoolOptions struct {
 // Pool 多模型池（规格 5.6）：按序 fallback + 连续失败熔断。
 // 熔断中直接返回错误（AI 链暂停，WARN 已记录；恢复后自动重试）
 type Pool struct {
-	clients []*Client
-	opts    PoolOptions
+	clients     []*Client
+	opts        PoolOptions
 	mu          sync.Mutex
 	failures    int
 	circuitOpen bool

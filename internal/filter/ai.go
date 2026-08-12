@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"rent-scout/internal/models"
 	"rent-scout/internal/filter/llm"
+	"rent-scout/internal/models"
 )
 
 // llmChat LLM 对话接口（llm.Client/Pool 均满足；测试注入 fake）

@@ -178,11 +178,11 @@ func TestAdminTokenPropagation(t *testing.T) {
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
-		"/admin?token=secret",            // nav 帖子链接
-		"/admin/rules?token=secret",      // nav 规则链接
-		"/admin/stats?token=secret",      // nav 统计链接
+		"/admin?token=secret",               // nav 帖子链接
+		"/admin/rules?token=secret",         // nav 规则链接
+		"/admin/stats?token=secret",         // nav 统计链接
 		"/admin?status=passed&token=secret", // 筛选链接（已有 query，用 & 拼接）
-		"/admin/mark?token=secret",       // 表单 action
+		"/admin/mark?token=secret",          // 表单 action
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("页面缺 %q（token 未透传）", want)

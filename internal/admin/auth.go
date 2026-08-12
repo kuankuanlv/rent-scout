@@ -6,11 +6,12 @@ import (
 	"strings"
 )
 
-// auth 鉴权中间件：/healthz、/metrics 豁免；auth_required 实时读 rt（热加载 10s 生效）。
+// auth 鉴权中间件：/healthz、/metrics、/f（反馈链接，HMAC 签名即其鉴权）豁免；
+// auth_required 实时读 rt（热加载 10s 生效）。
 // 认证方式：Authorization: Bearer <token> 或 URL ?token=<token>（constant-time 比较）
 func (s *Server) auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/healthz" || r.URL.Path == "/metrics" {
+		if r.URL.Path == "/healthz" || r.URL.Path == "/metrics" || r.URL.Path == "/f" {
 			next.ServeHTTP(w, r)
 			return
 		}

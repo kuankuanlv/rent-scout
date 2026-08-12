@@ -24,10 +24,10 @@ type Server struct {
 	tmpl  *template.Template // embed 模板（任务 6-8 装配，可 nil 直到页面任务）
 }
 
-// NewServer 创建管理面服务（装配 embed 页面模板）
+// NewServer 创建管理面服务（装配 embed 页面模板 + percent 模板函数）
 func NewServer(db *store.Store, rt *config.Runtime, token string, ctrl SourceController) *Server {
 	return &Server{db: db, rt: rt, token: token, ctrl: ctrl,
-		tmpl: template.Must(template.ParseFS(templatesFS, "templates/*.html"))}
+		tmpl: template.Must(template.New("").Funcs(template.FuncMap{"percent": percent}).ParseFS(templatesFS, "templates/*.html"))}
 }
 
 // Handler 路由装配（任务 4-9 逐步挂 handler；本任务先挂 healthz/metrics）
@@ -43,5 +43,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/admin/mark", s.handleMark)      // 页面：标记反馈（POST，PRG）
 	mux.HandleFunc("/admin/rules", s.handleRules)    // 页面：规则管理（GET）+ 新增（POST，PRG）
 	mux.HandleFunc("/admin/rules/", s.handleRulesID) // 更新/删除（POST，前缀匹配，handler 内解析 {id}）
+	mux.HandleFunc("/admin/stats", s.handleStats)    // 页面：统计报表 + 死信（GET）
+	mux.HandleFunc("/admin/dead/reset", s.handleDeadReset) // 死信重发（POST，PRG）
 	return s.auth(mux)
 }

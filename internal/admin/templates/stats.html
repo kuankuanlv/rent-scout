@@ -1,0 +1,25 @@
+{{define "stats"}}
+<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8"><title>统计报表</title>
+<style>body{font-family:system-ui;margin:1rem}table{border-collapse:collapse;width:100%}
+th,td{border:1px solid #ccc;padding:4px 8px;font-size:14px;vertical-align:top}
+form{display:inline}select,input[type=text]{font-size:13px}</style></head>
+<body>{{template "nav" .}}
+{{if .Msg}}<p style="color:#c00">{{.Msg}}</p>{{end}}
+<h2>今日概览</h2>
+<p>采集 {{.Today.Collected}} ｜ 通过 {{.Today.Passed}} ｜ 拒绝 {{.Today.Rejected}} ｜ 待审 {{.Today.Pending}}</p>
+<h2>渠道发送统计（历史）</h2>
+<table><tr><th>渠道</th><th>sent</th><th>failed</th><th>dead</th><th>成功率</th></tr>
+{{range .Channels}}<tr><td>{{.Channel}}</td><td>{{.Sent}}</td><td>{{.Failed}}</td><td>{{.Dead}}</td>
+<td>{{if .Total}}{{percent .Sent .Total}}%{{else}}-{{end}}</td></tr>{{end}}</table>
+<h2>规则命中 × 反馈负向（规格 5.5）</h2>
+<table><tr><th>规则ID</th><th>命中</th><th>无用反馈帖数</th><th>负向率</th></tr>
+{{range .RuleStats}}<tr><td>{{.RuleID}}</td><td>{{.Hits}}</td><td>{{.UselessCount}}</td>
+<td>{{if .Hits}}{{percent .UselessCount .Hits}}%{{else}}-{{end}}</td></tr>{{end}}</table>
+<h2>死信（/admin 人工重发，规格 6.6）</h2>
+<table><tr><th>通知ID</th><th>帖ID</th><th>渠道</th><th>尝试</th><th>最后错误</th><th>操作</th></tr>
+{{range .Dead}}<tr><td>{{.ID}}</td><td>{{.PostID}}</td><td>{{.Channel}}</td><td>{{.Attempts}}</td>
+<td>{{.LastError}}</td><td><form method="post" action="/admin/dead/reset{{if $.Token}}?token={{$.Token}}{{end}}">
+<input type="hidden" name="post_id" value="{{.PostID}}">
+<input type="hidden" name="channel" value="{{.Channel}}"><button type="submit">重发</button></form></td></tr>{{end}}</table>
+</body></html>
+{{end}}

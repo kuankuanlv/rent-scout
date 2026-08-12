@@ -34,6 +34,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.handleHealthz)
 	mux.HandleFunc("/metrics", s.handleMetrics)
+	mux.HandleFunc("/f", s.handleFeedback)
 	// 后续任务在此追加路由
 	return s.auth(mux)
 }

@@ -121,8 +121,9 @@ func main() {
 	}
 
 	// 启动管理面 HTTP（规格 7.x）：admin server 装配全部路由；优雅关停走 Shutdown。
-	// ctrl 暂传 nil：SourceController 需 runner 实现接口方法（任务 9 注入）；nil 时 /api/sources 返回 503
-	srv := admin.NewServer(db, rt, adminToken, nil)
+	// ctrl 传 runner：/api/sources 源管理（启停/手动触发/游标查看）；
+	// runner nil（无可用源，采集未启动）时 /api/sources 返回 503
+	srv := admin.NewServer(db, rt, adminToken, runner)
 	httpSrv := &http.Server{Addr: cfg.Server.Addr, Handler: srv.Handler()}
 	go func() {
 		logger.Info("HTTP 服务启动", "addr", cfg.Server.Addr)

@@ -1,4 +1,4 @@
-{{define "nav"}}<nav><a href="/admin">帖子</a> | <a href="/admin/rules">规则</a> | <a href="/admin/stats">统计</a></nav>{{end}}
+{{define "nav"}}<nav><a href="/admin{{if .Token}}?token={{.Token}}{{end}}">帖子</a> | <a href="/admin/rules{{if .Token}}?token={{.Token}}{{end}}">规则</a> | <a href="/admin/stats{{if .Token}}?token={{.Token}}{{end}}">统计</a></nav>{{end}}
 {{define "admin"}}
 <!DOCTYPE html><html lang="zh"><head><meta charset="utf-8"><title>rent-scout 管理</title>
 <style>body{font-family:system-ui;margin:1rem}table{border-collapse:collapse;width:100%}
@@ -6,13 +6,13 @@ th,td{border:1px solid #ccc;padding:4px 8px;font-size:14px;vertical-align:top}
 form{display:inline}select,input[type=text]{font-size:13px}</style></head>
 <body>{{template "nav" .}}
 <h2>帖子全览</h2>
-<p><a href="/admin">全部</a> | <a href="/admin?status=passed">通过</a> |
-<a href="/admin?status=rejected">拒绝</a> | <a href="/admin?status=pending">待审</a> |
-<a href="/admin?status=collected">已采集</a></p>
+<p><a href="/admin{{if .Token}}?token={{.Token}}{{end}}">全部</a> | <a href="/admin?status=passed{{if .Token}}&token={{.Token}}{{end}}">通过</a> |
+<a href="/admin?status=rejected{{if .Token}}&token={{.Token}}{{end}}">拒绝</a> | <a href="/admin?status=pending{{if .Token}}&token={{.Token}}{{end}}">待审</a> |
+<a href="/admin?status=collected{{if .Token}}&token={{.Token}}{{end}}">已采集</a></p>
 <table><tr><th>ID</th><th>标题</th><th>源</th><th>状态</th><th>发布时间</th><th>标记反馈</th></tr>
 {{range .Posts}}<tr><td>{{.ID}}</td><td><a href="{{.URL}}" target="_blank">{{.Title}}</a></td>
 <td>{{.Source}}</td><td>{{.Status}}</td><td>{{.PublishedAt.Format "01-02 15:04"}}</td>
-<td><form method="post" action="/admin/mark">
+<td><form method="post" action="/admin/mark{{if $.Token}}?token={{$.Token}}{{end}}">
 <input type="hidden" name="post_id" value="{{.ID}}">
 <select name="action"><option value="useful">有用</option><option value="useless">无用</option></select>
 <input type="text" name="reason" placeholder="原因（可选）">

@@ -2,6 +2,7 @@ package collector
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -17,10 +18,12 @@ type fakeSource struct {
 	next        string       // List 固定返回的下一页游标（"" = 单页/末尾）
 	details     map[string]models.RentPost
 	detailCalls int
+	listCalls   atomic.Int32 // 循环测试用：每轮至少调一次 List（并发安全）
 }
 
 func (f *fakeSource) Name() string { return f.name }
 func (f *fakeSource) List(ctx context.Context, cursor string) ([]ListItem, string, error) {
+	f.listCalls.Add(1)
 	idx := 0
 	if cursor == "1" {
 		idx = 1
@@ -148,4 +151,112 @@ func TestRunnerAdvancesPastEmptyPage(t *testing.T) {
 	if src.detailCalls != 0 {
 		t.Errorf("Detail 调用 = %d, want 0", src.detailCalls)
 	}
+}
+
+// newControlRunner 控制接口测试用 runner：单 fake 源，1s 周期无抖动（循环测试可预期）
+func newControlRunner(t *testing.T) (*Runner, *fakeSource) {
+	t.Helper()
+	st, err := store.Open(t.TempDir() + "/t.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	rt := config.NewRuntime(&config.AppConfig{
+		Collector: config.CollectorConfig{
+			Interval: 1, JitterRatio: 0, MaxAgeDays: 7,
+			Sources: []string{"fake"},
+			Douban:  config.DoubanConfig{Groups: []string{"x"}},
+		},
+	})
+	src := &fakeSource{
+		name:    "fake",
+		pages:   [][]ListItem{{{ExternalID: "a", URL: "u/a", Title: "t", PublishedAt: time.Now()}}},
+		details: map[string]models.RentPost{"a": {Source: "fake", ExternalID: "a", Title: "t", CollectedAt: time.Now(), Status: models.PostStatusCollected}},
+	}
+	r := NewRunner(rt, &config.EnvLocalConfig{}, st, []Source{src}, nil)
+	return r, src
+}
+
+// waitFor 轮询等待条件成立（≤timeout，10ms 间隔）；超时 t.Fatal
+func waitFor(t *testing.T, timeout time.Duration, cond func() bool, msg string) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal(msg)
+}
+
+// TestSetEnabled：默认全 true；未知源报错；disable 后 SourceEnabled=false
+func TestSetEnabled(t *testing.T) {
+	r, _ := newControlRunner(t)
+	if !r.SourceEnabled("fake") {
+		t.Error("默认源应为启用")
+	}
+	if err := r.SetEnabled("unknown", false); err == nil {
+		t.Error("未知源 SetEnabled 应报错")
+	}
+	if err := r.SetEnabled("fake", false); err != nil {
+		t.Fatal(err)
+	}
+	if r.SourceEnabled("fake") {
+		t.Error("disable 后 SourceEnabled 应为 false")
+	}
+	if err := r.SetEnabled("fake", true); err != nil {
+		t.Fatal(err)
+	}
+	if !r.SourceEnabled("fake") {
+		t.Error("enable 后 SourceEnabled 应为 true")
+	}
+}
+
+// TestTrigger：Trigger 后 runSource 至少执行一轮（fake Source 计数）；
+// manual 通道容量 1 非阻塞——Trigger 不等待循环；未知源报错
+func TestTrigger(t *testing.T) {
+	r, src := newControlRunner(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go r.Run(ctx)
+
+	if err := r.Trigger("fake"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 5*time.Second, func() bool { return src.listCalls.Load() >= 1 }, "Trigger 后应至少执行一轮采集")
+	if err := r.Trigger("unknown"); err == nil {
+		t.Error("未知源 Trigger 应报错")
+	}
+}
+
+// TestSourceEnabledLoop：停用态不执行轮次（fake Source 计数不变）；
+// Trigger 后即使停用也执行一轮；重新启用后循环自然恢复（无需额外信号）
+func TestSourceEnabledLoop(t *testing.T) {
+	r, src := newControlRunner(t)
+	if err := r.SetEnabled("fake", false); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go r.Run(ctx)
+
+	// 停用态：等待超过一个轮询周期，不执行轮次
+	time.Sleep(1500 * time.Millisecond)
+	if n := src.listCalls.Load(); n != 0 {
+		t.Fatalf("停用态不应执行轮次, listCalls=%d", n)
+	}
+
+	// Trigger：即使停用也执行一轮（规格 7.1 手动触发抓取）
+	if err := r.Trigger("fake"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 5*time.Second, func() bool { return src.listCalls.Load() >= 1 }, "停用态 Trigger 后应执行一轮")
+
+	// 重新启用：循环自然恢复（周期轮询后按 1s 周期自然跑轮）
+	base := src.listCalls.Load()
+	if err := r.SetEnabled("fake", true); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 5*time.Second, func() bool { return src.listCalls.Load() >= base+1 }, "重新启用后应自然恢复轮次")
 }

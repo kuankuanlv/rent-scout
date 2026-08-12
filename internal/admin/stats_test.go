@@ -36,6 +36,16 @@ func TestStatsPage(t *testing.T) {
 		Stage: models.StageHardRule, RejectedBy: "x", DecidedAt: now}); err != nil {
 		t.Fatal(err)
 	}
+	// 昨日帖 + 昨日判定：不得计入今日计数（边界过滤）
+	yesterday := now.AddDate(0, 0, -1)
+	if _, err := s.InsertPost(models.RentPost{Source: "douban", ExternalID: "st-yesterday", Title: "t",
+		CollectedAt: yesterday, Status: models.PostStatusCollected}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveFilterResult(models.FilterResult{PostID: postID(t, s, "st-yesterday"), Status: models.PostStatusPassed,
+		Stage: models.StageHardRule, DecidedAt: yesterday}); err != nil {
+		t.Fatal(err)
+	}
 
 	// 渠道：feishu sent×1 + dead×1 → 成功率 50%
 	sentID := postID(t, s, "st0")
@@ -63,7 +73,7 @@ func TestStatsPage(t *testing.T) {
 	for _, want := range []string{
 		"统计报表", "今日概览",
 		"采集 2", "通过 1", "拒绝 1", // 今日计数
-		"feishu", "50%",   // 渠道行 + 成功率
+		"feishu", "50%", // 渠道行 + 成功率
 		"403 无权限", // 死信行（最后错误）
 	} {
 		if !strings.Contains(body, want) {

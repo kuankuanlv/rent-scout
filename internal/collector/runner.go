@@ -108,10 +108,15 @@ func (r *Runner) runSource(ctx context.Context, src Source) {
 	interval := time.Duration(r.rt.Get().Collector.SourceInterval(src.Name())) * time.Second
 	jitter := r.rt.Get().Collector.JitterRatio
 	failStreak := 0
+	prevEnabled := true
 	for {
 		// 停用态：等待手动触发或周期轮询恢复
 		if !r.SourceEnabled(src.Name()) {
-			slog.Info("源已停用，等待恢复", "source", src.Name())
+			// 仅状态迁移时打一次日志，避免 1s 轮询刷屏
+			if prevEnabled {
+				slog.Info("源已停用，等待恢复", "source", src.Name())
+			}
+			prevEnabled = false
 			select {
 			case <-ctx.Done():
 				return
@@ -127,11 +132,14 @@ func (r *Runner) runSource(ctx context.Context, src Source) {
 			}
 			continue
 		}
+		prevEnabled = true
 		// 等待时长：失败指数退避优先，成功间隔 ±jitter 抖动（保持原退避语义）
 		wait := jittered(interval, jitter)
 		if failStreak > 0 {
 			wait = time.Duration(1<<min(failStreak-1, 5)) * time.Minute
 		}
+		// 在等待前打日志，wait_s 即下一轮实际等待时长（退避/抖动均准确）
+		slog.Info("等待下一轮采集", "source", src.Name(), "wait_s", int(wait.Seconds()))
 		select {
 		case <-ctx.Done():
 			return
@@ -151,7 +159,6 @@ func (r *Runner) runSource(ctx context.Context, src Source) {
 				continue // 下一轮循环：failStreak>0 → wait=backoff
 			}
 			failStreak = 0
-			slog.Info("本轮采集完成，等待下一轮", "source", src.Name(), "wait_s", int(wait.Seconds()))
 		}
 	}
 }

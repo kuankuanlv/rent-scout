@@ -8,7 +8,7 @@
 # ---------- 常规 General（服务运行基础，一般不用改） ----------
 
 [server]
-addr = ":8080"            # HTTP 监听地址（admin 页面 / API）
+addr = ":7777"            # HTTP 监听地址（admin 页面 / API）
 
 [log]
 level = "info"            # 日志级别：debug / info / warn / error

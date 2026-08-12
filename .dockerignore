@@ -1,0 +1,27 @@
+# Git
+.git/
+.gitignore
+
+# Build artifacts
+*.exe
+*.test
+*.out
+
+# IDE
+.idea/
+.vscode/
+.DS_Store
+
+# Data (excluded from image, mounted as volume)
+db/
+data/
+
+# Local config (mounted as volume)
+config/*.local.toml
+
+# Documentation
+docs/
+*.md
+
+# Go
+vendor/

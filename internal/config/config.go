@@ -85,7 +85,7 @@ var defaultDoubanGroups = []string{
 // applyDefaults 约定大于配置：缺省值对个人场景开箱即用（规格 7.2）
 func applyDefaults(cfg *AppConfig) {
 	if cfg.Server.Addr == "" {
-		cfg.Server.Addr = ":8080"
+		cfg.Server.Addr = ":7777"
 	}
 	if cfg.Log.Level == "" {
 		cfg.Log.Level = "info"

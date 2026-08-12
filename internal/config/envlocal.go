@@ -8,7 +8,6 @@ import (
 
 // EnvLocalConfig 敏感配置（config.env.local.toml，gitignore，不入库）
 type EnvLocalConfig struct {
-	Admin     AdminConfig  `toml:"admin"`     // 常规：鉴权
 	Collector EnvCollector `toml:"collector"` // 收集：每源 cookie
 	Filter    EnvFilter    `toml:"filter"`    // 过滤：LLM
 	Notifier  EnvNotifier  `toml:"notifier"`  // 通知：各渠道 webhook

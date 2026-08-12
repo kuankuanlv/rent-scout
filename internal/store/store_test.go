@@ -470,3 +470,348 @@ func TestRuleHitStatsAIPostsNoGhost(t *testing.T) {
 		t.Errorf("hits = %d, want 1", stats[0].Hits)
 	}
 }
+
+// 帖子列表：状态过滤 / 分页 / 空 status 全量（id 倒序）
+func TestListPosts(t *testing.T) {
+	s := newTestStore(t)
+	defer s.Close()
+	// 3 帖不同状态（播种顺序 = id 升序）
+	statuses := []string{models.PostStatusCollected, models.PostStatusPassed, models.PostStatusRejected}
+	for i, st := range statuses {
+		p := models.RentPost{Source: "douban", ExternalID: fmt.Sprintf("lp%d", i), Title: "t",
+			CollectedAt: time.Now(), Status: st}
+		if _, err := s.InsertPost(p); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// 空 status：全量 3 帖，id 倒序（rejected 最后播种 id 最大 → 排最前）
+	all, err := s.ListPosts("", 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 3 {
+		t.Errorf("全量 = %d, want 3", len(all))
+	}
+	if all[0].Status != models.PostStatusRejected {
+		t.Errorf("倒序错误: 首帖状态 = %s, want rejected（id 最大）", all[0].Status)
+	}
+
+	// 按状态过滤
+	passed, err := s.ListPosts(models.PostStatusPassed, 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(passed) != 1 || passed[0].Status != models.PostStatusPassed {
+		t.Errorf("过滤 passed = %+v, want 仅 1 帖", passed)
+	}
+
+	// 分页：limit=1 offset=1 → 第二新的一帖（passed）
+	page, err := s.ListPosts("", 1, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page) != 1 || page[0].Status != models.PostStatusPassed {
+		t.Errorf("分页 = %+v, want 1 帖 passed", page)
+	}
+}
+
+// 帖子详情：存在 ok=true；不存在 ok=false
+func TestGetPost(t *testing.T) {
+	s := newTestStore(t)
+	defer s.Close()
+	id := seedPost(t, s)
+
+	p, ok, err := s.GetPost(id)
+	if err != nil || !ok {
+		t.Fatalf("详情: ok=%v err=%v", ok, err)
+	}
+	if p.ID != id || p.Source != "douban" {
+		t.Errorf("详情内容: %+v", p)
+	}
+	_, ok, err = s.GetPost(id + 999)
+	if err != nil || ok {
+		t.Errorf("不存在应 ok=false: ok=%v err=%v", ok, err)
+	}
+}
+
+// 帖子详情页：通知记录 + 反馈记录
+func TestPostDetailLists(t *testing.T) {
+	s := newTestStore(t)
+	defer s.Close()
+	id := seedPost(t, s)
+
+	if _, err := s.InsertNotification(id, "feishu"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.InsertNotification(id, "pushplus"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.InsertFeedback(models.Feedback{PostID: id, Channel: "feishu", Action: models.FeedbackUseless, Reason: "假房源"}); err != nil {
+		t.Fatal(err)
+	}
+
+	notifs, err := s.ListNotificationsByPost(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(notifs) != 2 || notifs[0].PostID != id {
+		t.Errorf("帖子通知 = %+v, want 2 条", notifs)
+	}
+	if notifs[0].Status != models.NotifyStatusPending {
+		t.Errorf("通知初始状态 = %s, want pending", notifs[0].Status)
+	}
+
+	feedbacks, err := s.ListFeedbacksByPost(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(feedbacks) != 1 || feedbacks[0].Action != models.FeedbackUseless {
+		t.Errorf("帖子反馈 = %+v, want 1 条 useless", feedbacks)
+	}
+}
+
+// 死信重发：dead → pending 且清空次数/错误；非 dead 幂等返回 false
+func TestResetNotification(t *testing.T) {
+	s := newTestStore(t)
+	defer s.Close()
+	deadID := seedPost(t, s)
+	sentID := seedPost(t, s)
+
+	if _, err := s.InsertNotification(deadID, "feishu"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkNotificationFailed(deadID, "feishu", "webhook 403", 3); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkNotificationDead(deadID, "feishu", "webhook 403"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.InsertNotification(sentID, "feishu"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkNotificationSent(sentID, "feishu"); err != nil {
+		t.Fatal(err)
+	}
+
+	// dead 帖 reset → true，状态变 pending，attempts/last_error 清零
+	reset, err := s.ResetNotification(deadID, "feishu")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reset {
+		t.Error("dead reset 应返回 true")
+	}
+	var status string
+	var attempts int
+	var lastErr string
+	if err := s.db.QueryRow(`SELECT status, attempts, last_error FROM notifications WHERE post_id=? AND channel='feishu'`, deadID).
+		Scan(&status, &attempts, &lastErr); err != nil {
+		t.Fatal(err)
+	}
+	if status != models.NotifyStatusPending || attempts != 0 || lastErr != "" {
+		t.Errorf("reset 后 = %s/%d/%q, want pending/0/''", status, attempts, lastErr)
+	}
+	// 再次 reset 已非 dead → false（幂等）
+	reset, err = s.ResetNotification(deadID, "feishu")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reset {
+		t.Error("非 dead 再次 reset 应返回 false")
+	}
+	// sent 帖 reset → false
+	reset, err = s.ResetNotification(sentID, "feishu")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reset {
+		t.Error("sent 帖 reset 应返回 false")
+	}
+}
+
+// 死信列表：只返回 dead，id 倒序
+func TestFetchDeadNotifications(t *testing.T) {
+	s := newTestStore(t)
+	defer s.Close()
+	deadID := seedPost(t, s)
+	sentID := seedPost(t, s)
+	pendingID := seedPost(t, s)
+
+	if _, err := s.InsertNotification(deadID, "feishu"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkNotificationDead(deadID, "feishu", "403"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.InsertNotification(sentID, "feishu"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkNotificationSent(sentID, "feishu"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.InsertNotification(pendingID, "feishu"); err != nil {
+		t.Fatal(err)
+	}
+
+	dead, err := s.FetchDeadNotifications(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dead) != 1 || dead[0].PostID != deadID || dead[0].Status != models.NotifyStatusDead {
+		t.Errorf("死信列表 = %+v, want 仅 dead 帖 %d", dead, deadID)
+	}
+}
+
+// 反馈列表：id 倒序 + 限量
+func TestListFeedbacks(t *testing.T) {
+	s := newTestStore(t)
+	defer s.Close()
+	id1 := seedPost(t, s)
+	id2 := seedPost(t, s)
+	if err := s.InsertFeedback(models.Feedback{PostID: id1, Channel: "feishu", Action: models.FeedbackUseless, Reason: "假房源"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.InsertFeedback(models.Feedback{PostID: id2, Channel: "feishu", Action: models.FeedbackUseful, Reason: "真实"}); err != nil {
+		t.Fatal(err)
+	}
+
+	feedbacks, err := s.ListFeedbacks(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(feedbacks) != 2 {
+		t.Errorf("反馈数 = %d, want 2", len(feedbacks))
+	}
+	if feedbacks[0].PostID != id2 {
+		t.Errorf("倒序错误: 首条 post_id = %d, want %d（后写入）", feedbacks[0].PostID, id2)
+	}
+	if feedbacks[1].Action != models.FeedbackUseless {
+		t.Errorf("反馈内容: %+v", feedbacks[1])
+	}
+	// 限量
+	one, err := s.ListFeedbacks(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(one) != 1 {
+		t.Errorf("限量 = %d, want 1", len(one))
+	}
+}
+
+// 今日统计：只统计今日 collected 与今日判定分布，昨日不计入
+func TestTodayStats(t *testing.T) {
+	s := newTestStore(t)
+	defer s.Close()
+	now := time.Now()
+	// 今日 2 帖 + 昨日 1 帖（AddDate 保证日期偏移一天，跨午夜安全）
+	for i := 0; i < 2; i++ {
+		p := models.RentPost{Source: "douban", ExternalID: fmt.Sprintf("td%d", i), Title: "t",
+			CollectedAt: now, Status: models.PostStatusCollected}
+		if _, err := s.InsertPost(p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	y := models.RentPost{Source: "douban", ExternalID: "yesterday", Title: "t",
+		CollectedAt: now.AddDate(0, 0, -1), Status: models.PostStatusCollected}
+	if _, err := s.InsertPost(y); err != nil {
+		t.Fatal(err)
+	}
+
+	// 3 条昨日采集的帖子（避免污染今日 collected 计数），分别做今日/昨日判定
+	var ids []int64
+	for i := 0; i < 3; i++ {
+		p := models.RentPost{Source: "douban", ExternalID: fmt.Sprintf("fr%d", i), Title: "t",
+			CollectedAt: now.AddDate(0, 0, -1), Status: models.PostStatusCollected}
+		if _, err := s.InsertPost(p); err != nil {
+			t.Fatal(err)
+		}
+		var id int64
+		if err := s.db.QueryRow(`SELECT id FROM posts WHERE external_id=?`, fmt.Sprintf("fr%d", i)).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+	}
+	if err := s.SaveFilterResult(models.FilterResult{PostID: ids[0], Status: models.PostStatusPassed, Stage: models.StageHardRule, DecidedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveFilterResult(models.FilterResult{PostID: ids[1], Status: models.PostStatusRejected, Stage: models.StageHardRule, RejectedBy: "x", DecidedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveFilterResult(models.FilterResult{PostID: ids[2], Status: models.PostStatusPassed, Stage: models.StageHardRule, DecidedAt: now.AddDate(0, 0, -1)}); err != nil {
+		t.Fatal(err)
+	}
+
+	stats, err := s.TodayStats()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Collected != 2 {
+		t.Errorf("Collected = %d, want 2", stats.Collected)
+	}
+	if stats.Passed != 1 {
+		t.Errorf("Passed = %d, want 1", stats.Passed)
+	}
+	if stats.Rejected != 1 {
+		t.Errorf("Rejected = %d, want 1", stats.Rejected)
+	}
+	if stats.Pending != 0 {
+		t.Errorf("Pending = %d, want 0", stats.Pending)
+	}
+}
+
+// 渠道发送统计：多渠道多状态聚合（历史全量）
+func TestChannelStats(t *testing.T) {
+	s := newTestStore(t)
+	defer s.Close()
+	// feishu: sent×2 + dead×1；pushplus: failed×1；dingtalk: pending×1
+	feishuPosts := []int64{seedPost(t, s), seedPost(t, s), seedPost(t, s)}
+	for _, id := range feishuPosts[:2] {
+		if _, err := s.InsertNotification(id, "feishu"); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.MarkNotificationSent(id, "feishu"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.InsertNotification(feishuPosts[2], "feishu"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkNotificationDead(feishuPosts[2], "feishu", "403"); err != nil {
+		t.Fatal(err)
+	}
+
+	pp := seedPost(t, s)
+	if _, err := s.InsertNotification(pp, "pushplus"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkNotificationFailed(pp, "pushplus", "timeout", 1); err != nil {
+		t.Fatal(err)
+	}
+
+	dt := seedPost(t, s)
+	if _, err := s.InsertNotification(dt, "dingtalk"); err != nil {
+		t.Fatal(err)
+	}
+
+	stats, err := s.ChannelStats()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stats) != 3 {
+		t.Fatalf("渠道数 = %d, want 3: %+v", len(stats), stats)
+	}
+	got := map[string]ChannelStat{}
+	for _, st := range stats {
+		got[st.Channel] = st
+	}
+	if g := got["feishu"]; g.Sent != 2 || g.Failed != 0 || g.Dead != 1 {
+		t.Errorf("feishu 统计 = %+v, want sent=2 failed=0 dead=1", g)
+	}
+	if g := got["pushplus"]; g.Sent != 0 || g.Failed != 1 || g.Dead != 0 {
+		t.Errorf("pushplus 统计 = %+v, want sent=0 failed=1 dead=0", g)
+	}
+	if g := got["dingtalk"]; g.Sent != 0 || g.Failed != 0 || g.Dead != 0 {
+		t.Errorf("dingtalk 统计 = %+v, want 全 0（仅 pending）", g)
+	}
+}

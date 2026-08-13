@@ -13,6 +13,9 @@ import (
 // InsertPost 去重入库：posts 表 UNIQUE(source, external_id)，
 // 已存在则跳过并返回 added=false（帖子内容以首抓为准，避免通知重复，规格 4.6）
 func (s *Store) InsertPost(p models.RentPost) (bool, error) {
+	if err := validatePostStatusWrite(p.Status); err != nil {
+		return false, err
+	}
 	// nil 标签序列化为 "[]" 而非 "null"（与列默认值 '[]' 一致）
 	tags := p.AddressTags
 	if tags == nil {
@@ -67,10 +70,13 @@ func (s *Store) FetchPendingByStatus(status string, limit int) ([]models.RentPos
 	return posts, rows.Err()
 }
 
-// MarkStatus 原子更新一批帖子的主状态（状态机流转，规格 2.4）
+// MarkStatus 原子更新一批帖子的主状态（仅四态，Spec 09 §1）
 func (s *Store) MarkStatus(ids []int64, status string) error {
 	if len(ids) == 0 {
 		return nil
+	}
+	if err := validatePostStatusWrite(status); err != nil {
+		return err
 	}
 	// 构造占位符列表，批量 IN 更新
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
@@ -83,6 +89,18 @@ func (s *Store) MarkStatus(ids []int64, status string) error {
 		return fmt.Errorf("批量状态流转 %s: %w", status, err)
 	}
 	return nil
+}
+
+// validatePostStatusWrite 拒写 sent/acked 及非四态（Spec 09 §1）；notifications.status=sent 不受影响。
+func validatePostStatusWrite(status string) error {
+	switch status {
+	case models.PostStatusCollected, models.PostStatusPending, models.PostStatusPassed, models.PostStatusRejected:
+		return nil
+	case "sent", "acked":
+		return fmt.Errorf("禁止写入已废弃帖子状态 %s", status)
+	default:
+		return fmt.Errorf("非法帖子状态 %s，仅允许 collected|pending|passed|rejected", status)
+	}
 }
 
 // FetchPendingByStatuses 拉取多个主状态的一批帖子（filter 消费：collected+pending），按 id 升序限量

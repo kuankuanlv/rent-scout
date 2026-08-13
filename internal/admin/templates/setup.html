@@ -1,0 +1,114 @@
+{{define "setup"}}
+<!DOCTYPE html>
+<html lang="zh">
+<head><title>首次设置 - rent-scout</title>{{template "head" .}}</head>
+<body class="bg-gradient-to-br from-brand-50 via-white to-indigo-50 min-h-screen">
+<main class="max-w-2xl mx-auto px-4 py-8 sm:py-12">
+  <div class="text-center mb-8">
+    <div class="text-4xl mb-3">🏠</div>
+    <h1 class="text-2xl sm:text-3xl font-bold text-gray-900">首次设置</h1>
+    <p class="text-gray-500 mt-2 text-sm">步骤 1 必填；后续步骤可跳过，稍后在配置页修改</p>
+  </div>
+  <div class="flex justify-center gap-2 mb-8">
+    {{range $i := seq .Total}}
+    <div class="h-2 rounded-full {{if le $i $.Step}}bg-brand-600 w-8{{else}}bg-gray-200 w-4{{end}} transition-all"></div>
+    {{end}}
+  </div>
+  <div class="bg-white rounded-2xl shadow-lg border border-gray-100 p-6 sm:p-8">
+    <h2 class="text-lg font-bold text-gray-900 mb-4">{{setupStepTitle .Step}}</h2>
+    <form method="post" action="/admin/setup{{if .Token}}?token={{.Token}}{{end}}" class="space-y-4">
+      <input type="hidden" name="step" value="{{.Step}}">
+      {{if eq .Step 1}}
+      <label class="flex items-center gap-2 text-sm"><input type="checkbox" name="admin.auth_required" value="on" {{if .App.Admin.AuthRequired}}checked{{end}}> 启用访问鉴权（推荐）</label>
+      <div><label class="block text-sm font-medium mb-1">访问 Token</label>
+      <input type="password" name="admin.token" placeholder="启用鉴权时必填" class="w-full border rounded-xl px-3 py-2 text-sm"></div>
+      <p class="text-xs text-gray-400">保存后继续下一步；此步骤不可跳过</p>
+      {{else if eq .Step 2}}
+      <div><label class="block text-sm font-medium mb-1">监听地址</label>
+      <input name="server.addr" value="{{.App.Server.Addr}}" class="w-full border rounded-xl px-3 py-2 text-sm"></div>
+      <div><label class="block text-sm font-medium mb-1">日志级别</label>
+      <select name="log.level" class="w-full border rounded-xl px-3 py-2 text-sm">
+        <option value="info" {{if eq .App.Log.Level "info"}}selected{{end}}>info</option>
+        <option value="debug" {{if eq .App.Log.Level "debug"}}selected{{end}}>debug</option>
+        <option value="warn" {{if eq .App.Log.Level "warn"}}selected{{end}}>warn</option></select></div>
+      {{else if eq .Step 3}}
+      <div><label class="block text-sm font-medium mb-1">采集间隔（秒）</label>
+      <input type="number" name="collector.interval" value="{{.App.Collector.Interval}}" class="w-full border rounded-xl px-3 py-2 text-sm"></div>
+      <div><label class="block text-sm font-medium mb-1">Cookie 模式</label>
+      <select name="secret.collector.douban.cookie_mode" class="w-full border rounded-xl px-3 py-2 text-sm">
+        <option value="none" {{if or (eq .Env.Collector.Douban.CookieMode "none") (eq .Env.Collector.Douban.CookieMode "")}}selected{{end}}>none（匿名）</option>
+        <option value="raw" {{if eq .Env.Collector.Douban.CookieMode "raw"}}selected{{end}}>raw（原文）</option>
+        <option value="file" {{if eq .Env.Collector.Douban.CookieMode "file"}}selected{{end}}>file（本地文件）</option>
+        <option value="cookiecloud" {{if eq .Env.Collector.Douban.CookieMode "cookiecloud"}}selected{{end}}>cookiecloud</option></select></div>
+      <div><label class="block text-sm font-medium mb-1">Cookie 原文</label>
+      <textarea name="secret.collector.douban.cookie_raw" rows="3" class="w-full border rounded-xl px-3 py-2 text-sm" placeholder="cookie_mode=raw 时粘贴；留空不修改"></textarea>
+      {{if .CookieRawHint}}<p class="text-xs text-gray-400 mt-1">{{.CookieRawHint}}</p>{{end}}</div>
+      <div><label class="block text-sm font-medium mb-1">Cookie 文件路径</label>
+      <input name="secret.collector.douban.cookie_file" value="{{.Env.Collector.Douban.CookieFile}}" class="w-full border rounded-xl px-3 py-2 text-sm" placeholder="cookie_mode=file 时使用"></div>
+      <div><label class="block text-sm font-medium mb-1">CookieCloud 地址</label>
+      <input name="secret.collector.douban.cookiecloud_url" value="{{.Env.Collector.Douban.CookiecloudURL}}" class="w-full border rounded-xl px-3 py-2 text-sm" placeholder="https://your-cc-host"></div>
+      <div><label class="block text-sm font-medium mb-1">CookieCloud UUID</label>
+      <input name="secret.collector.douban.cookiecloud_key" value="{{.Env.Collector.Douban.CookiecloudKey}}" class="w-full border rounded-xl px-3 py-2 text-sm"></div>
+      <div><label class="block text-sm font-medium mb-1">CookieCloud 密码</label>
+      <input type="password" name="secret.collector.douban.cookiecloud_password" class="w-full border rounded-xl px-3 py-2 text-sm" placeholder="留空不修改"></div>
+      <div><label class="block text-sm font-medium mb-1">豆瓣小组（每行一个 URL）</label>
+      <textarea name="collector.douban.groups" rows="4" class="w-full border rounded-xl px-3 py-2 text-sm">{{range $i, $g := .App.Collector.Douban.Groups}}{{if $i}}
+{{end}}{{$g}}{{end}}</textarea></div>
+      <div class="flex flex-col gap-2">
+        <button type="button" id="cookie-test-btn" class="px-4 py-2 border border-brand-200 text-brand-700 hover:bg-brand-50 rounded-xl text-sm font-medium">测试 Cookie</button>
+        <pre id="cookie-test-result" class="hidden text-xs bg-slate-50 border border-gray-100 rounded-xl p-3 overflow-x-auto whitespace-pre-wrap"></pre>
+      </div>
+      {{else if eq .Step 4}}
+      <label class="flex items-center gap-2 text-sm"><input type="checkbox" name="filter.ai_enabled" value="on" checked> 启用 AI 筛选</label>
+      <div><label class="block text-sm font-medium mb-1">LLM API Key（可选）</label>
+      <input type="password" name="secret.filter.llm.api_key" class="w-full border rounded-xl px-3 py-2 text-sm"></div>
+      <div><label class="block text-sm font-medium mb-1">模型</label>
+      <input name="secret.filter.llm.model" value="deepseek-chat" class="w-full border rounded-xl px-3 py-2 text-sm"></div>
+      {{else if eq .Step 5}}
+      <div><label class="block text-sm font-medium mb-1">飞书 Webhook（可选）</label>
+      <input type="password" name="secret.notifier.feishu.webhook" class="w-full border rounded-xl px-3 py-2 text-sm" placeholder="https://..."></div>
+      <p class="text-xs text-gray-400">通知渠道可稍后在配置页补充</p>
+      {{end}}
+      <div class="mt-8 flex flex-col sm:flex-row gap-3 justify-between">
+        {{if gt .Step 1}}<a href="/admin/setup?step={{sub .Step 1}}{{if .Token}}&token={{.Token}}{{end}}" class="text-center px-4 py-2 border rounded-xl text-sm text-gray-600">上一步</a>{{else}}<span></span>{{end}}
+        <div class="flex gap-2 flex-1 justify-end">
+          {{if gt .Step 1}}<button type="submit" name="action" value="skip" class="px-4 py-2 border rounded-xl text-sm text-gray-600">跳过</button>{{end}}
+          {{if lt .Step .Total}}
+          <button type="submit" name="action" value="next" class="px-6 py-3 bg-brand-600 text-white rounded-xl font-medium">保存并继续</button>
+          {{else}}
+          <button type="submit" name="action" value="finish" class="px-6 py-3 bg-brand-600 text-white rounded-xl font-medium">完成设置</button>
+          {{end}}
+        </div>
+      </div>
+    </form>
+  </div>
+</main>
+{{if eq .Step 3}}
+<script>
+(function(){
+  var btn = document.getElementById('cookie-test-btn');
+  var out = document.getElementById('cookie-test-result');
+  if (!btn || !out) return;
+  btn.addEventListener('click', function(){
+    var form = btn.closest('form');
+    var fd = new FormData();
+    function v(name){ var el = form.querySelector('[name="'+name+'"]'); return el ? el.value : ''; }
+    fd.set('cookie_mode', v('secret.collector.douban.cookie_mode'));
+    fd.set('cookie_raw', v('secret.collector.douban.cookie_raw'));
+    fd.set('cookie_file', v('secret.collector.douban.cookie_file'));
+    fd.set('cookiecloud_url', v('secret.collector.douban.cookiecloud_url'));
+    fd.set('cookiecloud_key', v('secret.collector.douban.cookiecloud_key'));
+    fd.set('cookiecloud_password', v('secret.collector.douban.cookiecloud_password'));
+    out.classList.remove('hidden');
+    out.textContent = '探测中…';
+    var url = '/admin/config/cookie/test{{if $.Token}}?token={{$.Token}}{{end}}';
+    fetch(url, {method:'POST', body: fd, credentials:'same-origin'})
+      .then(function(r){ return r.json(); })
+      .then(function(j){ out.textContent = JSON.stringify(j, null, 2); })
+      .catch(function(e){ out.textContent = '请求失败: ' + e; });
+  });
+})();
+</script>
+{{end}}
+</body></html>
+{{end}}

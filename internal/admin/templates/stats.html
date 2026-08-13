@@ -1,25 +1,36 @@
 {{define "stats"}}
-<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8"><title>统计报表</title>
-<style>body{font-family:system-ui;margin:1rem}table{border-collapse:collapse;width:100%}
-th,td{border:1px solid #ccc;padding:4px 8px;font-size:14px;vertical-align:top}
-form{display:inline}select,input[type=text]{font-size:13px}</style></head>
-<body>{{template "nav" .}}
-{{if .Msg}}<p style="color:#c00">{{.Msg}}</p>{{end}}
-<h2>今日概览</h2>
-<p>采集 {{.Today.Collected}} ｜ 通过 {{.Today.Passed}} ｜ 拒绝 {{.Today.Rejected}} ｜ 待审 {{.Today.Pending}}</p>
-<h2>渠道发送统计（历史）</h2>
-<table><tr><th>渠道</th><th>sent</th><th>failed</th><th>dead</th><th>成功率</th></tr>
-{{range .Channels}}<tr><td>{{.Channel}}</td><td>{{.Sent}}</td><td>{{.Failed}}</td><td>{{.Dead}}</td>
-<td>{{if .Total}}{{percent .Sent .Total}}%{{else}}-{{end}}</td></tr>{{end}}</table>
-<h2>规则命中 × 反馈负向（规格 5.5）</h2>
-<table><tr><th>规则ID</th><th>命中</th><th>无用反馈帖数</th><th>负向率</th></tr>
-{{range .RuleStats}}<tr><td>{{.RuleID}}</td><td>{{.Hits}}</td><td>{{.UselessCount}}</td>
-<td>{{if .Hits}}{{percent .UselessCount .Hits}}%{{else}}-{{end}}</td></tr>{{end}}</table>
-<h2>死信（/admin 人工重发，规格 6.6）</h2>
-<table><tr><th>通知ID</th><th>帖ID</th><th>渠道</th><th>尝试</th><th>最后错误</th><th>操作</th></tr>
-{{range .Dead}}<tr><td>{{.ID}}</td><td>{{.PostID}}</td><td>{{.Channel}}</td><td>{{.Attempts}}</td>
-<td>{{.LastError}}</td><td><form method="post" action="/admin/dead/reset{{if $.Token}}?token={{$.Token}}{{end}}">
-<input type="hidden" name="post_id" value="{{.PostID}}">
-<input type="hidden" name="channel" value="{{.Channel}}"><button type="submit">重发</button></form></td></tr>{{end}}</table>
+<!DOCTYPE html>
+<html lang="zh">
+<head><title>统计报表 - rent-scout</title>{{template "head" .}}</head>
+<body class="bg-gradient-to-br from-slate-50 via-white to-brand-50 min-h-screen text-gray-800">
+{{template "nav" .}}
+<main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
+{{if .Msg}}<div class="mb-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 px-4 py-3 text-sm">{{.Msg}}</div>{{end}}
+<div class="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 mb-6">
+  <div class="bg-white rounded-2xl border p-4 text-center"><div class="text-2xl font-bold text-brand-600">{{.Today.Collected}}</div><div class="text-xs text-gray-500 mt-1">今日采集</div></div>
+  <div class="bg-white rounded-2xl border p-4 text-center"><div class="text-2xl font-bold text-green-600">{{.Today.Passed}}</div><div class="text-xs text-gray-500 mt-1">通过</div></div>
+  <div class="bg-white rounded-2xl border p-4 text-center"><div class="text-2xl font-bold text-red-600">{{.Today.Rejected}}</div><div class="text-xs text-gray-500 mt-1">拒绝</div></div>
+  <div class="bg-white rounded-2xl border p-4 text-center"><div class="text-2xl font-bold text-yellow-600">{{.Today.Pending}}</div><div class="text-xs text-gray-500 mt-1">待审</div></div>
+</div>
+<div class="bg-white rounded-2xl shadow-sm border p-4 sm:p-6 mb-6">
+  <h2 class="font-bold mb-4">渠道发送统计</h2>
+  <div class="overflow-x-auto"><table class="min-w-full text-sm"><thead class="text-xs text-gray-500"><tr><th class="text-left py-2">渠道</th><th class="text-right py-2">sent</th><th class="text-right py-2">failed</th><th class="text-right py-2">dead</th><th class="text-right py-2">成功率</th></tr></thead>
+  <tbody>{{range .Channels}}<tr class="border-t"><td class="py-2">{{.Channel}}</td><td class="text-right py-2">{{.Sent}}</td><td class="text-right py-2">{{.Failed}}</td><td class="text-right py-2">{{.Dead}}</td>
+  <td class="text-right py-2">{{if .Total}}{{percent .Sent .Total}}%{{else}}-{{end}}</td></tr>{{else}}<tr><td colspan="5" class="py-6 text-center text-gray-400">暂无数据</td></tr>{{end}}</tbody></table></div>
+</div>
+<div class="bg-white rounded-2xl shadow-sm border p-4 sm:p-6 mb-6">
+  <h2 class="font-bold mb-4">规则命中 × 负向反馈</h2>
+  <div class="overflow-x-auto"><table class="min-w-full text-sm"><thead class="text-xs text-gray-500"><tr><th class="text-left py-2">规则ID</th><th class="text-right py-2">命中</th><th class="text-right py-2">无用帖数</th><th class="text-right py-2">负向率</th></tr></thead>
+  <tbody>{{range .RuleStats}}<tr class="border-t"><td class="py-2">{{.RuleID}}</td><td class="text-right py-2">{{.Hits}}</td><td class="text-right py-2">{{.UselessCount}}</td>
+  <td class="text-right py-2">{{if .Hits}}{{percent .UselessCount .Hits}}%{{else}}-{{end}}</td></tr>{{else}}<tr><td colspan="4" class="py-6 text-center text-gray-400">暂无数据</td></tr>{{end}}</tbody></table></div>
+</div>
+<div class="bg-white rounded-2xl shadow-sm border p-4 sm:p-6">
+  <h2 class="font-bold mb-4">死信队列</h2>
+  <div class="overflow-x-auto"><table class="min-w-full text-sm"><thead class="text-xs text-gray-500"><tr><th class="text-left py-2">通知ID</th><th class="text-left py-2">帖ID</th><th class="text-left py-2">渠道</th><th class="text-right py-2">尝试</th><th class="text-left py-2">错误</th><th class="py-2">操作</th></tr></thead>
+  <tbody>{{range .Dead}}<tr class="border-t"><td class="py-2">{{.ID}}</td><td class="py-2">{{.PostID}}</td><td class="py-2">{{.Channel}}</td><td class="text-right py-2">{{.Attempts}}</td><td class="py-2 text-xs text-gray-500 max-w-xs truncate">{{.LastError}}</td>
+  <td class="py-2"><form method="post" action="/admin/dead/reset{{if $.Token}}?token={{$.Token}}{{end}}"><input type="hidden" name="post_id" value="{{.PostID}}"><input type="hidden" name="channel" value="{{.Channel}}"><button class="text-xs bg-brand-600 text-white px-2 py-1 rounded">重发</button></form></td></tr>{{else}}<tr><td colspan="6" class="py-6 text-center text-gray-400">暂无死信</td></tr>{{end}}</tbody></table></div>
+</div>
+</main>
+<footer class="text-center text-xs text-gray-400 py-6">rent-scout</footer>
 </body></html>
 {{end}}

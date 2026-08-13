@@ -24,12 +24,45 @@ func newAdminTestStore(t *testing.T) *store.Store {
 	return s
 }
 
+// newTestRuntime 写入 setup 完成标记并加载 Runtime
+func newTestRuntime(t *testing.T, s *store.Store, app *config.AppConfig, token string) *config.Runtime {
+	t.Helper()
+	if app == nil {
+		app = config.DefaultApp()
+	}
+	if token != "" {
+		app.Admin.Token = token
+	}
+	kv := config.MergeKV(config.AppToKV(app), config.EnvToKV(config.DefaultEnv()))
+	kv["setup.completed"] = "true"
+	if err := store.SetConfigBatch(s, kv); err != nil {
+		t.Fatal(err)
+	}
+	rt := config.NewRuntime(s)
+	if err := rt.ReloadOnce(); err != nil {
+		t.Fatal(err)
+	}
+	return rt
+}
+
+// newTestServer 创建已完成 setup 的 admin Server（含新 store）
+func newTestServer(t *testing.T, app *config.AppConfig, token string, ctrl SourceController) *Server {
+	t.Helper()
+	s := newAdminTestStore(t)
+	t.Cleanup(func() { s.Close() })
+	return newTestServerWithStore(t, s, app, token, ctrl)
+}
+
+// newTestServerWithStore 在已有 store 上创建 admin Server
+func newTestServerWithStore(t *testing.T, s *store.Store, app *config.AppConfig, token string, ctrl SourceController) *Server {
+	t.Helper()
+	rt := newTestRuntime(t, s, app, token)
+	return NewServer(s, rt, ctrl)
+}
+
 // TestHealthzNoAuth：健康检查豁免鉴权，无 token 直接 200 "ok"
 func TestHealthzNoAuth(t *testing.T) {
-	s := newAdminTestStore(t)
-	defer s.Close()
-	rt := config.NewRuntime(&config.AppConfig{})
-	srv := NewServer(s, rt, "", nil)
+	srv := newTestServer(t, &config.AppConfig{}, "", nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
@@ -45,10 +78,7 @@ func TestHealthzNoAuth(t *testing.T) {
 // TestAuthRequired：auth_required=true + token="t" → 无 token 401、Bearer/URL 正确 200、错 token 401。
 // 目前除 healthz/metrics 外无实际路由，直接测鉴权中间件（包 200 的下游 handler）
 func TestAuthRequired(t *testing.T) {
-	s := newAdminTestStore(t)
-	defer s.Close()
-	rt := config.NewRuntime(&config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}})
-	srv := NewServer(s, rt, "t", nil)
+	srv := newTestServer(t, &config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}}, "t", nil)
 
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -90,10 +120,7 @@ func TestAuthRequired(t *testing.T) {
 
 // TestAuthOptional：auth_required=false → 任意请求放行（无 token 也 200）
 func TestAuthOptional(t *testing.T) {
-	s := newAdminTestStore(t)
-	defer s.Close()
-	rt := config.NewRuntime(&config.AppConfig{}) // AuthRequired 默认 false
-	srv := NewServer(s, rt, "t", nil)            // 配了 token 也不拦截
+	srv := newTestServer(t, &config.AppConfig{}, "t", nil)
 
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -140,8 +167,7 @@ func TestMetrics(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rt := config.NewRuntime(&config.AppConfig{})
-	srv := NewServer(s, rt, "", nil)
+	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
@@ -172,7 +198,7 @@ func TestMetrics(t *testing.T) {
 // postID 按 external_id 反查帖子 ID（admin 包测试无法访问 store 内部字段，走公开查询）
 func postID(t *testing.T, s *store.Store, externalID string) int64 {
 	t.Helper()
-	all, err := s.ListPosts("", 100, 0)
+	all, err := s.ListPosts(store.PostListFilter{}, 100, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

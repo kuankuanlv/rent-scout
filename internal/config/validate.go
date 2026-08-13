@@ -77,8 +77,13 @@ func ValidateEnv(env *EnvLocalConfig) []string {
 	dc := env.Collector.Douban
 	mode := strings.ToLower(dc.CookieMode)
 	switch mode {
-	case "none":
-		// 无需额外校验
+	case "none", "":
+		// 空串与 none 同等，不要求 file/cloud/raw 字段
+	case "raw":
+		// 保存路径：空提交已沿用已存 cookie_raw，此处看到的应是合并后的值
+		if strings.TrimSpace(dc.CookieRaw) == "" {
+			errs = append(errs, "collector.douban.cookie_raw 不能为空（cookie_mode=raw）")
+		}
 	case "file":
 		if dc.CookieFile == "" {
 			errs = append(errs, "collector.douban.cookie_file 不能为空（cookie_mode=file）")
@@ -93,10 +98,8 @@ func ValidateEnv(env *EnvLocalConfig) []string {
 		if dc.CookiecloudPass == "" {
 			errs = append(errs, "collector.douban.cookiecloud_password 不能为空（cookie_mode=cookiecloud）")
 		}
-	case "":
-		errs = append(errs, "collector.douban.cookie_mode 未设置，请设置为 none/file/cookiecloud")
 	default:
-		errs = append(errs, "collector.douban.cookie_mode 必须是 none/file/cookiecloud")
+		errs = append(errs, "collector.douban.cookie_mode 必须是 none/raw/file/cookiecloud")
 	}
 
 	// Filter: LLM 校验（api_key 空则自动关闭，不报错；base_url 非空则校验）

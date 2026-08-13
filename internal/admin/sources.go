@@ -2,9 +2,10 @@ package admin
 
 import (
 	"encoding/json"
-	"log/slog"
 	"net/http"
 	"strings"
+
+	"rent-scout/internal/pkglog"
 )
 
 // handleSources 源列表（GET /api/sources，规格 7.1）：name/enabled/cursor（store.GetCursor）。
@@ -66,11 +67,11 @@ func (s *Server) handleSourceAction(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		// 控制器仅对未知源返回错误 → 404
-		slog.Warn("源动作失败", "source", name, "action", action, "err", err)
+		pkglog.Component(pkglog.Admin).Warn("[source_action_failed] 源操作失败", "source", name, "action", action, "err", err)
 		http.Error(w, "源不存在", http.StatusNotFound)
 		return
 	}
-	slog.Info("源动作", "source", name, "action", action)
+	pkglog.Component(pkglog.Admin).Info("[source_action] 源操作", "source", name, "action", action)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 }

@@ -67,6 +67,9 @@ func textPayload(items []NotifyItem) string {
 		if it.Price > 0 {
 			fmt.Fprintf(&sb, "价格: %d 元/月\n", it.Price)
 		}
+		if it.Contact != "" {
+			fmt.Fprintf(&sb, "联系人: %s\n", it.Contact)
+		}
 		if it.Commuting != "" {
 			fmt.Fprintf(&sb, "通勤: %s\n", it.Commuting)
 		}
@@ -78,6 +81,9 @@ func textPayload(items []NotifyItem) string {
 		}
 		if it.FeedbackUselessURL != "" {
 			fmt.Fprintf(&sb, "反馈: 无用 %s\n", it.FeedbackUselessURL)
+		}
+		if it.HandledURL != "" {
+			fmt.Fprintf(&sb, "已处理: %s\n", it.HandledURL)
 		}
 	}
 	return sb.String()

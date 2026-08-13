@@ -31,9 +31,9 @@ func (c *RuleChain) HasAI() bool {
 	return c.ai != nil
 }
 
-// EvaluateHard 硬编码链（规格 5.3）：白名单短路 / 黑名单 / 关键词。
+// EvaluateHard 硬编码链（Spec 09 §2.3）：白名单短路 → 黑名单拒绝 → 未定案交 AI。
 // 返回结果 + 白名单命中的地点标签（Consumer 负责写库 posts.address_tags）+ 是否定案。
-// decided=false = 未命中规则，需 AI 批或默认放行
+// decided=false = 未定案，需 AI 批或默认放行
 func (c *RuleChain) EvaluateHard(ctx context.Context, post models.RentPost, rules []models.Rule) (models.FilterResult, []string, bool, error) {
 	now := time.Now()
 	v, tags, hits, rejectedBy, err := EvaluateHard(post, rules)

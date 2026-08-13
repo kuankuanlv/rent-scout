@@ -13,19 +13,18 @@ import (
 	"rent-scout/internal/models"
 )
 
-// TestRulesPage 规则页：GET /admin/rules 200 含规则名与命中统计（Hits/标无用）
+// TestRulesPage GET /admin/rules → 302 到配置 tab=rules；配置页含规则名与命中统计
 func TestRulesPage(t *testing.T) {
 	s := newAdminTestStore(t)
 	defer s.Close()
-	rt := config.NewRuntime(&config.AppConfig{})
-	srv := NewServer(s, rt, "", nil)
+	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 
 	// 播种规则
-	r1, err := s.CreateRule(models.Rule{Name: "黑中介", Type: models.RuleTypeHardBlacklist, Mode: models.RuleModeExclude, Value: "中介", Enabled: true, Priority: 10})
+	r1, err := s.CreateRule(models.Rule{Name: "黑中介", Type: models.RuleTypeBlacklist, Value: "中介", Enabled: true, Priority: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.CreateRule(models.Rule{Name: "地铁近", Type: models.RuleTypeHardWhitelist, Mode: models.RuleModeInclude, Value: "地铁", Enabled: true, Priority: 1}); err != nil {
+	if _, err := s.CreateRule(models.Rule{Name: "地铁近", Type: models.RuleTypeWhitelist, Value: "地铁", Enabled: true, Priority: 1}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -35,7 +34,7 @@ func TestRulesPage(t *testing.T) {
 	}
 	pid := postID(t, s, "hit1")
 	if err := s.SaveFilterResult(models.FilterResult{PostID: pid, Status: models.PostStatusPassed, Stage: models.StageHardRule,
-		DecidedAt: time.Now(), HardRules: []models.RuleHit{{RuleID: r1.ID, Mode: models.RuleModeExclude, Reason: "中介"}}}); err != nil {
+		DecidedAt: time.Now(), HardRules: []models.RuleHit{{RuleID: r1.ID, Reason: "中介"}}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.InsertFeedback(models.Feedback{PostID: pid, Action: models.FeedbackUseless, CreatedAt: time.Now()}); err != nil {
@@ -45,18 +44,34 @@ func TestRulesPage(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/admin/rules", nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("GET /admin/rules status = %d, want 200", rec.Code)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("GET /admin/rules status = %d, want 302", rec.Code)
 	}
-	body := rec.Body.String()
-	for _, want := range []string{"规则管理", "黑中介", "地铁近"} {
+	if loc := rec.Header().Get("Location"); loc != "/admin/config?tab=rules" {
+		t.Fatalf("Location = %q, want /admin/config?tab=rules", loc)
+	}
+
+	req2 := httptest.NewRequest(http.MethodGet, "/admin/config?tab=rules", nil)
+	rec2 := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("GET /admin/config?tab=rules status = %d, want 200", rec2.Code)
+	}
+	body := rec2.Body.String()
+	for _, want := range []string{"规则管理", "黑中介", "地铁近", "白名单 → 黑名单 → AI", "「或」", "Tag",
+		`value="whitelist"`, `value="blacklist"`, `value="ai_natural"`, "白名单", "黑名单", "AI 自然语言"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("页面缺 %q", want)
 		}
 	}
+	for _, bad := range []string{"多条规则之间是且", "规则之间是且", "hard_keyword", "hard_blacklist", "hard_whitelist", `name="mode"`} {
+		if strings.Contains(body, bad) {
+			t.Errorf("页面不应含 %q", bad)
+		}
+	}
 	// 命中统计列：r1 行（Hits=1, UselessCount=1，紧随启用 checkbox 单元格）
-	if !strings.Contains(body, ">1</td><td>1</td>") {
-		t.Errorf("页面缺 r1 命中统计（Hits=1/标无用=1）:\n%s", body)
+	if !strings.Contains(body, `text-center">1</td><td class="px-3 py-2 text-center">1</td>`) {
+		t.Errorf("页面缺 r1 命中统计（Hits=1/标无用=1）")
 	}
 }
 
@@ -64,12 +79,11 @@ func TestRulesPage(t *testing.T) {
 func TestRulesCreate(t *testing.T) {
 	s := newAdminTestStore(t)
 	defer s.Close()
-	srv := NewServer(s, config.NewRuntime(&config.AppConfig{}), "", nil)
+	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 
 	form := url.Values{
 		"name":     {"留学生优先"},
-		"type":     {models.RuleTypeHardKeyword},
-		"mode":     {models.RuleModeExclude},
+		"type":     {models.RuleTypeBlacklist},
 		"value":    {"押一付一"},
 		"priority": {"5"},
 	}
@@ -80,8 +94,8 @@ func TestRulesCreate(t *testing.T) {
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("POST /admin/rules status = %d, want 302", rec.Code)
 	}
-	if loc := rec.Header().Get("Location"); loc != "/admin/rules" {
-		t.Errorf("Location = %q, want /admin/rules", loc)
+	if loc := rec.Header().Get("Location"); loc != "/admin/config?tab=rules" {
+		t.Errorf("Location = %q, want /admin/config?tab=rules", loc)
 	}
 	rules, err := s.ListRules(false)
 	if err != nil {
@@ -89,7 +103,7 @@ func TestRulesCreate(t *testing.T) {
 	}
 	found := false
 	for _, r := range rules {
-		if r.Name == "留学生优先" && r.Type == models.RuleTypeHardKeyword && r.Mode == models.RuleModeExclude &&
+		if r.Name == "留学生优先" && r.Type == models.RuleTypeBlacklist &&
 			r.Value == "押一付一" && r.Enabled && r.Priority == 5 {
 			found = true
 		}
@@ -99,14 +113,17 @@ func TestRulesCreate(t *testing.T) {
 	}
 }
 
-// TestRulesUpdate POST /admin/rules/{id} 改 value + 关启用 → 生效
+// TestRulesUpdate POST /admin/rules/{id} 改 value + 关启用 → 生效（另有启用规则，不触底）
 func TestRulesUpdate(t *testing.T) {
 	s := newAdminTestStore(t)
 	defer s.Close()
-	srv := NewServer(s, config.NewRuntime(&config.AppConfig{}), "", nil)
+	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 
-	r, err := s.CreateRule(models.Rule{Name: "改前", Type: models.RuleTypeHardBlacklist, Mode: models.RuleModeExclude, Value: "旧值", Enabled: true, Priority: 10})
+	r, err := s.CreateRule(models.Rule{Name: "改前", Type: models.RuleTypeBlacklist, Value: "旧值", Enabled: true, Priority: 10})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateRule(models.Rule{Name: "保底", Type: models.RuleTypeWhitelist, Value: "望京", Enabled: true, Priority: 1}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -114,7 +131,6 @@ func TestRulesUpdate(t *testing.T) {
 	form := url.Values{
 		"name":     {"改前"},
 		"type":     {r.Type},
-		"mode":     {r.Mode},
 		"value":    {"新值,代理"},
 		"priority": {"8"},
 	}
@@ -144,16 +160,15 @@ func TestRulesUpdate(t *testing.T) {
 func TestRulesUpdateEnableEnabled(t *testing.T) {
 	s := newAdminTestStore(t)
 	defer s.Close()
-	srv := NewServer(s, config.NewRuntime(&config.AppConfig{}), "", nil)
+	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 
-	r, err := s.CreateRule(models.Rule{Name: "改后", Type: models.RuleTypeHardBlacklist, Mode: models.RuleModeExclude, Value: "v", Enabled: false, Priority: 3})
+	r, err := s.CreateRule(models.Rule{Name: "改后", Type: models.RuleTypeBlacklist, Value: "v", Enabled: false, Priority: 3})
 	if err != nil {
 		t.Fatal(err)
 	}
 	form := url.Values{
 		"name":     {"改后"},
 		"type":     {r.Type},
-		"mode":     {r.Mode},
 		"value":    {"v2"},
 		"priority": {"3"},
 		"enabled":  {"on"},
@@ -177,14 +192,17 @@ func TestRulesUpdateEnableEnabled(t *testing.T) {
 	t.Errorf("规则 %d 不存在", r.ID)
 }
 
-// TestRulesDelete POST /admin/rules/{id}/delete → 302 + 规则消失
+// TestRulesDelete POST /admin/rules/{id}/delete → 302 + 规则消失（另有启用规则）
 func TestRulesDelete(t *testing.T) {
 	s := newAdminTestStore(t)
 	defer s.Close()
-	srv := NewServer(s, config.NewRuntime(&config.AppConfig{}), "", nil)
+	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 
-	r, err := s.CreateRule(models.Rule{Name: "待删", Type: models.RuleTypeHardBlacklist, Mode: models.RuleModeExclude, Value: "x", Enabled: true, Priority: 1})
+	r, err := s.CreateRule(models.Rule{Name: "待删", Type: models.RuleTypeBlacklist, Value: "x", Enabled: true, Priority: 1})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateRule(models.Rule{Name: "保底", Type: models.RuleTypeBlacklist, Value: "中介", Enabled: true, Priority: 2}); err != nil {
 		t.Fatal(err)
 	}
 	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/admin/rules/%d/delete", r.ID), nil)
@@ -204,20 +222,20 @@ func TestRulesDelete(t *testing.T) {
 	}
 }
 
-// TestRulesCreateInvalid 非法参数 → 400：坏 type / 坏 mode / 空 value / 坏 priority
+// TestRulesCreateInvalid 非法参数 → 400：坏 type / 空 value / 坏 priority（mode 废弃不校验）
 func TestRulesCreateInvalid(t *testing.T) {
 	s := newAdminTestStore(t)
 	defer s.Close()
-	srv := NewServer(s, config.NewRuntime(&config.AppConfig{}), "", nil)
+	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 
 	cases := []struct {
 		name string
 		form url.Values
 	}{
-		{"坏 type", url.Values{"name": {"n"}, "type": {"bad_type"}, "mode": {models.RuleModeExclude}, "value": {"v"}, "priority": {"1"}}},
-		{"坏 mode", url.Values{"name": {"n"}, "type": {models.RuleTypeHardKeyword}, "mode": {"bad_mode"}, "value": {"v"}, "priority": {"1"}}},
-		{"空 value", url.Values{"name": {"n"}, "type": {models.RuleTypeHardKeyword}, "mode": {models.RuleModeExclude}, "value": {""}, "priority": {"1"}}},
-		{"坏 priority", url.Values{"name": {"n"}, "type": {models.RuleTypeHardKeyword}, "mode": {models.RuleModeExclude}, "value": {"v"}, "priority": {"abc"}}},
+		{"坏 type", url.Values{"name": {"n"}, "type": {"bad_type"}, "value": {"v"}, "priority": {"1"}}},
+		{"空 value", url.Values{"name": {"n"}, "type": {models.RuleTypeBlacklist}, "value": {""}, "priority": {"1"}}},
+		{"坏 priority", url.Values{"name": {"n"}, "type": {models.RuleTypeBlacklist}, "value": {"v"}, "priority": {"abc"}}},
+		{"旧 hard type", url.Values{"name": {"n"}, "type": {"hard_keyword"}, "value": {"v"}, "priority": {"1"}}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -240,14 +258,14 @@ func TestRulesCreateInvalid(t *testing.T) {
 func TestRulesUpdateInvalid(t *testing.T) {
 	s := newAdminTestStore(t)
 	defer s.Close()
-	srv := NewServer(s, config.NewRuntime(&config.AppConfig{}), "", nil)
+	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 
-	r, err := s.CreateRule(models.Rule{Name: "守", Type: models.RuleTypeHardBlacklist, Mode: models.RuleModeExclude, Value: "v", Enabled: true, Priority: 1})
+	r, err := s.CreateRule(models.Rule{Name: "守", Type: models.RuleTypeBlacklist, Value: "v", Enabled: true, Priority: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
 	// 坏 type
-	form := url.Values{"name": {"守"}, "type": {"bad"}, "mode": {models.RuleModeExclude}, "value": {"v2"}, "priority": {"1"}}
+	form := url.Values{"name": {"守"}, "type": {"bad"}, "value": {"v2"}, "priority": {"1"}}
 	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/admin/rules/%d", r.ID), strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
@@ -256,7 +274,7 @@ func TestRulesUpdateInvalid(t *testing.T) {
 		t.Errorf("坏 type status = %d, want 400", rec.Code)
 	}
 	// 缺 name（hidden 篡改面：与 createRule 校验对称）
-	form2 := url.Values{"type": {models.RuleTypeHardBlacklist}, "mode": {models.RuleModeExclude}, "value": {"v2"}, "priority": {"1"}}
+	form2 := url.Values{"type": {models.RuleTypeBlacklist}, "value": {"v2"}, "priority": {"1"}}
 	req1 := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/admin/rules/%d", r.ID), strings.NewReader(form2.Encode()))
 	req1.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec1 := httptest.NewRecorder()
@@ -283,15 +301,15 @@ func TestRulesUpdateInvalid(t *testing.T) {
 func TestRulesMethodNotAllowed(t *testing.T) {
 	s := newAdminTestStore(t)
 	defer s.Close()
-	srv := NewServer(s, config.NewRuntime(&config.AppConfig{}), "", nil)
+	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 
-	r, err := s.CreateRule(models.Rule{Name: "GET 靶", Type: models.RuleTypeHardBlacklist, Mode: models.RuleModeExclude, Value: "v", Enabled: true, Priority: 1})
+	r, err := s.CreateRule(models.Rule{Name: "GET 靶", Type: models.RuleTypeBlacklist, Value: "v", Enabled: true, Priority: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
 	// 模拟 <a>/<img> 链接触发写操作：GET + query 携带全部参数
 	for _, path := range []string{
-		fmt.Sprintf("/admin/rules/%d?name=GET靶&type=%s&mode=%s&value=偷改&priority=1&enabled=on", r.ID, r.Type, r.Mode),
+		fmt.Sprintf("/admin/rules/%d?name=GET靶&type=%s&value=偷改&priority=1&enabled=on", r.ID, r.Type),
 		fmt.Sprintf("/admin/rules/%d/delete", r.ID),
 	} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
@@ -308,14 +326,13 @@ func TestRulesMethodNotAllowed(t *testing.T) {
 }
 
 // TestRulesTokenPropagation 鉴权开启 + ?token=secret：
-// 页面表单 action 透传 token（不 401）；写操作 302 后重定向带回 token（PRG 后不 401）
+// GET /admin/rules 302 到配置 tab；配置页表单 action 透传 token；写操作 PRG 带回 token
 func TestRulesTokenPropagation(t *testing.T) {
 	s := newAdminTestStore(t)
 	defer s.Close()
-	rt := config.NewRuntime(&config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}})
-	srv := NewServer(s, rt, "secret", nil)
+	srv := newTestServerWithStore(t, s, &config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}}, "secret", nil)
 
-	r, err := s.CreateRule(models.Rule{Name: "鉴权规则", Type: models.RuleTypeHardBlacklist, Mode: models.RuleModeExclude, Value: "x", Enabled: true, Priority: 5})
+	r, err := s.CreateRule(models.Rule{Name: "鉴权规则", Type: models.RuleTypeBlacklist, Value: "x", Enabled: true, Priority: 5})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -328,14 +345,25 @@ func TestRulesTokenPropagation(t *testing.T) {
 		t.Errorf("GET /admin/rules 无 token status = %d, want 401", rec0.Code)
 	}
 
-	// 有 token → 200 且表单/链接透传 token
+	// GET /admin/rules?token=secret → 302，Location 带 token
 	req := httptest.NewRequest(http.MethodGet, "/admin/rules?token=secret", nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("GET /admin/rules?token=secret status = %d, want 200", rec.Code)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("GET /admin/rules?token=secret status = %d, want 302", rec.Code)
 	}
-	body := rec.Body.String()
+	if loc := rec.Header().Get("Location"); loc != "/admin/config?tab=rules&token=secret" {
+		t.Fatalf("Location = %q, want /admin/config?tab=rules&token=secret", loc)
+	}
+
+	// 配置规则 Tab：表单/链接透传 token
+	req1 := httptest.NewRequest(http.MethodGet, "/admin/config?tab=rules&token=secret", nil)
+	rec1 := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec1, req1)
+	if rec1.Code != http.StatusOK {
+		t.Fatalf("GET /admin/config?tab=rules&token=secret status = %d, want 200", rec1.Code)
+	}
+	body := rec1.Body.String()
 	for _, want := range []string{
 		"/admin/rules?token=secret",                              // 新增表单 action
 		fmt.Sprintf("/admin/rules/%d?token=secret", r.ID),        // 行内保存表单 action
@@ -347,7 +375,7 @@ func TestRulesTokenPropagation(t *testing.T) {
 	}
 
 	// POST 更新带 token → 302 且 Location 带回 token
-	form := url.Values{"name": {"鉴权规则"}, "type": {r.Type}, "mode": {r.Mode}, "value": {"y"}, "priority": {"1"}, "enabled": {"on"}}
+	form := url.Values{"name": {"鉴权规则"}, "type": {r.Type}, "value": {"y"}, "priority": {"1"}, "enabled": {"on"}}
 	req2 := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/admin/rules/%d?token=secret", r.ID), strings.NewReader(form.Encode()))
 	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec2 := httptest.NewRecorder()
@@ -355,11 +383,95 @@ func TestRulesTokenPropagation(t *testing.T) {
 	if rec2.Code != http.StatusSeeOther {
 		t.Errorf("POST 更新 status = %d, want 302", rec2.Code)
 	}
-	if loc := rec2.Header().Get("Location"); loc != "/admin/rules?token=secret" {
-		t.Errorf("Location = %q, want /admin/rules?token=secret", loc)
+	if loc := rec2.Header().Get("Location"); loc != "/admin/config?tab=rules&token=secret" {
+		t.Errorf("Location = %q, want /admin/config?tab=rules&token=secret", loc)
 	}
 	rules, _ := s.ListRules(false)
 	if rules[0].Value != "y" {
 		t.Errorf("鉴权下更新未生效: %+v", rules)
+	}
+}
+
+// TestRulesEnsureDefaultOnEmptyTab 启用规则为 0 时打开 rules tab → 种子默认地点
+func TestRulesEnsureDefaultOnEmptyTab(t *testing.T) {
+	s := newAdminTestStore(t)
+	defer s.Close()
+	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/config?tab=rules", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "默认地点") {
+		t.Errorf("页面缺默认地点")
+	}
+	rules, err := s.ListRules(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rules) != 1 {
+		t.Fatalf("启用规则 = %d, want 1", len(rules))
+	}
+	r := rules[0]
+	if r.Name != "默认地点" || r.Type != models.RuleTypeWhitelist ||
+		r.Value != "雍和宫,和平里" || !r.Enabled || r.Priority != 100 {
+		t.Errorf("默认规则不符: %+v", r)
+	}
+}
+
+// TestRulesDeleteLastEnabled 删除唯一启用规则 → 400，规则仍在
+func TestRulesDeleteLastEnabled(t *testing.T) {
+	s := newAdminTestStore(t)
+	defer s.Close()
+	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
+
+	r, err := s.CreateRule(models.Rule{Name: "唯一", Type: models.RuleTypeBlacklist, Value: "x", Enabled: true, Priority: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/admin/rules/%d/delete", r.ID), nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "至少保留一条启用规则") {
+		t.Errorf("body = %q", rec.Body.String())
+	}
+	rules, _ := s.ListRules(false)
+	if len(rules) != 1 || rules[0].ID != r.ID {
+		t.Errorf("不应删掉: %+v", rules)
+	}
+}
+
+// TestRulesDisableLastEnabled 禁用唯一启用规则 → 400，仍启用
+func TestRulesDisableLastEnabled(t *testing.T) {
+	s := newAdminTestStore(t)
+	defer s.Close()
+	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
+
+	r, err := s.CreateRule(models.Rule{Name: "唯一", Type: models.RuleTypeBlacklist, Value: "v", Enabled: true, Priority: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	form := url.Values{
+		"name":     {"唯一"},
+		"type":     {r.Type},
+		"value":    {"v2"},
+		"priority": {"1"},
+	}
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/admin/rules/%d", r.ID), strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+	rules, _ := s.ListRules(false)
+	if len(rules) != 1 || !rules[0].Enabled || rules[0].Value != "v" {
+		t.Errorf("不应改库: %+v", rules)
 	}
 }

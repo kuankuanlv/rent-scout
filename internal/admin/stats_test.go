@@ -17,7 +17,7 @@ import (
 func TestStatsPage(t *testing.T) {
 	s := newAdminTestStore(t)
 	defer s.Close()
-	srv := NewServer(s, config.NewRuntime(&config.AppConfig{}), "", nil)
+	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 
 	now := time.Now()
 	// 今日 2 帖采集 + 今日判定 1 passed / 1 rejected
@@ -71,10 +71,9 @@ func TestStatsPage(t *testing.T) {
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
-		"统计报表", "今日概览",
-		"采集 2", "通过 1", "拒绝 1", // 今日计数
-		"feishu", "50%", // 渠道行 + 成功率
-		"403 无权限", // 死信行（最后错误）
+		"统计报表", "今日采集",
+		"feishu", "50%",
+		"403 无权限",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("页面缺 %q", want)
@@ -87,7 +86,7 @@ func TestStatsPage(t *testing.T) {
 func TestDeadReset(t *testing.T) {
 	s := newAdminTestStore(t)
 	defer s.Close()
-	srv := NewServer(s, config.NewRuntime(&config.AppConfig{}), "", nil)
+	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 
 	if _, err := s.InsertPost(models.RentPost{Source: "douban", ExternalID: "dead1", Title: "死信帖", Status: models.PostStatusPassed}); err != nil {
 		t.Fatal(err)
@@ -146,7 +145,7 @@ func TestDeadReset(t *testing.T) {
 func TestDeadResetInvalid(t *testing.T) {
 	s := newAdminTestStore(t)
 	defer s.Close()
-	srv := NewServer(s, config.NewRuntime(&config.AppConfig{}), "", nil)
+	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 
 	// GET + query 携带写库参数 → 405
 	req0 := httptest.NewRequest(http.MethodGet, "/admin/dead/reset?post_id=1&channel=feishu", nil)
@@ -182,8 +181,7 @@ func TestDeadResetInvalid(t *testing.T) {
 func TestStatsTokenPropagation(t *testing.T) {
 	s := newAdminTestStore(t)
 	defer s.Close()
-	rt := config.NewRuntime(&config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}})
-	srv := NewServer(s, rt, "secret", nil)
+	srv := newTestServerWithStore(t, s, &config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}}, "secret", nil)
 
 	if _, err := s.InsertPost(models.RentPost{Source: "douban", ExternalID: "tokdead", Title: "t", Status: models.PostStatusPassed}); err != nil {
 		t.Fatal(err)

@@ -2,8 +2,9 @@ package pipeline
 
 import (
 	"context"
-	"log/slog"
 	"time"
+
+	"rent-scout/internal/pkglog"
 )
 
 // FetchFunc 拉批函数：按 limit 从存储拉取一批待处理项
@@ -16,6 +17,7 @@ type BatchFunc[T any] func(ctx context.Context, batch []T) error
 type Options struct {
 	BatchSize int           // 组批大小：积压达到即处理
 	Linger    time.Duration // 兜底等待：积压不足时最长等多久处理一次
+	Component string        // 日志 component：filter / notifier（调用方传入）
 }
 
 // Consumer 通用组批触发协议：trigger 主动触发（加速器，丢信号不致命）
@@ -71,16 +73,17 @@ func (c *Consumer[T]) Run(ctx context.Context) {
 		case <-ticker.C:
 		}
 		// 拉批处理：空批跳过，错误记日志下轮再试（不误标记，状态机兜底）
+		log := pkglog.Component(c.opts.Component)
 		batch, err := c.fetch(ctx, c.opts.BatchSize)
 		if err != nil {
-			slog.Error("拉取批失败", "err", err)
+			log.Error("[fetch_batch_failed] 拉批失败", "err", err)
 			continue
 		}
 		if len(batch) == 0 {
 			continue
 		}
 		if err := c.process(ctx, batch); err != nil {
-			slog.Error("批处理失败", "err", err, "count", len(batch))
+			log.Error("[batch_process_failed] 批处理失败", "err", err, "count", len(batch))
 		}
 	}
 }

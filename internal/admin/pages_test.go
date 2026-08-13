@@ -16,8 +16,7 @@ import (
 func TestAdminPage(t *testing.T) {
 	s := newAdminTestStore(t)
 	defer s.Close()
-	rt := config.NewRuntime(&config.AppConfig{})
-	srv := NewServer(s, rt, "", nil)
+	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 
 	// 播种 3 帖：passed、rejected、collected
 	for i, status := range []string{models.PostStatusPassed, models.PostStatusRejected, models.PostStatusCollected} {
@@ -58,12 +57,52 @@ func TestAdminPage(t *testing.T) {
 	}
 }
 
+// TestAdminPageFilters q/tag/handled 筛选 + AddressTags chips + 已处理按钮
+func TestAdminPageFilters(t *testing.T) {
+	s := newAdminTestStore(t)
+	defer s.Close()
+	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
+
+	p := models.RentPost{Source: "douban", ExternalID: "chip1", Title: "望京合租帖", Status: models.PostStatusPassed,
+		AddressTags: []string{"望京", "14号线"}}
+	if _, err := s.InsertPost(p); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.InsertPost(models.RentPost{Source: "douban", ExternalID: "chip2", Title: "其它帖", Status: models.PostStatusPassed}); err != nil {
+		t.Fatal(err)
+	}
+
+	get := func(path string) (int, string) {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, req)
+		return rec.Code, rec.Body.String()
+	}
+
+	code, body := get("/admin?q=合租")
+	if code != http.StatusOK {
+		t.Fatalf("q 筛选 status = %d", code)
+	}
+	if !strings.Contains(body, "望京合租帖") || strings.Contains(body, "其它帖") {
+		t.Errorf("q=合租 结果异常: %s", body)
+	}
+	if !strings.Contains(body, "望京") || !strings.Contains(body, "14号线") {
+		t.Errorf("页面缺 AddressTags chips")
+	}
+	if !strings.Contains(body, `name="handled" value="1"`) || !strings.Contains(body, "/admin/handled") {
+		t.Errorf("页面缺已处理表单")
+	}
+
+	if code, body := get("/admin?tag=望京"); code != http.StatusOK || !strings.Contains(body, "望京合租帖") || strings.Contains(body, "其它帖") {
+		t.Errorf("tag=望京: code=%d body 异常", code)
+	}
+}
+
 // TestAdminMark 标记反馈：POST /admin/mark 合法 → 302（PRG）+ DB 有记录；非法 action → 400
 func TestAdminMark(t *testing.T) {
 	s := newAdminTestStore(t)
 	defer s.Close()
-	rt := config.NewRuntime(&config.AppConfig{})
-	srv := NewServer(s, rt, "", nil)
+	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 
 	if _, err := s.InsertPost(models.RentPost{Source: "douban", ExternalID: "mark1", Title: "标记帖", Status: models.PostStatusPassed}); err != nil {
 		t.Fatal(err)
@@ -107,8 +146,7 @@ func TestAdminMark(t *testing.T) {
 func TestAdminMarkMethodNotAllowed(t *testing.T) {
 	s := newAdminTestStore(t)
 	defer s.Close()
-	rt := config.NewRuntime(&config.AppConfig{})
-	srv := NewServer(s, rt, "", nil)
+	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 
 	if _, err := s.InsertPost(models.RentPost{Source: "douban", ExternalID: "getmark", Title: "GET 标记", Status: models.PostStatusPassed}); err != nil {
 		t.Fatal(err)
@@ -135,8 +173,7 @@ func TestAdminMarkMethodNotAllowed(t *testing.T) {
 func TestAdminMarkInvalidPostID(t *testing.T) {
 	s := newAdminTestStore(t)
 	defer s.Close()
-	rt := config.NewRuntime(&config.AppConfig{})
-	srv := NewServer(s, rt, "", nil)
+	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 
 	form := url.Values{"post_id": {"0"}, "action": {models.FeedbackUseful}}
 	req := httptest.NewRequest(http.MethodPost, "/admin/mark", strings.NewReader(form.Encode()))
@@ -153,8 +190,7 @@ func TestAdminMarkInvalidPostID(t *testing.T) {
 func TestAdminTokenPropagation(t *testing.T) {
 	s := newAdminTestStore(t)
 	defer s.Close()
-	rt := config.NewRuntime(&config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}})
-	srv := NewServer(s, rt, "secret", nil)
+	srv := newTestServerWithStore(t, s, &config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}}, "secret", nil)
 
 	if _, err := s.InsertPost(models.RentPost{Source: "douban", ExternalID: "tok1", Title: "鉴权帖", Status: models.PostStatusPassed}); err != nil {
 		t.Fatal(err)
@@ -179,10 +215,11 @@ func TestAdminTokenPropagation(t *testing.T) {
 	body := rec.Body.String()
 	for _, want := range []string{
 		"/admin?token=secret",               // nav 帖子链接
-		"/admin/rules?token=secret",         // nav 规则链接
 		"/admin/stats?token=secret",         // nav 统计链接
+		"/admin/config?token=secret",        // nav 配置链接
 		"/admin?status=passed&token=secret", // 筛选链接（已有 query，用 & 拼接）
-		"/admin/mark?token=secret",          // 表单 action
+		"/admin/mark?token=secret",          // 表单 action（FilterQuery 用 template.URL）
+		"/admin/handled?token=secret",       // 已处理表单
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("页面缺 %q（token 未透传）", want)
@@ -207,5 +244,71 @@ func TestAdminTokenPropagation(t *testing.T) {
 	}
 	if len(items) != 1 || items[0].Reason != "鉴权下提交" {
 		t.Errorf("DB 反馈 = %+v, want 1 条", items)
+	}
+}
+
+// TestAdminHandled 独立已处理写/清：POST handled=1/0 → 302 + HandledAt；非法参数 400；不写反馈
+func TestAdminHandled(t *testing.T) {
+	s := newAdminTestStore(t)
+	defer s.Close()
+	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
+
+	if _, err := s.InsertPost(models.RentPost{Source: "douban", ExternalID: "h1", Title: "处理帖", Status: models.PostStatusPassed}); err != nil {
+		t.Fatal(err)
+	}
+	id := postID(t, s, "h1")
+
+	post := func(handled string) *httptest.ResponseRecorder {
+		form := url.Values{"post_id": {fmt.Sprintf("%d", id)}, "handled": {handled}}
+		req := httptest.NewRequest(http.MethodPost, "/admin/handled", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, req)
+		return rec
+	}
+
+	rec := post("1")
+	if rec.Code != http.StatusSeeOther {
+		t.Errorf("标记已处理 status = %d, want 302", rec.Code)
+	}
+	p, ok, err := s.GetPost(id)
+	if err != nil || !ok || p.HandledAt == nil {
+		t.Fatalf("HandledAt 未写入: ok=%v err=%v", ok, err)
+	}
+	if p.Status != models.PostStatusPassed {
+		t.Errorf("status 被改成 %s", p.Status)
+	}
+	fb, err := s.ListFeedbacksByPost(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fb) != 0 {
+		t.Errorf("已处理不应写反馈: %+v", fb)
+	}
+
+	if rec := post("0"); rec.Code != http.StatusSeeOther {
+		t.Errorf("清除已处理 status = %d, want 302", rec.Code)
+	}
+	p, ok, err = s.GetPost(id)
+	if err != nil || !ok || p.HandledAt != nil {
+		t.Fatalf("HandledAt 未清除: ok=%v HandledAt=%v err=%v", ok, p.HandledAt, err)
+	}
+
+	if rec := post("x"); rec.Code != http.StatusBadRequest {
+		t.Errorf("非法 handled status = %d, want 400", rec.Code)
+	}
+
+	// 透传筛选 query
+	form := url.Values{"post_id": {fmt.Sprintf("%d", id)}, "handled": {"1"}}
+	req := httptest.NewRequest(http.MethodPost, "/admin/handled?status=passed&q=处理", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("带筛选 status = %d", rec.Code)
+	}
+	loc := rec.Header().Get("Location")
+	if !strings.Contains(loc, "status=passed") || !strings.Contains(loc, "q=") {
+		t.Errorf("Location = %q, want 透传 status/q", loc)
 	}
 }

@@ -11,6 +11,22 @@ import (
 	"rent-scout/internal/config"
 )
 
+// 职责 component 取值（规格 §9）；业务日志用 Component 注入
+const (
+	Main      = "main"
+	HotConfig = "hot_config"
+	Collector = "collector"
+	Filter    = "filter"
+	Notifier  = "notifier"
+	Admin     = "admin"
+	Setup     = "setup"
+)
+
+// Component 返回带 component 属性的 logger（跟当前 Default）
+func Component(name string) *slog.Logger {
+	return slog.Default().With("component", name)
+}
+
 // New 按配置初始化全局 logger 并返回（规格 8.1）：
 // format=json → JSONHandler；path 非空 → 文件轮转输出（50MB×5），空 → stdout
 func New(cfg config.LogConfig) *slog.Logger {

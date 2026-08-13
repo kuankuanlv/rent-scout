@@ -26,8 +26,7 @@ func feedbackSig(postID int64, action string, exp int64, secret string) string {
 func TestFeedbackNoToken(t *testing.T) {
 	s := newAdminTestStore(t)
 	defer s.Close()
-	rt := config.NewRuntime(&config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}})
-	srv := NewServer(s, rt, "", nil)
+	srv := newTestServerWithStore(t, s, &config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}}, "", nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/f?post=1&action=useful", nil)
 	rec := httptest.NewRecorder()
@@ -44,8 +43,7 @@ func TestFeedbackNoToken(t *testing.T) {
 func TestFeedbackSigned(t *testing.T) {
 	s := newAdminTestStore(t)
 	defer s.Close()
-	rt := config.NewRuntime(&config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}})
-	srv := NewServer(s, rt, "secret", nil)
+	srv := newTestServerWithStore(t, s, &config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}}, "secret", nil)
 
 	// 无 sig → 失败页
 	req := httptest.NewRequest(http.MethodGet, "/f?post=1&action=useful", nil)
@@ -110,8 +108,7 @@ func TestFeedbackSigned(t *testing.T) {
 func TestFeedbackBadAction(t *testing.T) {
 	s := newAdminTestStore(t)
 	defer s.Close()
-	rt := config.NewRuntime(&config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}})
-	srv := NewServer(s, rt, "secret", nil)
+	srv := newTestServerWithStore(t, s, &config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}}, "secret", nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/f?post=1&action=bad", nil)
 	rec := httptest.NewRecorder()
@@ -127,8 +124,7 @@ func TestFeedbackAuthDisabled(t *testing.T) {
 	defer s.Close()
 
 	// 鉴权关闭 + token 非空（模拟有 token 但开关关闭的场景）
-	rt := config.NewRuntime(&config.AppConfig{Admin: config.AdminConfig{AuthRequired: false}})
-	srv := NewServer(s, rt, "secret", nil)
+	srv := newTestServerWithStore(t, s, &config.AppConfig{Admin: config.AdminConfig{AuthRequired: false}}, "secret", nil)
 
 	// 无效签名 → 应放行（开关为准）
 	future := time.Now().Add(time.Hour).Unix()
@@ -157,8 +153,7 @@ func TestFeedbackAuthEnabledInvalidSig(t *testing.T) {
 	s := newAdminTestStore(t)
 	defer s.Close()
 
-	rt := config.NewRuntime(&config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}})
-	srv := NewServer(s, rt, "secret", nil)
+	srv := newTestServerWithStore(t, s, &config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}}, "secret", nil)
 
 	// 无效签名 → 应拒绝
 	future := time.Now().Add(time.Hour).Unix()
@@ -171,5 +166,85 @@ func TestFeedbackAuthEnabledInvalidSig(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "无效或已过期") {
 		t.Errorf("AuthRequired=true 无效签名: body 缺失败文案: %s", rec.Body.String())
+	}
+}
+
+// TestHandledLinkSigned：验签成功写 handled_at；错签失败；不写 feedbacks（Spec 09 §3.5）
+func TestHandledLinkSigned(t *testing.T) {
+	s := newAdminTestStore(t)
+	defer s.Close()
+	if _, err := s.InsertPost(models.RentPost{Source: "douban", ExternalID: "h1", Title: "已处理帖", Status: models.PostStatusPassed}); err != nil {
+		t.Fatal(err)
+	}
+	id := postID(t, s, "h1")
+	srv := newTestServerWithStore(t, s, &config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}}, "secret", nil)
+
+	future := time.Now().Add(time.Hour).Unix()
+
+	// 错签 → 失败页，HandledAt 仍空，无反馈
+	req := httptest.NewRequest(http.MethodGet,
+		fmt.Sprintf("/h?post=%d&exp=%d&sig=deadbeef", id, future), nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "无效或已过期") {
+		t.Errorf("错签: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	p, ok, err := s.GetPost(id)
+	if err != nil || !ok || p.HandledAt != nil {
+		t.Fatalf("错签后不应写 HandledAt: ok=%v err=%v HandledAt=%v", ok, err, p.HandledAt)
+	}
+	fb, err := s.ListFeedbacksByPost(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fb) != 0 {
+		t.Errorf("错签不应写 feedbacks: %d", len(fb))
+	}
+
+	// 正确签名 → 成功 + HandledAt + 仍无 feedbacks
+	sig := feedbackSig(id, "handled", future, "secret")
+	req = httptest.NewRequest(http.MethodGet,
+		fmt.Sprintf("/h?post=%d&exp=%d&sig=%s", id, future, sig), nil)
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "已标记为已处理") {
+		t.Errorf("正签: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	p, ok, err = s.GetPost(id)
+	if err != nil || !ok || p.HandledAt == nil {
+		t.Fatalf("正签后应写 HandledAt: ok=%v err=%v", ok, err)
+	}
+	fb, err = s.ListFeedbacksByPost(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fb) != 0 {
+		t.Errorf("已处理入口不应写 feedbacks: %+v", fb)
+	}
+}
+
+// TestHandledLinkAuthDisabled：鉴权关 → 无签也可标记，仍不写 feedbacks
+func TestHandledLinkAuthDisabled(t *testing.T) {
+	s := newAdminTestStore(t)
+	defer s.Close()
+	if _, err := s.InsertPost(models.RentPost{Source: "douban", ExternalID: "h2", Title: "开放已处理", Status: models.PostStatusPassed}); err != nil {
+		t.Fatal(err)
+	}
+	id := postID(t, s, "h2")
+	srv := newTestServerWithStore(t, s, &config.AppConfig{Admin: config.AdminConfig{AuthRequired: false}}, "secret", nil)
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/h?post=%d", id), nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "已标记为已处理") {
+		t.Errorf("鉴权关: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	p, ok, err := s.GetPost(id)
+	if err != nil || !ok || p.HandledAt == nil {
+		t.Fatalf("鉴权关应写 HandledAt: ok=%v err=%v", ok, err)
+	}
+	fb, err := s.ListFeedbacksByPost(id)
+	if err != nil || len(fb) != 0 {
+		t.Errorf("不应写 feedbacks: err=%v n=%d", err, len(fb))
 	}
 }

@@ -3,12 +3,12 @@ package collector
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"math/rand"
 	"sync"
 	"time"
 
 	"rent-scout/internal/config"
+	"rent-scout/internal/pkglog"
 	"rent-scout/internal/store"
 )
 
@@ -20,25 +20,23 @@ import (
 // 由 /api/sources 经 SourceController 接口驱动
 type Runner struct {
 	rt      *config.Runtime
-	env     *config.EnvLocalConfig
 	store   *store.Store
 	sources []Source
 	trigger chan<- struct{}
 	mu      sync.Mutex
-	enabled map[string]bool          // 源启用状态，默认 true
-	manual  map[string]chan struct{} // 手动触发信号（容量 1，非阻塞）
+	enabled map[string]bool
+	manual  map[string]chan struct{}
 }
 
-// NewRunner 创建调度器；trigger 为下游（filter）信号通道。
-// 初始化 enabled/manual 映射：全部源默认启用 + 各建容量 1 手动触发通道
-func NewRunner(rt *config.Runtime, env *config.EnvLocalConfig, st *store.Store, sources []Source, trigger chan<- struct{}) *Runner {
+// NewRunner 创建调度器
+func NewRunner(rt *config.Runtime, st *store.Store, sources []Source, trigger chan<- struct{}) *Runner {
 	enabled := make(map[string]bool, len(sources))
 	manual := make(map[string]chan struct{}, len(sources))
 	for _, src := range sources {
 		enabled[src.Name()] = true
 		manual[src.Name()] = make(chan struct{}, 1)
 	}
-	return &Runner{rt: rt, env: env, store: st, sources: sources, trigger: trigger,
+	return &Runner{rt: rt, store: st, sources: sources, trigger: trigger,
 		enabled: enabled, manual: manual}
 }
 
@@ -67,7 +65,7 @@ func (r *Runner) SetEnabled(name string, on bool) error {
 	r.mu.Lock()
 	r.enabled[name] = on
 	r.mu.Unlock()
-	slog.Info("源启停", "source", name, "enabled", on)
+	pkglog.Component(pkglog.Collector).Info("[source_toggle] 源启停切换", "source", name, "enabled", on)
 	return nil
 }
 
@@ -105,16 +103,17 @@ func (r *Runner) hasSource(name string) bool {
 // 停用态不跑轮次，仅响应手动触发（规格 7.1 手动触发抓取）与 ctx 取消；
 // 周期轮询恢复判定——enable 后无需额外信号，循环自然恢复
 func (r *Runner) runSource(ctx context.Context, src Source) {
-	interval := time.Duration(r.rt.Get().Collector.SourceInterval(src.Name())) * time.Second
-	jitter := r.rt.Get().Collector.JitterRatio
+	log := pkglog.Component(pkglog.Collector)
 	failStreak := 0
 	prevEnabled := true
 	for {
-		// 停用态：等待手动触发或周期轮询恢复
+		cfg := r.rt.Get()
+		interval := time.Duration(cfg.Collector.SourceInterval(src.Name())) * time.Second
+		jitter := cfg.Collector.JitterRatio
 		if !r.SourceEnabled(src.Name()) {
 			// 仅状态迁移时打一次日志，避免 1s 轮询刷屏
 			if prevEnabled {
-				slog.Info("源已停用，等待恢复", "source", src.Name())
+				log.Info("[source_paused] 源已暂停", "source", src.Name())
 			}
 			prevEnabled = false
 			select {
@@ -123,7 +122,7 @@ func (r *Runner) runSource(ctx context.Context, src Source) {
 			case <-r.manual[src.Name()]:
 				// 手动触发：即使停用也跑一轮（规格 7.1 手动触发抓取）
 				if err := r.runSourceOnce(ctx, src, r.trigger); err != nil {
-					slog.Warn("手动触发采集失败", "source", src.Name(), "err", err)
+					log.Warn("[manual_trigger_failed] 手动触发失败", "source", src.Name(), "err", err)
 				} else {
 					failStreak = 0
 				}
@@ -139,7 +138,7 @@ func (r *Runner) runSource(ctx context.Context, src Source) {
 			wait = time.Duration(1<<min(failStreak-1, 5)) * time.Minute
 		}
 		// 在等待前打日志，wait_s 即下一轮实际等待时长（退避/抖动均准确）
-		slog.Info("等待下一轮采集", "source", src.Name(), "wait_s", int(wait.Seconds()))
+		log.Info("[wait_next_round] 等待下一轮采集", "source", src.Name(), "wait_s", int(wait.Seconds()))
 		select {
 		case <-ctx.Done():
 			return
@@ -147,7 +146,7 @@ func (r *Runner) runSource(ctx context.Context, src Source) {
 			// 手动触发：立即跑一轮，随后正常计时；成功重置退避
 			failStreak = 0
 			if err := r.runSourceOnce(ctx, src, r.trigger); err != nil {
-				slog.Warn("手动触发采集失败", "source", src.Name(), "err", err)
+				log.Warn("[manual_trigger_failed] 手动触发失败", "source", src.Name(), "err", err)
 			}
 		case <-time.After(wait):
 			// 定时轮次：失败指数退避后重试（封禁/限流时自动拉开频率）
@@ -155,7 +154,7 @@ func (r *Runner) runSource(ctx context.Context, src Source) {
 			if err != nil {
 				failStreak++
 				backoff := time.Duration(1<<min(failStreak-1, 5)) * time.Minute
-				slog.Warn("采集失败，退避重试", "source", src.Name(), "err", err, "backoff_s", int(backoff.Seconds()), "attempt", failStreak)
+				log.Warn("[round_failed_backoff] 本轮失败进入退避", "source", src.Name(), "err", err, "backoff_s", int(backoff.Seconds()), "attempt", failStreak)
 				continue // 下一轮循环：failStreak>0 → wait=backoff
 			}
 			failStreak = 0
@@ -165,13 +164,14 @@ func (r *Runner) runSource(ctx context.Context, src Source) {
 
 // runSourceOnce 单轮采集（可测：测试直接调用它）
 func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- struct{}) error {
+	log := pkglog.Component(pkglog.Collector)
 	cfg := r.rt.Get()
 	maxAge := cfg.Collector.MaxAgeDays
 	cutoff := time.Now().Add(-time.Duration(maxAge) * 24 * time.Hour)
 
 	// 游标断点续传（规格 3.5）：上次位置继续
 	cursorVal, _, _ := r.store.GetCursor(src.Name())
-	slog.Info("采集开始", "source", src.Name(), "cursor", cursorVal, "max_age_days", maxAge)
+	log.Info("[round_start] 开始本轮采集", "source", src.Name(), "cursor", cursorVal, "max_age_days", maxAge)
 
 	newPosts := 0
 	for {
@@ -215,7 +215,7 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 			}
 			post, err := src.Detail(ctx, it)
 			if err != nil {
-				slog.Warn("详情页失败，跳过该条", "source", src.Name(), "id", it.ExternalID, "err", err)
+				log.Warn("[detail_skip] 详情拉取失败已跳过", "source", src.Name(), "id", it.ExternalID, "err", err)
 				continue
 			}
 			// P2-7 审查：douban Detail 未设 CollectedAt，而 posts 表 collected_at NOT NULL
@@ -242,10 +242,11 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 	if newPosts > 0 && trigger != nil {
 		select {
 		case trigger <- struct{}{}:
-		default: // 满则丢：数据在库，下游 linger 兜底
+			log.Info("[trigger_sent] 已发送筛选触发", "source", src.Name(), "new_posts", newPosts)
+		default:
 		}
 	}
-	slog.Info("采集完成", "source", src.Name(), "new_posts", newPosts)
+	log.Info("[round_done] 本轮采集结束", "source", src.Name(), "new_posts", newPosts)
 	return nil
 }
 

@@ -2,82 +2,128 @@ package config
 
 import (
 	"log/slog"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"rent-scout/internal/store"
 )
 
-// Runtime 并发安全的配置容器：atomic.Pointer 承载 AppConfig 快照。
-// 模块 goroutine 通过 Get() 读快照（无锁）；热加载替换指针（不原地写）。
-// 解决原 WatchReload `*cfg = *next` 在模块并发读下的 data race（最终审查遗留项）
+// Runtime 并发安全的配置容器：独立 goroutine 轮询 DB，COW 替换快照；业务只读 Get/GetEnv
 type Runtime struct {
-	ptr     atomic.Pointer[AppConfig]
-	pubPath string
-	envPath string
+	appPtr atomic.Pointer[AppConfig]
+	envPtr atomic.Pointer[EnvLocalConfig]
+	db     *store.Store
 }
 
-// NewRuntime 以当前配置创建运行时容器
-func NewRuntime(cfg *AppConfig) *Runtime {
-	r := &Runtime{}
-	r.ptr.Store(cfg)
+// NewRuntime 创建运行时容器
+func NewRuntime(db *store.Store) *Runtime {
+	r := &Runtime{db: db}
+	def := DefaultApp()
+	r.appPtr.Store(def)
+	r.envPtr.Store(DefaultEnv())
 	return r
 }
 
-// Get 返回当前配置快照（调用方按需读取，不持有长期引用）
-func (r *Runtime) Get() *AppConfig {
-	return r.ptr.Load()
+// NewRuntimeWithSnapshot 测试用：直接注入快照
+func NewRuntimeWithSnapshot(app *AppConfig, env *EnvLocalConfig) *Runtime {
+	r := &Runtime{}
+	if app == nil {
+		app = DefaultApp()
+	}
+	if env == nil {
+		env = DefaultEnv()
+	}
+	r.appPtr.Store(app)
+	r.envPtr.Store(env)
+	return r
 }
 
-// Watch 每 interval 重读两份配置；解析失败保留旧值并 WARN。
-// 变更后回调 notify（可空）；返回 stop 函数（幂等）。
-// 记录配置路径供 ReloadOnce 使用。
-func (r *Runtime) Watch(pubPath, envPath string, interval time.Duration, notify func()) func() {
-	r.pubPath = pubPath
-	r.envPath = envPath
+// Get 返回当前公开配置快照（只读，无锁）
+func (r *Runtime) Get() *AppConfig {
+	return r.appPtr.Load()
+}
+
+// GetEnv 返回当前敏感配置快照（只读，无锁）
+func (r *Runtime) GetEnv() *EnvLocalConfig {
+	return r.envPtr.Load()
+}
+
+// ReloadOnce 从 SQLite 重载；COW 替换指针，读者无锁
+func (r *Runtime) ReloadOnce() error {
+	// 不能 import pkglog（与 config 循环依赖），component 取值与 pkglog.HotConfig 一致
+	log := slog.With("component", "hot_config")
+	kv, err := store.GetConfigMap(r.db)
+	if err != nil {
+		log.Warn("[hot_config_load_failed] 配置重载失败", "err", err)
+		return err
+	}
+	if len(kv) == 0 {
+		r.appPtr.Store(DefaultApp())
+		r.envPtr.Store(DefaultEnv())
+		log.Info("[hot_config_load] 配置变更，开始 COW 更换快照", "source", "defaults", "keys", 0)
+		return nil
+	}
+	app := KVToApp(kv)
+	env := KVToEnv(kv)
+	r.appPtr.Store(app)
+	r.envPtr.Store(env)
+	log.Info("[hot_config_load] 配置变更，开始 COW 更换快照", "source", "sqlite", "keys", len(kv), "addr", app.Server.Addr)
+	return nil
+}
+
+// WatchDB 专用协程定时轮询 SQLite；变更时 COW 替换快照
+func (r *Runtime) WatchDB(interval time.Duration) func() {
 	stop := make(chan struct{})
 	var once sync.Once
+	log := slog.With("component", "hot_config")
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
+		var lastHash uint64
+		// 启动先拉一次，避免 lastHash=0 重复打日志
+		if kv, err := store.GetConfigMap(r.db); err == nil {
+			lastHash = hashKV(kv)
+		}
 		for {
 			select {
 			case <-stop:
 				return
 			case <-ticker.C:
-				_ = r.reloadOnce(notify)
+				kv, err := store.GetConfigMap(r.db)
+				if err != nil {
+					log.Warn("[hot_config_load_failed] 配置重载失败", "err", err)
+					continue
+				}
+				h := hashKV(kv)
+				if h != lastHash {
+					// 失败不推进 lastHash，下次还能重试
+					if err := r.ReloadOnce(); err == nil {
+						lastHash = h
+					}
+				} else {
+					// hash 未变跳过；Debug 避免 10s 刷屏
+					log.Debug("[hot_config_skip] 配置 hash 未变，跳过 COW")
+				}
 			}
 		}
 	}()
 	return func() { once.Do(func() { close(stop) }) }
 }
 
-// reloadOnce 重读公开配置与敏感配置；任一失败保留旧值（改坏配置不崩服务）
-// 返回 error 便于 ReloadOnce 调用者判断成败
-func (r *Runtime) reloadOnce(notify func()) error {
-	if r.pubPath == "" {
-		slog.Warn("配置热加载跳过：pubPath 未设置")
-		return nil
+func hashKV(kv map[string]string) uint64 {
+	// 先排序 key，避免 map 遍历无序导致同内容不同 hash
+	keys := make([]string, 0, len(kv))
+	for k := range kv {
+		keys = append(keys, k)
 	}
-	next, err := Load(r.pubPath)
-	if err != nil {
-		slog.Warn("配置热加载失败，保留旧配置", "err", err)
-		return err
-	}
-	if r.envPath != "" {
-		if _, err := LoadEnvLocal(r.envPath); err != nil {
-			slog.Warn("敏感配置热加载失败，保留旧配置", "err", err)
-			return err
+	sort.Strings(keys)
+	var h uint64
+	for _, k := range keys {
+		for _, c := range k + kv[k] {
+			h = h*31 + uint64(c)
 		}
 	}
-	r.ptr.Store(next) // 替换指针快照，不原地写
-	if notify != nil {
-		notify()
-	}
-	return nil
-}
-
-// ReloadOnce 立即重读公开配置与敏感配置（使用 Watch 记录的路径）
-// 成功返回 nil，失败返回 error（旧配置保持不变）
-func (r *Runtime) ReloadOnce() error {
-	return r.reloadOnce(nil)
+	return h
 }

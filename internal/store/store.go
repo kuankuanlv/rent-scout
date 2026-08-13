@@ -107,6 +107,20 @@ func (s *Store) migrate() error {
 		    cursor     TEXT NOT NULL DEFAULT '',
 		    updated_at DATETIME NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS kv_config (
+		    key        TEXT PRIMARY KEY,
+		    value      TEXT NOT NULL,
+		    updated_at INTEGER NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS config_history (
+		    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		    key        TEXT NOT NULL,
+		    old_value  TEXT NOT NULL DEFAULT '',
+		    new_value  TEXT NOT NULL DEFAULT '',
+		    created_at INTEGER NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_config_history_key ON config_history(key)`,
+		`CREATE INDEX IF NOT EXISTS idx_config_history_created ON config_history(created_at)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.Exec(stmt); err != nil {
@@ -122,6 +136,39 @@ func (s *Store) migrate() error {
 	if !colExists {
 		if _, err := s.db.Exec(`ALTER TABLE posts ADD COLUMN address_tags TEXT NOT NULL DEFAULT '[]'`); err != nil {
 			return fmt.Errorf("追加 address_tags 列: %w", err)
+		}
+	}
+	// 已处理时间列：NULL=未处理；幂等 ALTER（仿 address_tags）
+	handledExists, err := s.columnExists("posts", "handled_at")
+	if err != nil {
+		return err
+	}
+	if !handledExists {
+		if _, err := s.db.Exec(`ALTER TABLE posts ADD COLUMN handled_at DATETIME NULL`); err != nil {
+			return fmt.Errorf("追加 handled_at 列: %w", err)
+		}
+	}
+	// 规则 type：旧 hard_* / hard_keyword+mode → whitelist|blacklist|ai_natural（Spec 09 §2.2）
+	if err := s.migrateRuleTypes(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// migrateRuleTypes 把旧四 type+mode 写成三 type；幂等可重复跑
+func (s *Store) migrateRuleTypes() error {
+	stmts := []struct {
+		sql  string
+		what string
+	}{
+		{`UPDATE rules SET type='whitelist' WHERE type='hard_whitelist'`, "hard_whitelist→whitelist"},
+		{`UPDATE rules SET type='blacklist' WHERE type='hard_blacklist'`, "hard_blacklist→blacklist"},
+		{`UPDATE rules SET type='whitelist' WHERE type='hard_keyword' AND mode='include'`, "hard_keyword+include→whitelist"},
+		{`UPDATE rules SET type='blacklist' WHERE type='hard_keyword'`, "hard_keyword→blacklist"},
+	}
+	for _, st := range stmts {
+		if _, err := s.db.Exec(st.sql); err != nil {
+			return fmt.Errorf("迁移规则类型(%s): %w", st.what, err)
 		}
 	}
 	return nil

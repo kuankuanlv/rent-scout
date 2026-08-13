@@ -44,14 +44,14 @@ func testRunner(t *testing.T) (*Runner, *store.Store) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rt := config.NewRuntime(&config.AppConfig{
+	rt := config.NewRuntimeWithSnapshot(&config.AppConfig{
 		Collector: config.CollectorConfig{
 			Interval: 3600, JitterRatio: 0.2, MaxAgeDays: 7,
 			Sources: []string{"fake"},
 			Douban:  config.DoubanConfig{Groups: []string{"x"}},
 		},
-	})
-	r := NewRunner(rt, &config.EnvLocalConfig{}, st, nil, nil)
+	}, nil)
+	r := NewRunner(rt, st, nil, nil)
 	return r, st
 }
 
@@ -161,19 +161,19 @@ func newControlRunner(t *testing.T) (*Runner, *fakeSource) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	rt := config.NewRuntime(&config.AppConfig{
+	rt := config.NewRuntimeWithSnapshot(&config.AppConfig{
 		Collector: config.CollectorConfig{
 			Interval: 1, JitterRatio: 0, MaxAgeDays: 7,
 			Sources: []string{"fake"},
 			Douban:  config.DoubanConfig{Groups: []string{"x"}},
 		},
-	})
+	}, nil)
 	src := &fakeSource{
 		name:    "fake",
 		pages:   [][]ListItem{{{ExternalID: "a", URL: "u/a", Title: "t", PublishedAt: time.Now()}}},
 		details: map[string]models.RentPost{"a": {Source: "fake", ExternalID: "a", Title: "t", CollectedAt: time.Now(), Status: models.PostStatusCollected}},
 	}
-	r := NewRunner(rt, &config.EnvLocalConfig{}, st, []Source{src}, nil)
+	r := NewRunner(rt, st, []Source{src}, nil)
 	return r, src
 }
 

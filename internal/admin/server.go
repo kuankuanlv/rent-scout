@@ -16,37 +16,61 @@ type SourceController interface {
 	SourceEnabled(name string) bool
 }
 
-// Server 管理面 HTTP 服务（规格 7.1）：路由装配 + 鉴权中间件
+// Server 管理面 HTTP 服务
 type Server struct {
-	db    *store.Store
-	rt    *config.Runtime
-	token string             // main 解析后的有效 token（固定配置或随机生成；AuthRequired=false 时可为空）
-	ctrl  SourceController   // 任务 9 注入；nil 时 /api/sources 返回 503
-	tmpl  *template.Template // embed 模板（任务 6-8 装配，可 nil 直到页面任务）
+	db   *store.Store
+	rt   *config.Runtime
+	ctrl SourceController
+	tmpl *template.Template
 }
 
-// NewServer 创建管理面服务（装配 embed 页面模板 + percent 模板函数）
-func NewServer(db *store.Store, rt *config.Runtime, token string, ctrl SourceController) *Server {
-	return &Server{db: db, rt: rt, token: token, ctrl: ctrl,
-		tmpl: template.Must(template.New("").Funcs(template.FuncMap{"percent": percent}).ParseFS(templatesFS, "templates/*.html"))}
+// NewServer 创建管理面服务
+func NewServer(db *store.Store, rt *config.Runtime, ctrl SourceController) *Server {
+	t := template.New("").Funcs(template.FuncMap{
+		"percent":        percent,
+		"setupStepTitle": setupStepTitle,
+		"seq": func(n int) []int {
+			s := make([]int, n)
+			for i := range s {
+				s[i] = i + 1
+			}
+			return s
+		},
+		"sub": func(a, b int) int { return a - b },
+	})
+	t = template.Must(t.ParseFS(templatesFS, "templates/*.html"))
+	return &Server{db: db, rt: rt, ctrl: ctrl, tmpl: t}
 }
 
-// Handler 路由装配（任务 4-9 逐步挂 handler；本任务先挂 healthz/metrics）
+// Handler 路由装配
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.handleHealthz)
 	mux.HandleFunc("/metrics", s.handleMetrics)
 	mux.HandleFunc("/f", s.handleFeedback)
+	mux.HandleFunc("/h", s.handleHandledLink)
 	mux.HandleFunc("/api/posts", s.handlePosts)
-	mux.HandleFunc("/api/posts/", s.handlePost) // 前缀匹配，handler 内解析 id
+	mux.HandleFunc("/api/posts/", s.handlePost)
 	mux.HandleFunc("/api/feedbacks", s.handleFeedbacks)
-	mux.HandleFunc("/api/sources", s.handleSources)        // 源列表（GET）
-	mux.HandleFunc("/api/sources/", s.handleSourceAction)  // 源动作（POST trigger/enable/disable）
-	mux.HandleFunc("/admin", s.handleAdmin)                // 页面：帖子全览（鉴权覆盖内）
-	mux.HandleFunc("/admin/mark", s.handleMark)            // 页面：标记反馈（POST，PRG）
-	mux.HandleFunc("/admin/rules", s.handleRules)          // 页面：规则管理（GET）+ 新增（POST，PRG）
-	mux.HandleFunc("/admin/rules/", s.handleRulesID)       // 更新/删除（POST，前缀匹配，handler 内解析 {id}）
-	mux.HandleFunc("/admin/stats", s.handleStats)          // 页面：统计报表 + 死信（GET）
-	mux.HandleFunc("/admin/dead/reset", s.handleDeadReset) // 死信重发（POST，PRG）
-	return s.auth(mux)
+	mux.HandleFunc("/api/sources", s.handleSources)
+	mux.HandleFunc("/api/sources/", s.handleSourceAction)
+	mux.HandleFunc("/admin/setup", s.handleSetup)
+	mux.HandleFunc("/admin", s.handleAdmin)
+	mux.HandleFunc("/admin/mark", s.handleMark)
+	mux.HandleFunc("/admin/handled", s.handleHandled)
+	mux.HandleFunc("/admin/rules", s.handleRules)
+	mux.HandleFunc("/admin/rules/", s.handleRulesID)
+	mux.HandleFunc("/admin/config", s.handleConfig)
+	mux.HandleFunc("/admin/config/save", s.handleConfig)
+	mux.HandleFunc("/admin/config/cookie/test", s.handleCookieTest)
+	mux.HandleFunc("/admin/stats", s.handleStats)
+	mux.HandleFunc("/admin/dead/reset", s.handleDeadReset)
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		http.Redirect(w, r, "/admin", http.StatusSeeOther)
+	})
+	return s.auth(s.setupGate(mux))
 }

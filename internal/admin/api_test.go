@@ -18,8 +18,7 @@ import (
 func TestAPIFeedbacksAuth(t *testing.T) {
 	s := newAdminTestStore(t)
 	defer s.Close()
-	rt := config.NewRuntime(&config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}})
-	srv := NewServer(s, rt, "secret", nil)
+	srv := newTestServerWithStore(t, s, &config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}}, "secret", nil)
 
 	future := time.Now().Add(time.Hour).Unix()
 	goodSig := feedbackSig(1, models.FeedbackUseful, future, "secret")
@@ -73,8 +72,7 @@ func TestAPIFeedbacksAuth(t *testing.T) {
 func TestAPIFeedbacksAuthOff(t *testing.T) {
 	s := newAdminTestStore(t)
 	defer s.Close()
-	rt := config.NewRuntime(&config.AppConfig{}) // AuthRequired 默认 false
-	srv := NewServer(s, rt, "secret", nil)       // 配了 token 也不验证
+	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "secret", nil)
 
 	future := time.Now().Add(time.Hour).Unix()
 
@@ -119,8 +117,7 @@ func TestAPIFeedbacksAuthOff(t *testing.T) {
 func TestAPIPostsList(t *testing.T) {
 	s := newAdminTestStore(t)
 	defer s.Close()
-	rt := config.NewRuntime(&config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}})
-	srv := NewServer(s, rt, "secret", nil)
+	srv := newTestServerWithStore(t, s, &config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}}, "secret", nil)
 
 	// 播种 3 帖：passed、rejected、collected（id 倒序 = list2, list1, list0）
 	for i, status := range []string{models.PostStatusPassed, models.PostStatusRejected, models.PostStatusCollected} {
@@ -155,12 +152,59 @@ func TestAPIPostsList(t *testing.T) {
 	}
 }
 
+// TestAPIPostsListFilters API 透传 q/tag/handled（规格 §6）
+func TestAPIPostsListFilters(t *testing.T) {
+	s := newAdminTestStore(t)
+	defer s.Close()
+	srv := newTestServerWithStore(t, s, &config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}}, "secret", nil)
+
+	p1 := models.RentPost{Source: "douban", ExternalID: "af1", Title: "望京合租", Content: "近地铁",
+		Status: models.PostStatusPassed, AddressTags: []string{"望京"}}
+	p2 := models.RentPost{Source: "douban", ExternalID: "af2", Title: "回龙观", Content: "无",
+		Status: models.PostStatusPassed, AddressTags: []string{"回龙观"}}
+	for _, p := range []models.RentPost{p1, p2} {
+		if _, err := s.InsertPost(p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	id2 := postID(t, s, "af2")
+	if err := s.MarkPostHandled(id2); err != nil {
+		t.Fatal(err)
+	}
+
+	get := func(path string) (int, []models.RentPost) {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("Authorization", "Bearer secret")
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, req)
+		var out struct {
+			Posts []models.RentPost `json:"posts"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatalf("%s 解析失败: %v", path, err)
+		}
+		return rec.Code, out.Posts
+	}
+
+	if code, posts := get("/api/posts?q=合租"); code != http.StatusOK || len(posts) != 1 || posts[0].ExternalID != "af1" {
+		t.Errorf("q=合租: code=%d posts=%+v", code, posts)
+	}
+	if code, posts := get("/api/posts?tag=望京"); code != http.StatusOK || len(posts) != 1 || posts[0].ExternalID != "af1" {
+		t.Errorf("tag=望京: code=%d posts=%+v", code, posts)
+	}
+	if code, posts := get("/api/posts?handled=1"); code != http.StatusOK || len(posts) != 1 || posts[0].ExternalID != "af2" || posts[0].HandledAt == nil {
+		t.Errorf("handled=1: code=%d posts=%+v", code, posts)
+	}
+	if code, posts := get("/api/posts?handled=0"); code != http.StatusOK || len(posts) != 1 || posts[0].ExternalID != "af1" {
+		t.Errorf("handled=0: code=%d posts=%+v", code, posts)
+	}
+}
+
 // TestAPIPostsListDefaultLimit：不传 limit → 默认 50（播种 55 帖验证默认值生效）
 func TestAPIPostsListDefaultLimit(t *testing.T) {
 	s := newAdminTestStore(t)
 	defer s.Close()
-	rt := config.NewRuntime(&config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}})
-	srv := NewServer(s, rt, "secret", nil)
+	srv := newTestServerWithStore(t, s, &config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}}, "secret", nil)
 
 	for i := 0; i < 55; i++ {
 		p := models.RentPost{Source: "douban", ExternalID: fmt.Sprintf("d%d", i), Title: "t", Status: models.PostStatusCollected}
@@ -190,8 +234,7 @@ func TestAPIPostsListDefaultLimit(t *testing.T) {
 func TestAPIPostDetail(t *testing.T) {
 	s := newAdminTestStore(t)
 	defer s.Close()
-	rt := config.NewRuntime(&config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}})
-	srv := NewServer(s, rt, "secret", nil)
+	srv := newTestServerWithStore(t, s, &config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}}, "secret", nil)
 
 	if _, err := s.InsertPost(models.RentPost{Source: "douban", ExternalID: "detail1", Title: "详情帖", Status: models.PostStatusPassed}); err != nil {
 		t.Fatal(err)
@@ -250,8 +293,7 @@ func TestAPIPostDetail(t *testing.T) {
 func TestAPIPostsEdgeCases(t *testing.T) {
 	s := newAdminTestStore(t)
 	defer s.Close()
-	rt := config.NewRuntime(&config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}})
-	srv := NewServer(s, rt, "secret", nil)
+	srv := newTestServerWithStore(t, s, &config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}}, "secret", nil)
 
 	cases := []struct {
 		name string

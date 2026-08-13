@@ -33,39 +33,44 @@ func AppToKV(cfg *AppConfig) map[string]string {
 	if cfg.Admin.AuthRequired {
 		auth = "true"
 	}
-		rangeFrom := cfg.Collector.Douban.RangeFrom
-		if rangeFrom == "" {
-			rangeFrom = "-10d"
-		}
-		rangeTo := cfg.Collector.Douban.RangeTo
-		if rangeTo == "" {
-			rangeTo = "now"
-		}
-		kv := map[string]string{
-			"server.addr":                  cfg.Server.Addr,
-			"log.level":                    cfg.Log.Level,
-			"log.format":                   cfg.Log.Format,
-			"log.path":                     cfg.Log.Path,
-			"collector.sources":            strings.Join(cfg.Collector.Sources, ","),
-			"collector.interval":           strconv.Itoa(cfg.Collector.Interval),
-			"collector.jitter_ratio":       fmt.Sprintf("%g", cfg.Collector.JitterRatio),
-			"collector.max_age_days":       strconv.Itoa(cfg.Collector.MaxAgeDays),
-			"collector.douban.groups":      strings.Join(cfg.Collector.Douban.Groups, "\n"),
-			"collector.douban.interval":    strconv.Itoa(cfg.Collector.Douban.Interval),
-			"collector.douban.range_from":  rangeFrom,
-			"collector.douban.range_to":    rangeTo,
-			"filter.ai_enabled":            ai,
-			"filter.batch_size":            strconv.Itoa(cfg.Filter.BatchSize),
-			"filter.ai_batch_size":         strconv.Itoa(cfg.Filter.AIBatchSize),
-			"notifier.max_attempts":        strconv.Itoa(cfg.Notifier.MaxAttempts),
-			"notifier.retry_base_interval": strconv.Itoa(cfg.Notifier.RetryBaseInterval),
-			"notifier.batch_size":          strconv.Itoa(cfg.Notifier.BatchSize),
-			"notifier.channels":            strings.Join(cfg.Notifier.Channels, ","),
-			"admin.auth_required":          auth,
-			"admin.token":                  cfg.Admin.Token,
-		}
-		return kv
+	rangeFrom := CanonicalDayOffset(cfg.Collector.Douban.RangeFrom)
+	if rangeFrom == "" {
+		rangeFrom = "-10"
 	}
+	rangeTo := CanonicalDayOffset(cfg.Collector.Douban.RangeTo)
+	if rangeTo == "" {
+		rangeTo = "now"
+	}
+	doubanInterval := cfg.Collector.Douban.Interval
+	if doubanInterval <= 0 {
+		doubanInterval = 3
+	}
+	kv := map[string]string{
+		"server.addr":                  cfg.Server.Addr,
+		"log.level":                    cfg.Log.Level,
+		"log.format":                   cfg.Log.Format,
+		"log.path":                     cfg.Log.Path,
+		"log.memory_lines":             strconv.Itoa(cfg.Log.MemoryLines),
+		"collector.sources":            strings.Join(cfg.Collector.Sources, ","),
+		"collector.interval":           strconv.Itoa(cfg.Collector.Interval),
+		"collector.jitter_ratio":       fmt.Sprintf("%g", cfg.Collector.JitterRatio),
+		"collector.max_age_days":       strconv.Itoa(cfg.Collector.MaxAgeDays),
+		"collector.douban.groups":      strings.Join(cfg.Collector.Douban.Groups, "\n"),
+		"collector.douban.interval":    strconv.Itoa(doubanInterval),
+		"collector.douban.range_from":  rangeFrom,
+		"collector.douban.range_to":    rangeTo,
+		"filter.ai_enabled":            ai,
+		"filter.batch_size":            strconv.Itoa(cfg.Filter.BatchSize),
+		"filter.ai_batch_size":         strconv.Itoa(cfg.Filter.AIBatchSize),
+		"notifier.max_attempts":        strconv.Itoa(cfg.Notifier.MaxAttempts),
+		"notifier.retry_base_interval": strconv.Itoa(cfg.Notifier.RetryBaseInterval),
+		"notifier.batch_size":          strconv.Itoa(cfg.Notifier.BatchSize),
+		"notifier.channels":            strings.Join(cfg.Notifier.Channels, ","),
+		"admin.auth_required":          auth,
+		"admin.token":                  cfg.Admin.Token,
+	}
+	return kv
+}
 
 // SecretsToKV 敏感配置扁平化为 KV（secret. 前缀）
 func SecretsToKV(sec *Secrets) map[string]string {
@@ -75,69 +80,63 @@ func SecretsToKV(sec *Secrets) map[string]string {
 	dc := sec.Collector.Douban
 	llm := sec.Filter.LLM
 	n := sec.Notifier
-	cookieMode := dc.CookieMode
-	if cookieMode == "" {
-		cookieMode = "none"
+	cookieMode := ParseCookieMode(dc.CookieMode).String()
+	apiStyle := ParseLLMAPIStyle(llm.APIStyle).String()
+	if apiStyle == "" {
+		apiStyle = LLMStyleOpenAI.String()
 	}
-		apiStyle := llm.APIStyle
-		if apiStyle == "" {
-			apiStyle = "openai"
-		}
-		if apiStyle == "custom" {
-			apiStyle = "other"
-		}
 	return map[string]string{
-			"secret.collector.douban.cookie_mode":          cookieMode,
-			"secret.collector.douban.cookie_raw":           dc.CookieRaw,
-			"secret.collector.douban.cookie_file":          dc.CookieFile,
-			"secret.collector.douban.cookiecloud_url":      dc.CookiecloudURL,
-			"secret.collector.douban.cookiecloud_key":      dc.CookiecloudKey,
-			"secret.collector.douban.cookiecloud_password": dc.CookiecloudPass,
-			"secret.filter.llm.api_key":                    llm.APIKey,
-			"secret.filter.llm.base_url":                   llm.BaseURL,
-			"secret.filter.llm.model":                      llm.Model,
-			"secret.filter.llm.fallback_models":            strings.Join(llm.FallbackModels, ","),
-			"secret.filter.llm.api_style":                  apiStyle,
-			"secret.notifier.feishu.webhook":               n.Feishu.Webhook,
-			"secret.notifier.dingtalk.webhook":             n.Dingtalk.Webhook,
-			"secret.notifier.dingtalk.secret":              n.Dingtalk.Secret,
-			"secret.notifier.wecom.webhook":                n.Wecom.Webhook,
-			"secret.notifier.pushplus.token":               n.Pushplus.Token,
-			"secret.notifier.serverchan.sendkey":           n.Serverchan.Sendkey,
-			"secret.notifier.webhook.url":                  n.Webhook.URL,
-			"secret.notifier.webhook.template":             n.Webhook.Template,
-		}
+		KeyDoubanCookieMode:                   cookieMode,
+		KeyDoubanCookieRaw:                    dc.CookieRaw,
+		"secret.collector.douban.cookie_file": dc.CookieFile,
+		KeyDoubanCookieCloudURL:               dc.CookiecloudURL,
+		KeyDoubanCookieCloudKey:               dc.CookiecloudKey,
+		KeyDoubanCookieCloudPwd:               dc.CookiecloudPass,
+		"secret.filter.llm.api_key":           llm.APIKey,
+		"secret.filter.llm.base_url":          llm.BaseURL,
+		"secret.filter.llm.model":             llm.Model,
+		"secret.filter.llm.fallback_models":   strings.Join(llm.FallbackModels, ","),
+		"secret.filter.llm.api_style":         apiStyle,
+		"secret.notifier.feishu.webhook":      n.Feishu.Webhook,
+		"secret.notifier.dingtalk.webhook":    n.Dingtalk.Webhook,
+		"secret.notifier.dingtalk.secret":     n.Dingtalk.Secret,
+		"secret.notifier.wecom.webhook":       n.Wecom.Webhook,
+		"secret.notifier.pushplus.token":      n.Pushplus.Token,
+		"secret.notifier.serverchan.sendkey":  n.Serverchan.Sendkey,
+		"secret.notifier.webhook.url":         n.Webhook.URL,
+		"secret.notifier.webhook.template":    n.Webhook.Template,
 	}
+}
 
 // SectionKeys 各配置分区包含的 key（分块 submit 用）
-	var SectionKeys = map[string][]string{
-		"general": {
-			"server.addr", "log.level", "log.format", "log.path",
-		},
-		"collector": {
-			"collector.sources", "collector.interval", "collector.jitter_ratio", "collector.max_age_days",
-			"collector.douban.groups", "collector.douban.interval",
-			"collector.douban.range_from", "collector.douban.range_to",
-			"secret.collector.douban.cookie_mode", "secret.collector.douban.cookie_raw",
-			"secret.collector.douban.cookie_file",
-			"secret.collector.douban.cookiecloud_url", "secret.collector.douban.cookiecloud_key",
-			"secret.collector.douban.cookiecloud_password",
-		},
-		"filter": {
-			"filter.ai_enabled", "filter.batch_size", "filter.ai_batch_size",
-			"secret.filter.llm.api_style",
-			"secret.filter.llm.api_key", "secret.filter.llm.base_url", "secret.filter.llm.model",
-			"secret.filter.llm.fallback_models",
-		},
-		"notifier": {
-			"notifier.max_attempts", "notifier.retry_base_interval", "notifier.batch_size", "notifier.channels",
-			"secret.notifier.feishu.webhook",
-			"secret.notifier.pushplus.token",
-		},
-		"admin": {
-			"admin.auth_required", "admin.token",
-		},
-	}
+var SectionKeys = map[string][]string{
+	"general": {
+		"server.addr", "log.level", "log.format", "log.path", "log.memory_lines",
+	},
+	"collector": {
+		"collector.sources", "collector.interval", "collector.jitter_ratio", "collector.max_age_days",
+		"collector.douban.groups", "collector.douban.interval",
+		"collector.douban.range_from", "collector.douban.range_to",
+		"secret.collector.douban.cookie_mode", "secret.collector.douban.cookie_raw",
+		"secret.collector.douban.cookie_file",
+		"secret.collector.douban.cookiecloud_url", "secret.collector.douban.cookiecloud_key",
+		"secret.collector.douban.cookiecloud_password",
+	},
+	"filter": {
+		"filter.ai_enabled", "filter.batch_size", "filter.ai_batch_size",
+		"secret.filter.llm.api_style",
+		"secret.filter.llm.api_key", "secret.filter.llm.base_url", "secret.filter.llm.model",
+		"secret.filter.llm.fallback_models",
+	},
+	"notifier": {
+		"notifier.max_attempts", "notifier.retry_base_interval", "notifier.batch_size", "notifier.channels",
+		"secret.notifier.feishu.webhook",
+		"secret.notifier.pushplus.token",
+	},
+	"admin": {
+		"admin.auth_required", "admin.token",
+	},
+}
 
 // KVToApp 从 KV 还原公开配置（缺省走 applyDefaults）
 func KVToApp(kv map[string]string) *AppConfig {
@@ -156,6 +155,9 @@ func KVToApp(kv map[string]string) *AppConfig {
 		cfg.Log.Format = v
 	}
 	cfg.Log.Path = kv["log.path"]
+	if v := kv["log.memory_lines"]; v != "" {
+		cfg.Log.MemoryLines = atoi(v, 0)
+	}
 	// 旧 pipeline.* 仅作迁移 fallback；新 key 优先（BatchSize 仍为 0 时 applyDefaults 会回落）
 	if v := kv["pipeline.batch_size"]; v != "" {
 		cfg.Pipeline.BatchSize = atoi(v, 0)
@@ -182,10 +184,10 @@ func KVToApp(kv map[string]string) *AppConfig {
 		cfg.Collector.Douban.Interval = atoi(v, 0)
 	}
 	if v, ok := kv["collector.douban.range_from"]; ok {
-		cfg.Collector.Douban.RangeFrom = v
+		cfg.Collector.Douban.RangeFrom = CanonicalDayOffset(v)
 	}
 	if v, ok := kv["collector.douban.range_to"]; ok {
-		cfg.Collector.Douban.RangeTo = v
+		cfg.Collector.Douban.RangeTo = CanonicalDayOffset(v)
 	}
 	if v, ok := kv["filter.ai_enabled"]; ok && v != "" {
 		b := strings.EqualFold(v, "true") || v == "1" || v == "on"
@@ -223,28 +225,23 @@ func KVToSecrets(kv map[string]string) *Secrets {
 	if len(kv) == 0 {
 		return sec
 	}
-	cookieMode := kv["secret.collector.douban.cookie_mode"]
-	if cookieMode == "" {
-		cookieMode = "none"
-	}
-	// 旧 file 模式读库时先当 none（Open migrate 会落盘；热加载路径也兜底）
+	cookieMode := kv[KeyDoubanCookieMode]
 	if strings.EqualFold(cookieMode, "file") {
-		cookieMode = "none"
+		cookieMode = CookieModeNone.String()
+	} else {
+		cookieMode = ParseCookieMode(cookieMode).String()
 	}
-		apiStyleLLM := kv["secret.filter.llm.api_style"]
-		if apiStyleLLM == "" {
-			apiStyleLLM = "openai"
-		}
-		if apiStyleLLM == "custom" {
-			apiStyleLLM = "other"
-		}
+	apiStyleLLM := ParseLLMAPIStyle(kv["secret.filter.llm.api_style"]).String()
+	if apiStyleLLM == "" {
+		apiStyleLLM = LLMStyleOpenAI.String()
+	}
 	sec.Collector.Douban = DoubanCookieConfig{
 		CookieMode:      cookieMode,
-		CookieRaw:       kv["secret.collector.douban.cookie_raw"],
+		CookieRaw:       kv[KeyDoubanCookieRaw],
 		CookieFile:      kv["secret.collector.douban.cookie_file"],
-		CookiecloudURL:  kv["secret.collector.douban.cookiecloud_url"],
-		CookiecloudKey:  kv["secret.collector.douban.cookiecloud_key"],
-		CookiecloudPass: kv["secret.collector.douban.cookiecloud_password"],
+		CookiecloudURL:  kv[KeyDoubanCookieCloudURL],
+		CookiecloudKey:  kv[KeyDoubanCookieCloudKey],
+		CookiecloudPass: kv[KeyDoubanCookieCloudPwd],
 	}
 	sec.Filter.LLM = LLMConfig{
 		APIKey:         kv["secret.filter.llm.api_key"],

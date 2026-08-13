@@ -212,6 +212,7 @@ func TestStatsTokenPropagation(t *testing.T) {
 	body := rec.Body.String()
 	for _, want := range []string{
 		"/admin/stats?token=secret",      // nav 统计链接
+		"/admin/logs?token=secret",       // nav 日志链接
 		"/admin/dead/reset?token=secret", // 重发表单 action
 	} {
 		if !strings.Contains(body, want) {

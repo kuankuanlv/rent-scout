@@ -72,14 +72,41 @@
 </div>
 <script>
 (function(){
-  function saveForm(form, hint){
+  function collectRuleForm(form, row){
+    var fd = new FormData();
+    if (form) {
+      new FormData(form).forEach(function(v, k){ fd.set(k, v); });
+    }
+    // 桌面表格用 form= 把输入挂到表单外，部分浏览器 FormData(form) 拿不到，这里按行补齐
+    if (row) {
+      row.querySelectorAll('[name]').forEach(function(el){
+        if (!el.name || el.closest('form[action*="/delete"]')) return;
+        if (el.type === 'checkbox') {
+          if (el.checked) fd.set(el.name, el.value || 'on');
+          else fd.delete(el.name);
+        } else {
+          fd.set(el.name, el.value);
+        }
+      });
+    }
+    return fd;
+  }
+  function saveForm(form, row, hint){
     if (!form) return;
-    var fd = new FormData(form);
-    // checkbox 未勾选时 FormData 不含 enabled → 后端当关闭
+    var fd = collectRuleForm(form, row);
     if (hint) { hint.hidden = false; hint.textContent = '保存中…'; hint.className = 'text-xs text-gray-400 rule-save-hint'; }
-    fetch(form.action, {method:'POST', body: fd, credentials:'same-origin', redirect:'follow'})
+    fetch(form.action, {
+      method: 'POST',
+      body: fd,
+      credentials: 'same-origin',
+      headers: {'Accept': 'application/json'},
+      redirect: 'manual'
+    })
       .then(function(r){
-        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json().then(function(j){ return {ok: r.ok, j: j}; }).catch(function(){ return {ok: r.ok, j: null}; });
+      })
+      .then(function(x){
+        if (!x.ok) throw new Error((x.j && x.j.error) || '保存失败');
         if (hint) { hint.textContent = '已保存'; hint.className = 'text-xs text-green-600 rule-save-hint'; }
       })
       .catch(function(e){
@@ -87,19 +114,18 @@
       });
   }
   document.querySelectorAll('.rule-autosave').forEach(function(el){
-    var ev = el.type === 'checkbox' ? 'change' : 'change';
-    el.addEventListener(ev, function(){
+    el.addEventListener('change', function(){
       var form = el.form || el.closest('form');
       var row = el.closest('[data-rule-row]');
       var hint = row ? row.querySelector('.rule-save-hint') : null;
-      saveForm(form, hint);
+      saveForm(form, row, hint);
     });
     if (el.type !== 'checkbox') {
       el.addEventListener('blur', function(){
         var form = el.form || el.closest('form');
         var row = el.closest('[data-rule-row]');
         var hint = row ? row.querySelector('.rule-save-hint') : null;
-        saveForm(form, hint);
+        saveForm(form, row, hint);
       });
     }
   });

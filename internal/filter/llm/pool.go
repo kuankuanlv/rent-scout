@@ -73,12 +73,12 @@ func (p *Pool) ChatWithModel(ctx context.Context, system, user string) (string, 
 		if err == nil {
 			p.recordSuccess()
 			if i > 0 {
-				pkglog.Component(pkglog.Filter).Warn("[llm_fallback_ok] LLM 回退模型成功", "model", c.Model())
+				pkglog.Component(pkglog.AIReview).Warn("LLM 回退模型成功", "model", c.Model())
 			}
 			return out, c.Model(), nil
 		}
 		lastErr = err
-		pkglog.Component(pkglog.Filter).Warn("[llm_call_failed] LLM 调用失败", "model", c.Model(), "err", err)
+		pkglog.Component(pkglog.AIReview).Warn("LLM 调用失败", "model", c.Model(), "err", err)
 	}
 	p.recordFailure()
 	return "", "", lastErr
@@ -99,7 +99,7 @@ func (p *Pool) recordFailure() {
 	if p.failures >= p.opts.MaxFailures {
 		p.circuitOpen = true
 		p.circuitTill = time.Now().Add(p.opts.CircuitDuration)
-		pkglog.Component(pkglog.Filter).Warn("[llm_circuit_open] LLM 熔断打开", "failures", p.failures, "duration", p.opts.CircuitDuration)
+		pkglog.Component(pkglog.AIReview).Warn("LLM 熔断打开", "failures", p.failures, "duration", p.opts.CircuitDuration)
 	}
 }
 

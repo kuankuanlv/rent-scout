@@ -192,6 +192,74 @@ func TestRulesUpdateEnableEnabled(t *testing.T) {
 	t.Errorf("规则 %d 不存在", r.ID)
 }
 
+func TestRulesUpdateJSON(t *testing.T) {
+	s := newAdminTestStore(t)
+	defer s.Close()
+	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
+
+	r, err := s.CreateRule(models.Rule{Name: "json", Type: models.RuleTypeBlacklist, Value: "旧", Enabled: true, Priority: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateRule(models.Rule{Name: "保底", Type: models.RuleTypeWhitelist, Value: "望京", Enabled: true, Priority: 1}); err != nil {
+		t.Fatal(err)
+	}
+
+	form := url.Values{
+		"name":     {"json"},
+		"type":     {r.Type},
+		"value":    {"新值"},
+		"priority": {"8"},
+		"enabled":  {"on"},
+	}
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/admin/rules/%d", r.ID), strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200 JSON", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"ok":true`) {
+		t.Errorf("body = %s", rec.Body.String())
+	}
+	rules, _ := s.ListRules(false)
+	for _, g := range rules {
+		if g.ID == r.ID {
+			if g.Value != "新值" || !g.Enabled || g.Priority != 8 {
+				t.Errorf("更新未生效: %+v", g)
+			}
+			return
+		}
+	}
+	t.Errorf("规则 %d 不存在", r.ID)
+}
+
+func TestRulesUpdateJSONMissingValue(t *testing.T) {
+	s := newAdminTestStore(t)
+	defer s.Close()
+	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
+	r, err := s.CreateRule(models.Rule{Name: "缺值", Type: models.RuleTypeBlacklist, Value: "v", Enabled: true, Priority: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateRule(models.Rule{Name: "保底", Type: models.RuleTypeWhitelist, Value: "望京", Enabled: true, Priority: 1}); err != nil {
+		t.Fatal(err)
+	}
+	form := url.Values{"name": {"缺值"}, "type": {r.Type}, "priority": {"1"}, "enabled": {"on"}}
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/admin/rules/%d", r.ID), strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "参数无效") {
+		t.Errorf("body = %s", rec.Body.String())
+	}
+}
+
 // TestRulesDelete POST /admin/rules/{id}/delete → 302 + 规则消失（另有启用规则）
 func TestRulesDelete(t *testing.T) {
 	s := newAdminTestStore(t)

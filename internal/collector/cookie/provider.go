@@ -10,26 +10,26 @@ import (
 )
 
 // Provider cookie 获取层：按源返回可用 cookie。
-// 三种实现：none（匿名）/ raw（配置原文）/ cookiecloud（同步）
+// 采集路径只读本地：none 空串；raw / cookiecloud 都读 CookieRaw，绝不打 CookieCloud。
 type Provider interface {
 	Get(ctx context.Context, source string) (string, error)
 }
 
-// New 按 cookie_mode 选择实现；raw 读 cfg.CookieRaw
+// New 按 cookie_mode 选择实现；cookiecloud 在采集侧等同 raw（只读已同步的 CookieRaw）
 func New(mode string, cfg config.DoubanCookieConfig) (Provider, error) {
-	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "", "none":
+	m := config.ParseCookieMode(mode)
+	switch m {
+	case config.CookieModeNone:
 		return noneProvider{}, nil
-	case "raw":
+	case config.CookieModeRaw, config.CookieModeCookieCloud:
 		return rawProvider{cookie: cfg.CookieRaw}, nil
-	case "cookiecloud":
-		return newCookiecloudProvider(cfg), nil
 	default:
-		return nil, fmt.Errorf("未知 cookie_mode: %q（仅 none/raw/cookiecloud）", mode)
+		return nil, fmt.Errorf("未知 cookie_mode: %q（仅 %s/%s/%s）", mode,
+			config.CookieModeNone, config.CookieModeRaw, config.CookieModeCookieCloud)
 	}
 }
 
-// NewHotConfigProvider 每次 Get 从 HotConfig 读最新敏感配置再建具体 provider
+// NewHotConfigProvider 每次 Get 从 HotConfig 读最新敏感配置；采集不碰 CookieCloud
 func NewHotConfigProvider(hc *config.HotConfig) Provider {
 	return hotConfigProvider{hc: hc}
 }
@@ -43,30 +43,28 @@ func (p hotConfigProvider) Get(ctx context.Context, source string) (string, erro
 		return "", nil
 	}
 	dc := p.hc.Secrets().Collector.Douban
-	mode := strings.ToLower(strings.TrimSpace(dc.CookieMode))
-	inner, err := New(dc.CookieMode, dc)
-	if err != nil {
-		return "", err
+	mode := config.ParseCookieMode(dc.CookieMode)
+	if !mode.Valid() {
+		return "", fmt.Errorf("未知 cookie_mode: %q", dc.CookieMode)
 	}
-	cookie, err := inner.Get(ctx, source)
-	if err != nil {
-		return "", err
+	if mode == config.CookieModeNone {
+		return "", nil
 	}
-	// mode 期望有 cookie 却拿到空串：记一次空降级（无明文）
-	if cookie == "" && mode != "" && mode != "none" {
-		pkglog.Component(pkglog.Collector).Info("[cookie_get_empty] Cookie 为空", "source", source, "mode", mode)
+	ck := strings.TrimSpace(dc.CookieRaw)
+	if ck == "" {
+		pkglog.Component(pkglog.SourceCollector(source)).Error("本地 cookie 为空，本轮结束",
+			"source", source, "mode", mode)
+		return "", ErrCookieMissing
 	}
-	return cookie, nil
+	return ck, nil
 }
 
-// noneProvider 匿名访问
 type noneProvider struct{}
 
 func (noneProvider) Get(ctx context.Context, source string) (string, error) {
 	return "", nil
 }
 
-// rawProvider 直接返回配置里的 cookie 原文
 type rawProvider struct {
 	cookie string
 }

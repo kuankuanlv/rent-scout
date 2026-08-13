@@ -2,67 +2,94 @@ package config
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
 )
 
 // ResolveTimeRange 解析拉取时间窗。
-// from/to：now 或空 to = 动态现在；-Nd / 纯数字天数 = 相对 now 往前；
-// 也可填 RFC3339、2006-01-02、2006-01-02 15:04 等绝对时间。
+// from/to 按「天」相对 now：负数=过去，正数=未来；now / 空 to = 0。
+// 「从」只能为负且必须小于「至」。仍兼容旧写法 -10d、绝对日期。
 func ResolveTimeRange(from, to string, now time.Time) (start, end time.Time, err error) {
 	from = strings.TrimSpace(from)
 	to = strings.TrimSpace(to)
 	if from == "" {
-		from = "-10d"
+		from = "-10"
 	}
 	if to == "" {
 		to = "now"
 	}
-	start, err = parseTimeBound(from, now)
+	start, fromDays, fromKind, err := parseTimeBound(from, now)
 	if err != nil {
 		return time.Time{}, time.Time{}, fmt.Errorf("from %q: %w", from, err)
 	}
-	end, err = parseTimeBound(to, now)
+	end, toDays, toKind, err := parseTimeBound(to, now)
 	if err != nil {
 		return time.Time{}, time.Time{}, fmt.Errorf("to %q: %w", to, err)
 	}
-	if start.After(end) {
-		return time.Time{}, time.Time{}, fmt.Errorf("from 不能晚于 to")
+	if fromKind == boundOffset && fromDays >= 0 {
+		return time.Time{}, time.Time{}, fmt.Errorf("「从」只能为负数")
+	}
+	if fromKind == boundOffset && toKind == boundOffset && fromDays >= toDays {
+		return time.Time{}, time.Time{}, fmt.Errorf("「从」必须小于「至」")
+	}
+	if !start.Before(end) {
+		return time.Time{}, time.Time{}, fmt.Errorf("from 不能晚于或等于 to")
 	}
 	return start, end, nil
 }
 
-func parseTimeBound(s string, now time.Time) (time.Time, error) {
+const (
+	boundNow      = "now"
+	boundOffset   = "offset"
+	boundAbsolute = "absolute"
+)
+
+func parseTimeBound(s string, now time.Time) (time.Time, float64, string, error) {
 	if strings.EqualFold(s, "now") {
-		return now, nil
+		return now, 0, boundNow, nil
 	}
-	if days, ok := parseRelativeDays(s); ok {
-		return now.Add(-time.Duration(days) * 24 * time.Hour), nil
+	if days, ok := parseDayOffset(s); ok {
+		d := time.Duration(days * float64(24*time.Hour))
+		return now.Add(d), days, boundOffset, nil
 	}
 	if t, err := time.Parse(time.RFC3339, s); err == nil {
-		return t, nil
+		return t, 0, boundAbsolute, nil
 	}
 	for _, layout := range []string{"2006-01-02 15:04:05", "2006-01-02 15:04", "2006-01-02"} {
 		if t, err := time.ParseInLocation(layout, s, now.Location()); err == nil {
-			return t, nil
+			return t, 0, boundAbsolute, nil
 		}
 	}
-	return time.Time{}, fmt.Errorf("无法解析（支持 now/-10d/天数/日期）")
+	return time.Time{}, 0, "", fmt.Errorf("无法解析（支持 now/-10/小数天）")
 }
 
-// parseRelativeDays 认 -10d、-10、10；返回正天数（相对 now 往前）
-func parseRelativeDays(s string) (int, bool) {
+// parseDayOffset 认 -10、-10d、-10.5、0.5；保留正负号
+func parseDayOffset(s string) (float64, bool) {
 	s = strings.TrimSpace(strings.ToLower(s))
-	if strings.HasSuffix(s, "d") {
-		s = strings.TrimSuffix(s, "d")
-	}
-	n, err := strconv.Atoi(s)
-	if err != nil {
+	if s == "" || strings.EqualFold(s, "now") {
 		return 0, false
 	}
-	if n < 0 {
-		n = -n
+	s = strings.TrimSuffix(s, "d")
+	n, err := strconv.ParseFloat(s, 64)
+	if err != nil || math.IsNaN(n) || math.IsInf(n, 0) {
+		return 0, false
 	}
 	return n, true
+}
+
+// CanonicalDayOffset 存库/展示：-10d → -10；now 保持；绝对时间原样
+func CanonicalDayOffset(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	if strings.EqualFold(s, "now") {
+		return "now"
+	}
+	if days, ok := parseDayOffset(s); ok {
+		return strconv.FormatFloat(days, 'f', -1, 64)
+	}
+	return s
 }

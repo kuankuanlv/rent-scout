@@ -52,7 +52,7 @@ func (n *Notifier) ProcessBatch(ctx context.Context, batch []models.RentPost) er
 		return nil
 	}
 	log := pkglog.Component(pkglog.Notifier)
-	log.Info("[notify_trigger] 收到通知触发", "count", len(batch))
+	log.Info("收到通知触发", "count", len(batch))
 	ids := make([]int64, len(batch))
 	for i, p := range batch {
 		ids[i] = p.ID
@@ -114,7 +114,7 @@ func (n *Notifier) sendGroup(ctx context.Context, ch Channel, tag string, posts 
 		// 幂等建记录（已存在则忽略；attempts 从 0 起，失败时 +1）。
 		// 建记录失败：跳过该帖不发送（避免状态记录缺失导致下一轮重复通知）
 		if _, err := n.st.InsertNotification(p.ID, ch.Name()); err != nil {
-			pkglog.Component(pkglog.Notifier).Error("[notification_insert_failed] 通知账本建记录失败", "post_id", p.ID, "channel", ch.Name(), "err", err)
+			pkglog.Component(pkglog.Notifier).Error("通知账本建记录失败", "post_id", p.ID, "channel", ch.Name(), "err", err)
 			continue
 		}
 		secret := n.currentFeedbackSecret()
@@ -145,7 +145,7 @@ func (n *Notifier) sendGroup(ctx context.Context, ch Channel, tag string, posts 
 	nb := NotifyBatch{GroupKey: tag, Items: items}
 
 	log := pkglog.Component(pkglog.Notifier)
-	log.Info("[channel_send] 渠道分组发送", "channel", ch.Name(), "group", nb.GroupKey, "items", len(nb.Items))
+	log.Info("渠道分组发送", "channel", ch.Name(), "group", nb.GroupKey, "items", len(nb.Items))
 	sent, failed, err := ch.Send(ctx, nb.Items)
 	if err != nil && len(sent) == 0 {
 		// 整组失败：按 items 下标逐帖标记 failed（attempts+1，达阈值 dead）——items 与 failed 同序
@@ -161,9 +161,9 @@ func (n *Notifier) sendGroup(ctx context.Context, ch Channel, tag string, posts 
 	for _, it := range nb.Items {
 		if sentSet[it.PostID] {
 			if err := n.st.MarkNotificationSent(it.PostID, ch.Name()); err != nil {
-				log.Error("[mark_sent_failed] 标记已发送失败", "post_id", it.PostID, "channel", ch.Name(), "err", err)
+				log.Error("标记已发送失败", "post_id", it.PostID, "channel", ch.Name(), "err", err)
 			}
-			log.Info("[item_sent] 单条通知已发送", "channel", ch.Name(), "post_id", it.PostID, "status", "sent")
+			log.Info("单条通知已发送", "channel", ch.Name(), "post_id", it.PostID, "status", "sent")
 			continue
 		}
 		n.recordOutcome(it.PostID, ch.Name(), nil)
@@ -176,7 +176,7 @@ func (n *Notifier) recordOutcome(postID int64, channel string, sendErr error) {
 	log := pkglog.Component(pkglog.Notifier)
 	attempt, err := n.st.NotificationAttempts(postID, channel)
 	if err != nil {
-		log.Error("[attempts_read_failed] 读取重试次数失败", "post_id", postID, "channel", channel, "err", err)
+		log.Error("读取重试次数失败", "post_id", postID, "channel", channel, "err", err)
 		attempt = 0
 	}
 	attempt++
@@ -186,15 +186,15 @@ func (n *Notifier) recordOutcome(postID int64, channel string, sendErr error) {
 	}
 	if attempt >= n.opts.MaxAttempts {
 		if err := n.st.MarkNotificationDead(postID, channel, msg); err != nil {
-			log.Error("[mark_dead_failed] 标记死信失败", "post_id", postID, "channel", channel, "err", err)
+			log.Error("标记死信失败", "post_id", postID, "channel", channel, "err", err)
 		}
-		log.Warn("[dead_letter] 进入死信", "channel", channel, "post_id", postID, "moved_to", "dead")
+		log.Warn("进入死信", "channel", channel, "post_id", postID, "moved_to", "dead")
 		return
 	}
 	if err := n.st.MarkNotificationFailed(postID, channel, msg, attempt); err != nil {
-		log.Error("[mark_failed_failed] 标记发送失败态失败", "post_id", postID, "channel", channel, "err", err)
+		log.Error("标记发送失败态失败", "post_id", postID, "channel", channel, "err", err)
 	}
-	log.Warn("[item_failed] 发送失败可重试", "channel", channel, "post_id", postID, "attempt", attempt, "status", "failed")
+	log.Warn("发送失败可重试", "channel", channel, "post_id", postID, "attempt", attempt, "status", "failed")
 }
 
 // failedFor 从 Send 返回的 failed 列表中取第 idx 项错误（与 items 同序）；越界/缺失用 err

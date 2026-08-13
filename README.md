@@ -14,8 +14,17 @@
 | v0.6 | 2026-08-13 12:10:00 | 架构说明迁回 `docs/ARCHITECTURE.md`；gitignore 仅忽略 docs 草稿、放行架构 |
 | v0.7 | 2026-08-13 12:05:00 | config：EnvLocal→Secrets、Runtime→HotConfig |
 | v0.8 | 2026-08-13 12:20:00 | cookie 子包、notifier/channels、架构依赖表 |
+| v0.9 | 2026-08-13 14:45:00 | `docs/` 整目录不入库；Cookie 探测展示脱敏豆瓣 cookie、风控间隔符、探测打小组 URL |
+| v0.10 | 2026-08-13 15:15:00 | 日志 `[]` 只标协程职责（`hot_config_reload` / `douban_collector` / `notifier` 等），消息不再写 event_tag |
+| v0.11 | 2026-08-13 15:50:00 | CookieCloud 对齐 AES-128-CBC（gongji 向量）；探测类打 raw 请求应答；顶栏「日志」SSE 滚动 |
+| v0.12 | 2026-08-13 15:55:00 | 内存日志默认 1000 条；配置→常规可改 `log.memory_lines`（100–10000，热生效），并提示内存占用 |
+| v0.13 | 2026-08-13 16:10:00 | 源进度：`source_state.cursor` 存 JSON（backfill 翻页 + incremental 水位）；时间窗/小组变更自动重置；`POST /api/sources/{name}/reset` |
+| v0.14 | 2026-08-13 16:20:00 | 豆瓣拉取范围改为天数「从/至」（默认 -10 / now）；规则 autosave 修 400；配置导出 JSON；CookieCloud / 豆瓣检测拆开 |
+| v0.15 | 2026-08-13 16:40:00 | `douban_collector` 只读本地 cookie；`douban_cookie_cloud` 每 10 分钟同步到 `cookie_raw`；源/CookieMode 改枚举；CookieCloud 日志按请求→应答→过滤域→解密→拿 cookie |
+| v0.16 | 2026-08-13 16:50:00 | 筛选 `filter` 有帖立刻硬规则落库，不等批；AI 审核 `ai_review` 从库读 pending 凑批再调 LLM |
+| v0.17 | 2026-08-13 17:00:00 | 采集日志只保留开始/结束等待下一轮；豆瓣 3s 是请求间隔不再当轮次；配置按关注点分色块，Cookie/检测就近，保存单独靠右 |
 
-> **当前版本：v0.8**
+> **当前版本：v0.17**
 
 ---
 
@@ -45,15 +54,16 @@ docker compose up -d
 
 ## 管理页面（信息架构）
 
-**一级顶栏（仅三）：**
+**一级顶栏（四入口）：**
 
 | 标签 | 路径 |
 |------|------|
 | 帖子 | `/admin` |
 | 统计 | `/admin/stats` |
 | 配置 | `/admin/config`（默认 `?tab=general`） |
+| 日志 | `/admin/logs`（内存 ring + SSE 实时滚动） |
 
-**配置二级 Tab（`?tab=`）：** `general` · `sources` · `rules` · `filter` · `notifier` · `admin`
+**配置二级 Tab（`?tab=`）：** `general` · `sources` · `rules` · `ai` · `notifier` · `admin`
 
 - 规则在 **`/admin/config?tab=rules`**，不是独立顶栏页。
 - `GET /admin/rules` → `302` 到 `?tab=rules`；`POST /admin/rules*` 仍保留。
@@ -97,7 +107,7 @@ docker compose up -d
 
 旧 `file` 模式已移除；库内 `cookie_mode=file` 会规范为 `none`。
 
-**探测：** 配置页 / Setup `POST /admin/config/cookie/test` 用草稿探测（解析 + 轻量在线 GET），**不写库**；日志仅 `cookie_len` / `status`，无明文。
+**探测：** 配置页 / Setup `POST /admin/config/cookie/test` 用草稿探测（解析 + 轻量在线 GET），**不写库**。CookieCloud 只列出豆瓣域 cookie（脱敏预览）；在线探测优先打第一组小组 URL。CookieCloud 解密对齐官方/gongji：`encrypted` 字段，`key=md5(uuid-password)[:16]`，先 **AES-128-CBC（IV=0）**，失败再 Salted__ AES-256。探测 HTTP 打 raw 请求应答（Cookie/Authorization 脱敏），可在「日志」页边测边看。
 
 ## 热加载矩阵 vs RestartKeys
 
@@ -113,11 +123,25 @@ HotConfig 约每 10s 轮询 SQLite：**先 hash，变化才 COW**；未变跳过
 
 ## 日志约定
 
-业务日志带 `component` ∈ `main|hot_config|collector|filter|notifier|admin|setup`，消息形态为 `[{event_tag}] {中文说明}`。热加载示例：`[hot_config_load] 配置变更，开始 COW 更换快照`、`[hot_config_skip] 配置 hash 未变，跳过 COW`、`[hot_config_load_failed] 配置重载失败`。禁止打印完整 cookie / token / LLM key。详见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+`[]` 只标协程职责，不是消息正文。文本形如 `[hot_config_reload] 配置变更，开始 COW 更换快照`；JSON 用 `duty` 字段。固定职责名：`main` · `hot_config_reload` · `douban_collector`（按源 `{source}_collector`）· `filter` · `notifier` · `admin` · `setup`。禁止打印完整 cookie / token / LLM key。
+
+管理台 `/admin/logs` 用进程内 ring + SSE（`/admin/logs/stream`）做动态滚动，不引入 Loki 等外部栈。默认保留 **1000** 条，可在 **配置 → 常规 → 内存日志条数**（`log.memory_lines`，100–10000）调整，保存后立即生效。条数越大越占内存：普通日志大约几百 KB，探测 raw 多时 1000 条可能到数 MB。Cookie / AI 探测的 `stage`、req/resp raw 都会进这里。
+
+## 采集进度（source offset）
+
+每源独立 goroutine（如 `douban_collector`）按页写入 `source_state`：
+
+| 阶段 | 行为 |
+|------|------|
+| `backfill` | 从 `page` 游标翻历史，直到时间窗下沿或各组走完 |
+| `incremental` | 每轮从列表头抓新帖，碰到 `watermark`（已见最新发布时间）即停，不再打旧页 |
+
+时间窗每次按配置相对 `now` 解析（默认 `-10d`～`now`），这是过滤窗，不是翻页起点。改 `range_from/to` 或小组列表会重置进度；也可 `POST /api/sources/{name}/reset`。旧纯字符串游标仍能读，当成 backfill 的 page。
 
 ## 配置说明
 
-- 所有配置（含 webhook、LLM key）写入 SQLite `kv_config` 表
+- 所有配置（含 webhook、LLM key）写入 SQLite `kv_config` 表（扁平 key，如 `collector.douban.groups`、`secret.notifier.feishu.webhook`）
+- 源/渠道差异用 Go 结构体字段 + 扁平 KV，**没有**按源子表，也**没有**整段 JSON blob 存配置；运行时进度才是 JSON（见上）
 - 敏感项以 `secret.` 前缀存储，页面展示打码
 - 无配置文件，无需 `config.toml`
 - 仓库当前**不含** `db/demo.sql`；需要样例数据请自行写入 SQLite
@@ -129,4 +153,4 @@ go test ./...
 go build ./cmd/rent-scout
 ```
 
-架构说明见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+架构说明在本地 `docs/`（不入库）。

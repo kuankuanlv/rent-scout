@@ -41,7 +41,7 @@ func TestConfigTabs(t *testing.T) {
 	if !strings.Contains(body, "变更历史（只读）") {
 		t.Errorf("general 应含变更历史")
 	}
-	if strings.Contains(body, "信息源与 Cookie") || strings.Contains(body, "本配置用于审核帖子") {
+	if strings.Contains(body, "信息源与 Cookie") || strings.Contains(body, "本配置当前版本仅用于审核帖子") {
 		t.Errorf("默认 general 不应渲染其他分区表单")
 	}
 
@@ -58,11 +58,14 @@ func TestConfigTabs(t *testing.T) {
 	if !strings.Contains(body, `value="raw"`) {
 		t.Errorf("sources 应含 cookie raw 选项")
 	}
-	if !strings.Contains(body, "cookie-test-btn") {
-		t.Errorf("sources 应含 Cookie 测试按钮")
+	if !strings.Contains(body, "cookie-test-btn") || !strings.Contains(body, "cookiecloud-test-btn") {
+		t.Errorf("sources 应含 CookieCloud / 豆瓣检测按钮")
 	}
 	if !strings.Contains(body, "cookie-test-summary") {
 		t.Errorf("sources Cookie 结果区应始终可见")
+	}
+	if !strings.Contains(body, "导出 JSON") || !strings.Contains(body, "/admin/config/export") {
+		t.Errorf("配置页应有导出 JSON")
 	}
 	if !strings.Contains(body, `value="douban"`) || !strings.Contains(body, `value="weibo"`) {
 		t.Errorf("sources 启用源应多选 douban/weibo")
@@ -73,8 +76,20 @@ func TestConfigTabs(t *testing.T) {
 	if !strings.Contains(body, "collector.douban.range_from") || !strings.Contains(body, "collector.douban.range_to") {
 		t.Errorf("豆瓣 tab 应有拉取范围从/到")
 	}
-	if !strings.Contains(body, `value="-10d"`) || !strings.Contains(body, `value="now"`) {
-		t.Errorf("拉取范围默认应显示 -10d 与 now")
+	if !strings.Contains(body, `value="-10"`) || !strings.Contains(body, `value="now"`) {
+		t.Errorf("拉取范围默认应显示 -10 与 now")
+	}
+	if !strings.Contains(body, "起始（几天前）") || !strings.Contains(body, "截止（几天后/前）") {
+		t.Errorf("豆瓣范围标签应写清起始/截止含义")
+	}
+	if !strings.Contains(body, "按发布时间筛选") {
+		t.Errorf("时间窗应单独成组")
+	}
+	if !strings.Contains(body, "请求间隔(秒)") || !strings.Contains(body, `name="collector.douban.interval"`) {
+		t.Errorf("豆瓣请求间隔应单独展示")
+	}
+	if !strings.Contains(body, "检测豆瓣 Cookie") || !strings.Contains(body, "检测 CookieCloud") {
+		t.Errorf("Cookie 检测应放在 Cookie 配置块内")
 	}
 	if !strings.Contains(body, "暂未实现") {
 		t.Errorf("微博子 tab 应有占位文案")
@@ -99,16 +114,25 @@ func TestConfigTabs(t *testing.T) {
 	if strings.Contains(body, "积压够了就开干") || strings.Contains(body, "最多等多久也强制跑一轮") {
 		t.Errorf("general 不应再有组批/兜底 tip")
 	}
+	if !strings.Contains(body, "log.memory_lines") || !strings.Contains(body, "占内存") {
+		t.Errorf("general 应有内存日志条数及内存占用提示")
+	}
 
 	code, body = get("/admin/config?tab=ai")
 	if code != http.StatusOK {
 		t.Fatalf("GET tab=ai status = %d", code)
 	}
-	if !strings.Contains(body, "本配置用于审核帖子，并会记录审核通过/拒绝的具体原因") {
+	if !strings.Contains(body, "本配置当前版本仅用于审核帖子") {
 		t.Errorf("ai tab Desc 不符")
 	}
-	if !strings.Contains(body, "filter.batch_size") || !strings.Contains(body, "积压够了就开干") {
-		t.Errorf("ai 应含 filter 组批大小")
+	if !strings.Contains(body, "filter.batch_size") || !strings.Contains(body, "filter.ai_batch_size") {
+		t.Errorf("ai 应含组批/AI 批（高级配置）")
+	}
+	if !strings.Contains(body, "高级配置") {
+		t.Errorf("组批/AI 批应折在高级配置里")
+	}
+	if strings.Contains(body, "积压够了就开干") {
+		t.Errorf("主表单不应再露出组批运营文案")
 	}
 	if strings.Contains(body, "豆瓣截断") || strings.Contains(body, "trim_limits") {
 		t.Errorf("ai 不应含 trim_limits")
@@ -137,7 +161,7 @@ func TestConfigTabs(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("GET tab=filter status = %d", code)
 	}
-	if !strings.Contains(body, "本配置用于审核帖子") {
+	if !strings.Contains(body, "本配置当前版本仅用于审核帖子") {
 		t.Errorf("tab=filter 应兼容渲染 AI 分区")
 	}
 
@@ -175,6 +199,7 @@ func TestConfigTabs(t *testing.T) {
 		t.Errorf("rules tab 不应渲染配置分区表单")
 	}
 }
+
 // TestConfigSectionSaveRestartBanner 改需重启项 → Location 带 restart=1；admin.token 不带
 func TestConfigSectionSaveRestartBanner(t *testing.T) {
 	s := newAdminTestStore(t)
@@ -248,5 +273,27 @@ func TestChangedRestartKeys(t *testing.T) {
 	got := changedRestartKeys(before, updates)
 	if len(got) != 1 || got[0] != "server.addr" {
 		t.Errorf("changedRestartKeys = %v, want [server.addr]", got)
+	}
+}
+
+func TestConfigExportJSON(t *testing.T) {
+	s := newAdminTestStore(t)
+	defer s.Close()
+	srv := newTestServerWithStore(t, s, config.DefaultApp(), "", nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/config/export", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "application/json") {
+		t.Errorf("Content-Type = %q", ct)
+	}
+	if !strings.Contains(rec.Header().Get("Content-Disposition"), "rent-scout-config.json") {
+		t.Errorf("缺附件文件名: %s", rec.Header().Get("Content-Disposition"))
+	}
+	if !strings.Contains(rec.Body.String(), `"collector.douban.range_from"`) {
+		t.Errorf("导出 JSON 应含配置 key: %s", rec.Body.String())
 	}
 }

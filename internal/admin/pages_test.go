@@ -223,6 +223,7 @@ func TestAdminTokenPropagation(t *testing.T) {
 		"/admin?token=secret",               // nav 帖子链接
 		"/admin/stats?token=secret",         // nav 统计链接
 		"/admin/config?token=secret",        // nav 配置链接
+		"/admin/logs?token=secret",          // nav 日志链接
 		"/admin?status=passed&token=secret", // 筛选链接（已有 query，用 & 拼接）
 		"/admin/mark?token=secret",          // 表单 action（FilterQuery 用 template.URL）
 		"/admin/handled?token=secret",       // 已处理表单

@@ -27,18 +27,18 @@ type Server struct {
 // NewServer 创建管理面服务
 func NewServer(db *store.Store, rt *config.HotConfig, ctrl SourceController) *Server {
 	t := template.New("").Funcs(template.FuncMap{
-			"percent":        percent,
-			"setupStepTitle": setupStepTitle,
-			"csvHas":         csvHas,
-			"seq": func(n int) []int {
-				s := make([]int, n)
-				for i := range s {
-					s[i] = i + 1
-				}
-				return s
-			},
-			"sub": func(a, b int) int { return a - b },
-		})
+		"percent":        percent,
+		"setupStepTitle": setupStepTitle,
+		"csvHas":         csvHas,
+		"seq": func(n int) []int {
+			s := make([]int, n)
+			for i := range s {
+				s[i] = i + 1
+			}
+			return s
+		},
+		"sub": func(a, b int) int { return a - b },
+	})
 	t = template.Must(t.ParseFS(templatesFS, "templates/*.html"))
 	return &Server{db: db, rt: rt, ctrl: ctrl, tmpl: t}
 }
@@ -63,10 +63,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/admin/rules/", s.handleRulesID)
 	mux.HandleFunc("/admin/config", s.handleConfig)
 	mux.HandleFunc("/admin/config/save", s.handleConfig)
-		mux.HandleFunc("/admin/config/cookie/test", s.handleCookieTest)
-		mux.HandleFunc("/admin/config/llm/test", s.handleLLMTest)
-		mux.HandleFunc("/admin/config/llm/models", s.handleLLMModels)
-		mux.HandleFunc("/admin/stats", s.handleStats)
+	mux.HandleFunc("/admin/config/export", s.handleConfigExport)
+	mux.HandleFunc("/admin/config/cookie/test", s.handleCookieTest)
+	mux.HandleFunc("/admin/config/cookiecloud/test", s.handleCookieCloudTest)
+	mux.HandleFunc("/admin/config/llm/test", s.handleLLMTest)
+	mux.HandleFunc("/admin/config/llm/models", s.handleLLMModels)
+	mux.HandleFunc("/admin/stats", s.handleStats)
+	mux.HandleFunc("/admin/logs", s.handleLogs)
+	mux.HandleFunc("/admin/logs/stream", s.handleLogsStream)
+	mux.HandleFunc("/admin/logs/recent", s.handleLogsRecent)
 	mux.HandleFunc("/admin/dead/reset", s.handleDeadReset)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {

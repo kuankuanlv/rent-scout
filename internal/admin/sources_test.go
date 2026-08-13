@@ -106,9 +106,11 @@ func TestAPISourceActions(t *testing.T) {
 		{"/api/sources/douban/trigger", http.StatusOK},
 		{"/api/sources/douban/enable", http.StatusOK},
 		{"/api/sources/douban/disable", http.StatusOK},
+		{"/api/sources/douban/reset", http.StatusOK},
 		{"/api/sources/unknown/trigger", http.StatusNotFound},
 		{"/api/sources/unknown/enable", http.StatusNotFound},
 		{"/api/sources/unknown/disable", http.StatusNotFound},
+		{"/api/sources/unknown/reset", http.StatusNotFound},
 		{"/api/sources/bad", http.StatusBadRequest},
 		{"/api/sources/douban/bogus", http.StatusBadRequest},
 	}
@@ -144,6 +146,27 @@ func TestAPISourceActions(t *testing.T) {
 	srv.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("列表 POST: status = %d, want 405", rec.Code)
+	}
+}
+
+func TestAPISourceResetClearsProgress(t *testing.T) {
+	s := newAdminTestStore(t)
+	defer s.Close()
+	if err := s.SetCursor("douban", "1:0"); err != nil {
+		t.Fatal(err)
+	}
+	ctrl := &fakeController{known: map[string]bool{"douban": true}, enabled: map[string]bool{"douban": true}}
+	srv := newTestServerWithStore(t, s, &config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}}, "secret", ctrl)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/sources/douban/reset", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reset status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if _, ok, err := s.GetCursor("douban"); err != nil || ok {
+		t.Errorf("重置后仍有游标 ok=%v err=%v", ok, err)
 	}
 }
 

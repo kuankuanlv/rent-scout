@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"html"
-	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -59,11 +58,11 @@ func (s *Server) handleFeedback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.db.InsertFeedback(models.Feedback{PostID: postID, Channel: "", Action: action, CreatedAt: time.Now()}); err != nil {
-		pkglog.Component(pkglog.Admin).Error("[feedback_write_failed] 反馈写入失败", "post_id", postID, "action", action, "err", err)
+		pkglog.Component(pkglog.Admin).Error("反馈写入失败", "post_id", postID, "action", action, "err", err)
 		s.renderFeedbackResult(w, "写入失败，请稍后重试", false)
 		return
 	}
-	pkglog.Component(pkglog.Admin).Info("[feedback_recorded] 反馈已记录", "post_id", postID, "action", action)
+	pkglog.Component(pkglog.Admin).Info("反馈已记录", "post_id", postID, "action", action)
 	s.renderFeedbackResult(w, "感谢反馈！已记录（该链接 7 天内有效）", true)
 }
 
@@ -87,11 +86,11 @@ func (s *Server) handleHandledLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.db.MarkPostHandled(postID); err != nil {
-		pkglog.Component(pkglog.Admin).Error("[handled_link_write_failed] 已处理链接写入失败", "post_id", postID, "err", err)
+		pkglog.Component(pkglog.Admin).Error("已处理链接写入失败", "post_id", postID, "err", err)
 		s.renderHandledResult(w, "写入失败，请稍后重试", false)
 		return
 	}
-	pkglog.Component(pkglog.Admin).Info("[handled_link_recorded] 已处理链接已生效", "post_id", postID)
+	pkglog.Component(pkglog.Admin).Info("已处理链接已生效", "post_id", postID)
 	s.renderHandledResult(w, "已标记为已处理（该链接 7 天内有效）", true)
 }
 
@@ -128,7 +127,7 @@ func (s *Server) handleFeedbacks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.db.InsertFeedback(models.Feedback{PostID: in.PostID, Channel: in.Channel, Action: in.Action, Reason: in.Reason, CreatedAt: time.Now()}); err != nil {
-		slog.Error("写反馈失败", "post_id", in.PostID, "err", err)
+		pkglog.Component(pkglog.Admin).Error("写反馈失败", "post_id", in.PostID, "err", err)
 		http.Error(w, "写入失败", http.StatusInternalServerError)
 		return
 	}

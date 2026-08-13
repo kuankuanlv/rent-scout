@@ -55,6 +55,7 @@
         <button type="button" id="cookie-test-btn" class="px-4 py-2 border border-brand-200 text-brand-700 hover:bg-brand-50 rounded-xl text-sm font-medium">测试 Cookie</button>
         <div id="cookie-test-result" class="rounded-xl border border-gray-100 bg-slate-50 p-3 text-sm space-y-2">
           <p id="cookie-test-summary" class="font-medium text-gray-700">点「测试 Cookie」查看结果</p>
+          <ul id="cookie-test-list" class="hidden text-xs text-gray-600 list-disc pl-5 space-y-0.5"></ul>
           <pre id="cookie-test-json" class="hidden text-xs overflow-x-auto whitespace-pre-wrap text-gray-500"></pre>
         </div>
       </div>
@@ -101,14 +102,17 @@
   }
   var btn = document.getElementById('cookie-test-btn');
   var summary = document.getElementById('cookie-test-summary');
+  var listEl = document.getElementById('cookie-test-list');
   var jsonEl = document.getElementById('cookie-test-json');
   if (!btn || !summary) return;
   function cookieSummary(j){
     if (!j) return '无响应';
+    if (j.summary) return j.summary;
     var online = j.online || {};
     var parse = j.parse || {};
     if (j.ok && (online.status === 'skipped' || online.status === 'ok')) {
       if (online.status === 'skipped') return '✅ 成功（匿名/跳过在线探测）';
+      if (parse.status === 'skipped') return '✅ 成功：匿名访问未被风控';
       return '✅ 成功：Cookie 可用';
     }
     if (online.status === 'risk' || online.status === 'captcha' || (online.detail && /风控|验证码|captcha|risk/i.test(online.detail))) {
@@ -116,6 +120,21 @@
     }
     if (!parse.ok) return '❌ 失败：' + (parse.detail || 'Cookie 解析失败');
     return '❌ 失败：' + (online.detail || online.status || '探测未通过');
+  }
+  function renderCookieList(j){
+    if (!listEl) return;
+    listEl.innerHTML = '';
+    var items = j && (j.cookiecloud_cookies || j.cookie_names) || [];
+    if (!items.length) {
+      listEl.classList.add('hidden');
+      return;
+    }
+    items.forEach(function(item){
+      var li = document.createElement('li');
+      li.textContent = item;
+      listEl.appendChild(li);
+    });
+    listEl.classList.remove('hidden');
   }
   btn.addEventListener('click', function(){
     var form = btn.closest('form');
@@ -126,8 +145,10 @@
     fd.set('cookiecloud_url', v('secret.collector.douban.cookiecloud_url'));
     fd.set('cookiecloud_key', v('secret.collector.douban.cookiecloud_key'));
     fd.set('cookiecloud_password', v('secret.collector.douban.cookiecloud_password'));
+    fd.set('collector.douban.groups', v('collector.douban.groups'));
     summary.textContent = '探测中…';
     summary.className = 'font-medium text-gray-700';
+    if (listEl) { listEl.classList.add('hidden'); listEl.innerHTML = ''; }
     if (jsonEl) jsonEl.classList.add('hidden');
     var url = '/admin/config/cookie/test{{if $.Token}}?token={{$.Token}}{{end}}';
     fetch(url, {method:'POST', body: fd, credentials:'same-origin'})
@@ -142,6 +163,7 @@
         var text = cookieSummary(j);
         summary.textContent = text;
         summary.className = 'font-medium ' + (j.ok ? 'text-green-700' : (text.indexOf('风控')>=0 ? 'text-amber-700' : 'text-red-700'));
+        renderCookieList(j);
         if (jsonEl) {
           jsonEl.textContent = JSON.stringify(j, null, 2);
           jsonEl.classList.remove('hidden');
@@ -150,6 +172,7 @@
       .catch(function(e){
         summary.textContent = '❌ 请求失败: ' + e;
         summary.className = 'font-medium text-red-700';
+        if (listEl) listEl.classList.add('hidden');
         if (jsonEl) jsonEl.classList.add('hidden');
       });
   });

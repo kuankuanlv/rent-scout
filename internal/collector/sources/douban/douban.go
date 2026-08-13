@@ -15,10 +15,14 @@ import (
 	"rent-scout/internal/collector"
 	"rent-scout/internal/collector/cookie"
 	"rent-scout/internal/models"
+	"rent-scout/internal/pkglog"
 )
 
 // 编译断言：Douban 满足 Source 接口
 var _ collector.Source = (*Douban)(nil)
+var _ collector.GroupSkipper = (*Douban)(nil)
+
+const listPageSize = 25 // 豆瓣小组讨论列表每页条数
 
 // DoubanOptions douban 适配器参数
 type DoubanOptions struct {
@@ -48,7 +52,7 @@ func NewDouban(opts DoubanOptions) (*Douban, error) {
 	return &Douban{groupURLs: opts.GroupURLs, cookie: opts.Cookie, client: opts.Client}, nil
 }
 
-func (d *Douban) Name() string { return "douban" }
+func (d *Douban) Name() string { return models.SourceDouban.String() }
 
 type noopCookie struct{}
 
@@ -85,7 +89,6 @@ func (d *Douban) Detail(ctx context.Context, item collector.ListItem) (models.Re
 	}, nil
 }
 
-
 // List 抓取一页讨论列表。cursor 格式 "组下标:偏移"（如 "0:25"；"" = 从第一组第一页）。
 // 当前组该页有条目 → 同组下一页 "gi:offset+25"；空页 → 推进到下一组 "gi+1:0"；
 // 最后一组结束或下标越界 → ""（无更多页）。多小组按配置 groups 轮转
@@ -94,7 +97,7 @@ func (d *Douban) List(ctx context.Context, cursor string) ([]collector.ListItem,
 	if gi >= len(d.groupURLs) {
 		return nil, "", nil // 已遍历全部小组：结束
 	}
-	// 组 URL 拼接 start 参数（豆瓣分页 start=0,25,50...）
+		// 组 URL 拼接 start 参数（豆瓣分页 start=0, pageSize, 2*pageSize...）
 	u, err := url.Parse(d.groupURLs[gi])
 	if err != nil {
 		return nil, "", fmt.Errorf("小组 URL 非法: %w", err)
@@ -139,11 +142,20 @@ func (d *Douban) List(ctx context.Context, cursor string) ([]collector.ListItem,
 	// 下一页游标：有条目 → 同组下一页；空页 → 下一组
 	next := ""
 	if len(items) > 0 {
-		next = strconv.Itoa(gi) + ":" + strconv.Itoa(offset+25)
+			next = strconv.Itoa(gi) + ":" + strconv.Itoa(offset+listPageSize)
 	} else if gi+1 < len(d.groupURLs) {
 		next = strconv.Itoa(gi+1) + ":0"
 	}
 	return items, next, nil
+}
+
+// SkipGroup 本组不用再翻了（撞水位/时间窗），直接下一组开头；没有下一组返回空
+func (d *Douban) SkipGroup(cursor string) string {
+	gi, _ := parseListCursor(cursor)
+	if gi+1 >= len(d.groupURLs) {
+		return ""
+	}
+	return strconv.Itoa(gi+1) + ":0"
 }
 
 // parseListCursor 解析 "组下标:偏移" 游标；非法/空 → 0:0
@@ -161,7 +173,10 @@ func parseListCursor(cursor string) (groupIdx, offset int) {
 
 // get GET 请求带 cookie；风控响应转错误
 func (d *Douban) get(ctx context.Context, rawURL string) (string, error) {
-	ck, _ := d.cookie.Get(ctx, "douban")
+	ck, err := d.cookie.Get(ctx, models.SourceDouban.String())
+	if err != nil {
+		return "", err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return "", err
@@ -173,6 +188,7 @@ func (d *Douban) get(ctx context.Context, rawURL string) (string, error) {
 	}
 	resp, err := d.client.Do(req)
 	if err != nil {
+		pkglog.Component(pkglog.SourceCollector(models.SourceDouban.String())).Error("请求失败", "url", rawURL, "err", err)
 		return "", fmt.Errorf("请求失败 %s: %w", rawURL, err)
 	}
 	defer resp.Body.Close()
@@ -182,7 +198,9 @@ func (d *Douban) get(ctx context.Context, rawURL string) (string, error) {
 	}
 	body := string(b)
 	if cookie.RiskDetected(body) {
-		return "", fmt.Errorf("触发风控: %s", rawURL)
+		pkglog.Component(pkglog.SourceCollector(models.SourceDouban.String())).Error("cookie 已失效",
+			"url", rawURL, "http", resp.StatusCode, "snippet", cookie.RiskSnippet(body))
+		return "", fmt.Errorf("%w: %s", cookie.ErrCookieInvalid, rawURL)
 	}
 	return body, nil
 }

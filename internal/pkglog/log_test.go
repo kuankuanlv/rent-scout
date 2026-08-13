@@ -29,13 +29,39 @@ func TestNewUnknownLevel(t *testing.T) {
 	}
 }
 
-func TestComponentAttr(t *testing.T) {
+func TestDutyPrefixText(t *testing.T) {
 	var buf bytes.Buffer
-	h := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})
-	slog.SetDefault(slog.New(h))
-	Component(HotConfig).Info("[hot_config_load] 配置变更，开始 COW 更换快照", "keys", 1)
+	inner := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})
+	slog.SetDefault(slog.New(&dutyHandler{inner: inner, json: false}))
+	Component(HotConfig).Info("配置变更，开始 COW 更换快照", "keys", 1)
 	out := buf.String()
-	if !strings.Contains(out, "component=hot_config") || !strings.Contains(out, "[hot_config_load]") {
-		t.Fatalf("Component 日志缺字段: %s", out)
+	if !strings.Contains(out, "[hot_config_reload]") {
+		t.Fatalf("缺职责前缀: %s", out)
+	}
+	if strings.Contains(out, "duty=") {
+		t.Fatalf("文本日志不应再打 duty 字段: %s", out)
+	}
+}
+
+func TestDutyJSONField(t *testing.T) {
+	var buf bytes.Buffer
+	inner := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})
+	slog.SetDefault(slog.New(&dutyHandler{inner: inner, json: true}))
+	Component(Notifier).Info("渠道分组发送", "channel", "feishu")
+	out := buf.String()
+	if !strings.Contains(out, `"duty":"notifier"`) {
+		t.Fatalf("JSON 应有 duty 字段: %s", out)
+	}
+	if strings.Contains(out, `[notifier]`) {
+		t.Fatalf("JSON 消息不应再包 []: %s", out)
+	}
+}
+
+func TestSourceCollector(t *testing.T) {
+	if got := SourceCollector("douban"); got != "douban_collector" {
+		t.Errorf("got %q", got)
+	}
+	if got := SourceCollector(""); got != Collector {
+		t.Errorf("空源兜底 = %q", got)
 	}
 }

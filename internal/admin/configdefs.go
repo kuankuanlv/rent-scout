@@ -8,11 +8,15 @@ import (
 	"strings"
 
 	"rent-scout/internal/config"
+	"rent-scout/internal/models"
 	"rent-scout/internal/store"
 )
 
-// CookieTestPath Cookie 草稿探测路径（auth / setupGate 豁免用）
+// CookieTestPath 豆瓣 Cookie 探测（auth / setupGate 豁免用）
 const CookieTestPath = "/admin/config/cookie/test"
+
+// CookieCloudTestPath 只测 CookieCloud 连通和解密，不打豆瓣
+const CookieCloudTestPath = "/admin/config/cookiecloud/test"
 
 // LLMTestPath LLM 连通检测（草稿不写库）
 const LLMTestPath = "/admin/config/llm/test"
@@ -21,9 +25,19 @@ const LLMTestPath = "/admin/config/llm/test"
 const LLMModelsPath = "/admin/config/llm/models"
 
 type configSection struct {
-	ID    string
+	ID     string
+	Title  string
+	Desc   string
+	Items  []configField // 与 Blocks 同步扁平，测试/兼容用
+	Blocks []configBlock
+}
+
+type configBlock struct {
 	Title string
-	Desc  string
+	Hint  string
+	Class string // 色块：bg/border
+	Group string // 子 tab：common/douban/weibo/feishu/pushplus
+	Tools string // cookie / llm：检测按钮放块内，不跟保存挤
 	Items []configField
 }
 
@@ -31,13 +45,16 @@ type configField struct {
 	Key          string
 	Label        string
 	Value        string
-	Type         string   // text/number/password/textarea/checkbox/select/sources
+	Type         string // text/number/password/textarea/checkbox/select/sources
 	Hint         string
 	CanClear     bool     // 敏感项可显式清空
 	ShowWhen     string   // 联动显隐：空=始终；cookie 为 raw/cookiecloud；llm 为 openai/other（逗号=多选）
 	Group        string   // 子 tab：通知 common/feishu/pushplus；采集 common/douban/weibo
 	Options      []string // sources / select 选项（存库值）
 	OptionLabels []string // 与 Options 等长的展示文案；空则显示 Options 原文
+	Advanced     bool     // 折进「高级配置」，默认收起
+	Wide         bool     // 单独占满一行
+	DayOffset    bool     // 天数偏移，支持小数；小字 tip 显示换算时间
 }
 
 // RestartKeys 改后需重启才生效（与 Spec 热加载矩阵一致）；admin.token 热生效不在此列
@@ -147,75 +164,129 @@ func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[stri
 	if raw := env.Collector.Douban.CookieRaw; raw != "" {
 		cookieRawHint = fmt.Sprintf("已保存 · 长度 %d；留空不修改", len(raw))
 	}
-		apiStyle := get("secret.filter.llm.api_style", env.Filter.LLM.APIStyle)
-		apiStyle = normalizeLLMAPIStyle(apiStyle)
-		if apiStyle == "" {
-			// 未配风格时：AI 关 → none；否则 openai
-			if ai == "false" {
-				apiStyle = "none"
-			} else {
-				apiStyle = "openai"
-			}
+	apiStyle := get("secret.filter.llm.api_style", env.Filter.LLM.APIStyle)
+	apiStyle = normalizeLLMAPIStyle(apiStyle)
+	if apiStyle == "" {
+		// 未配风格时：AI 关 → none；否则 openai
+		if ai == "false" {
+			apiStyle = "none"
+		} else {
+			apiStyle = "openai"
 		}
-		ccPass := get("secret.collector.douban.cookiecloud_password", env.Collector.Douban.CookiecloudPass)
-			return []configSection{
-				{
-					ID: "general", Title: "常规", Desc: "服务运行基础参数",
-					Items: []configField{
-						{Key: "server.addr", Label: "监听地址", Value: get("server.addr", app.Server.Addr), Type: "text", Hint: "如 :7777；修改后需重启"},
-						{Key: "log.level", Label: "日志级别", Value: get("log.level", app.Log.Level), Type: "text"},
-						{Key: "log.path", Label: "日志文件", Value: get("log.path", app.Log.Path), Type: "text", Hint: "留空=stdout；修改后需重启"},
-					},
-				},
-				{
-					ID: "collector", Title: "采集", Desc: "信息源与 Cookie",
-					Items: []configField{
-						{Key: "collector.sources", Label: "启用源", Value: get("collector.sources", strings.Join(app.Collector.Sources, ",")), Type: "sources", Options: []string{"douban", "weibo"}, Hint: "多选；未实现源启动时 warn 跳过；修改后需重启", Group: "common"},
-						{Key: "collector.interval", Label: "采集间隔(秒)", Value: get("collector.interval", strconv.Itoa(app.Collector.Interval)), Type: "number", Group: "common"},
-						{Key: "collector.jitter_ratio", Label: "抖动比例", Value: get("collector.jitter_ratio", fmt.Sprintf("%g", app.Collector.JitterRatio)), Type: "text", Group: "common"},
-						{Key: "collector.max_age_days", Label: "帖子时效(天)", Value: get("collector.max_age_days", strconv.Itoa(app.Collector.MaxAgeDays)), Type: "number", Hint: "非豆瓣源用；豆瓣以「拉取范围」为准", Group: "common"},
-						{Key: "collector.douban.groups", Label: "豆瓣小组 URL", Value: get("collector.douban.groups", strings.Join(app.Collector.Douban.Groups, "\n")), Type: "textarea", Hint: "每行一个；修改后需重启", Group: "douban"},
-						{Key: "collector.douban.interval", Label: "豆瓣间隔(秒)", Value: get("collector.douban.interval", strconv.Itoa(app.Collector.Douban.Interval)), Type: "number", Group: "douban"},
-						{Key: "collector.douban.range_from", Label: "拉取范围（从）", Value: get("collector.douban.range_from", app.Collector.Douban.RangeFrom), Type: "text", Hint: "now=动态当前；-10d=动态十天前；也可填具体日期", Group: "douban"},
-						{Key: "collector.douban.range_to", Label: "拉取范围（到）", Value: get("collector.douban.range_to", app.Collector.Douban.RangeTo), Type: "text", Hint: "now=动态当前；-10d=动态十天前；也可填具体日期", Group: "douban"},
-						{Key: "secret.collector.douban.cookie_mode", Label: "Cookie 模式", Value: get("secret.collector.douban.cookie_mode", env.Collector.Douban.CookieMode), Type: "select", Options: []string{"none", "raw", "cookiecloud"}, Hint: "none / raw / cookiecloud", Group: "douban"},
-						{Key: "secret.collector.douban.cookie_raw", Label: "Cookie 原文", Value: "", Type: "textarea", CanClear: true, Hint: cookieRawHint, ShowWhen: "raw", Group: "douban"},
-						{Key: "secret.collector.douban.cookiecloud_url", Label: "CookieCloud 地址", Value: get("secret.collector.douban.cookiecloud_url", env.Collector.Douban.CookiecloudURL), Type: "text", Hint: "如 https://cc.example.com", CanClear: true, ShowWhen: "cookiecloud", Group: "douban"},
-						{Key: "secret.collector.douban.cookiecloud_key", Label: "CookieCloud UUID", Value: get("secret.collector.douban.cookiecloud_key", env.Collector.Douban.CookiecloudKey), Type: "text", CanClear: true, ShowWhen: "cookiecloud", Group: "douban"},
-						{Key: "secret.collector.douban.cookiecloud_password", Label: "CookieCloud 密码", Value: ccPass, Type: "password", CanClear: true, Hint: "已回显已存密码；勾选清空可删除", ShowWhen: "cookiecloud", Group: "douban"},
-					},
-				},
-				{
-					ID: "filter", Title: "AI", Desc: "本配置用于审核帖子，并会记录审核通过/拒绝的具体原因。",
-					Items: []configField{
-						{Key: "secret.filter.llm.api_style", Label: "LLM 提供方", Value: apiStyle, Type: "select", Options: []string{"none", "openai", "other"}, OptionLabels: []string{"无", "OpenAI", "其他"}, Hint: "选「无」关闭 AI；OpenAI/其他需填 endpoint 与密钥"},
-						{Key: "filter.batch_size", Label: "组批大小", Value: get("filter.batch_size", strconv.Itoa(app.Filter.BatchSize)), Type: "number", Hint: "筛选单次从库拉取处理的最大条数（积压够了就开干）"},
-						{Key: "filter.ai_batch_size", Label: "AI 批大小", Value: get("filter.ai_batch_size", strconv.Itoa(app.Filter.AIBatchSize)), Type: "number", ShowWhen: "openai,other"},
-						{Key: "secret.filter.llm.base_url", Label: "Base URL", Value: get("secret.filter.llm.base_url", env.Filter.LLM.BaseURL), Type: "text", CanClear: true, Hint: "如 https://api.openai.com/v1；修改后需重启", ShowWhen: "openai,other"},
-						{Key: "secret.filter.llm.api_key", Label: "API Key", Value: "", Type: "password", CanClear: true, Hint: "修改后需重启", ShowWhen: "openai,other"},
-						{Key: "secret.filter.llm.model", Label: "主模型", Value: get("secret.filter.llm.model", env.Filter.LLM.Model), Type: "text", CanClear: true, Hint: "修改后需重启", ShowWhen: "openai,other"},
-						{Key: "secret.filter.llm.fallback_models", Label: "Fallback 模型", Value: get("secret.filter.llm.fallback_models", strings.Join(env.Filter.LLM.FallbackModels, ",")), Type: "textarea", CanClear: true, Hint: "逗号或换行分隔；失败时按序回退", ShowWhen: "openai,other"},
-					},
-				},
+	}
+	ccPass := get(config.KeyDoubanCookieCloudPwd, env.Collector.Douban.CookiecloudPass)
+	return []configSection{
+		makeSection("general", "常规", "服务运行基础参数", []configBlock{
 			{
-				ID: "notifier", Title: "通知", Desc: "飞书 / PushPlus",
+				Title: "服务", Hint: "进程监听", Class: "bg-slate-50 border-slate-200",
 				Items: []configField{
-					{Key: "notifier.batch_size", Label: "组批大小", Value: get("notifier.batch_size", strconv.Itoa(app.Notifier.BatchSize)), Type: "number", Hint: "通知单次从库拉取处理的最大条数", Group: "common"},
-					{Key: "notifier.max_attempts", Label: "最大重试", Value: get("notifier.max_attempts", strconv.Itoa(app.Notifier.MaxAttempts)), Type: "number", Group: "common"},
-					{Key: "notifier.retry_base_interval", Label: "重试间隔(秒)", Value: get("notifier.retry_base_interval", strconv.Itoa(app.Notifier.RetryBaseInterval)), Type: "number", Group: "common"},
-					{Key: "secret.notifier.feishu.webhook", Label: "飞书 Webhook", Value: "", Type: "password", CanClear: true, Hint: "修改后需重启服务", Group: "feishu"},
-					{Key: "secret.notifier.pushplus.token", Label: "PushPlus Token", Value: "", Type: "password", CanClear: true, Hint: "修改后需重启服务", Group: "pushplus"},
+					{Key: "server.addr", Label: "监听地址", Value: get("server.addr", app.Server.Addr), Type: "text", Hint: "如 :7777；修改后需重启"},
 				},
 			},
 			{
-				ID: "admin", Title: "管理", Desc: "控制台鉴权",
+				Title: "日志", Hint: "级别、落盘、控制台滚动缓冲", Class: "bg-indigo-50/70 border-indigo-100",
+				Items: []configField{
+					{Key: "log.level", Label: "日志级别", Value: get("log.level", app.Log.Level), Type: "text"},
+					{Key: "log.path", Label: "日志文件", Value: get("log.path", app.Log.Path), Type: "text", Hint: "留空=stdout；修改后需重启"},
+					{Key: "log.memory_lines", Label: "内存日志条数", Value: get("log.memory_lines", strconv.Itoa(app.Log.MemoryLines)), Type: "number", Wide: true, Hint: "控制台「日志」页在内存里保留的条数，默认 1000。探测类 raw 单条可到数 KB，1000 条约 1–8MB；调大更占内存，调小历史翻得少。范围 100–10000，保存后立即生效。"},
+				},
+			},
+		}),
+		makeSection("collector", "采集", "信息源与 Cookie", []configBlock{
+			{
+				Title: "轮次与源", Hint: "隔多久跑一轮、启用哪些源。豆瓣两次请求之间停几秒在下面单独配。", Class: "bg-slate-50 border-slate-200", Group: "common",
+				Items: []configField{
+					{Key: "collector.sources", Label: "启用源", Value: get("collector.sources", strings.Join(app.Collector.Sources, ",")), Type: "sources", Options: []string{models.SourceDouban.String(), models.SourceWeibo.String()}, Hint: "多选；未实现源启动时 warn 跳过；修改后需重启", Group: "common"},
+					{Key: "collector.interval", Label: "采集间隔(秒)", Value: get("collector.interval", strconv.Itoa(app.Collector.Interval)), Type: "number", Hint: "两轮采集之间等几秒，默认 1800（30 分钟）", Group: "common"},
+					{Key: "collector.jitter_ratio", Label: "抖动比例", Value: get("collector.jitter_ratio", fmt.Sprintf("%g", app.Collector.JitterRatio)), Type: "text", Group: "common"},
+					{Key: "collector.max_age_days", Label: "帖子时效(天)", Value: get("collector.max_age_days", strconv.Itoa(app.Collector.MaxAgeDays)), Type: "number", Hint: "非豆瓣源用；豆瓣看下面「按发布时间筛选」", Group: "common", Wide: true},
+				},
+			},
+			{
+				Title: "按发布时间筛选", Hint: "只抓这个时间窗里发布的帖。数值单位是「天」，相对现在：-10 = 10 天前，now = 此刻。支持小数（-1.5 = 一天半前）。", Class: "bg-sky-50 border-sky-200", Group: "douban",
+				Items: []configField{
+					{Key: "collector.douban.range_from", Label: "起始（几天前）", Value: config.CanonicalDayOffset(get("collector.douban.range_from", app.Collector.Douban.RangeFrom)), Type: "text", Group: "douban", DayOffset: true, Hint: "只采集这个时刻之后发布的帖。必须为负数，例如 -10"},
+					{Key: "collector.douban.range_to", Label: "截止（几天后/前）", Value: config.CanonicalDayOffset(get("collector.douban.range_to", app.Collector.Douban.RangeTo)), Type: "text", Group: "douban", DayOffset: true, Hint: "只采集这个时刻之前发布的帖。now = 现在；可正可负"},
+				},
+			},
+			{
+				Title: "豆瓣小组与请求节奏", Hint: "抓哪些小组；同一轮里两次访问豆瓣停几秒，用来降风控。", Class: "bg-emerald-50/80 border-emerald-200", Group: "douban",
+				Items: []configField{
+					{Key: "collector.douban.groups", Label: "豆瓣小组 URL", Value: get("collector.douban.groups", strings.Join(app.Collector.Douban.Groups, "\n")), Type: "textarea", Hint: "每行一个；修改后需重启", Group: "douban"},
+					{Key: "collector.douban.interval", Label: "请求间隔(秒)", Value: get("collector.douban.interval", strconv.Itoa(app.Collector.Douban.Interval)), Type: "number", Group: "douban", Wide: true, Hint: "默认 3 秒；不是「多久跑一轮」，那是上面的采集间隔"},
+				},
+			},
+			{
+				Title: "豆瓣 Cookie", Hint: "采集访问豆瓣用的登录态。raw 自己贴；cookiecloud 从云端同步到本地后再用。", Class: "bg-amber-50 border-amber-200", Group: "douban", Tools: "cookie",
+				Items: []configField{
+					{Key: config.KeyDoubanCookieMode, Label: "Cookie 模式", Value: get(config.KeyDoubanCookieMode, env.Collector.Douban.CookieMode), Type: "select", Options: []string{config.CookieModeNone.String(), config.CookieModeRaw.String(), config.CookieModeCookieCloud.String()}, Hint: "none 不带 cookie；raw 粘贴原文；cookiecloud 从 CookieCloud 同步", Group: "douban"},
+					{Key: config.KeyDoubanCookieRaw, Label: "Cookie 原文", Value: "", Type: "textarea", CanClear: true, Hint: cookieRawHint, ShowWhen: config.CookieModeRaw.String(), Group: "douban"},
+					{Key: config.KeyDoubanCookieCloudURL, Label: "CookieCloud 地址", Value: get(config.KeyDoubanCookieCloudURL, env.Collector.Douban.CookiecloudURL), Type: "text", Hint: "如 https://cc.example.com", CanClear: true, ShowWhen: config.CookieModeCookieCloud.String(), Group: "douban"},
+					{Key: config.KeyDoubanCookieCloudKey, Label: "CookieCloud UUID", Value: get(config.KeyDoubanCookieCloudKey, env.Collector.Douban.CookiecloudKey), Type: "text", CanClear: true, ShowWhen: config.CookieModeCookieCloud.String(), Group: "douban"},
+					{Key: config.KeyDoubanCookieCloudPwd, Label: "CookieCloud 密码", Value: ccPass, Type: "password", CanClear: true, Hint: "已回显已存密码；勾选清空可删除", ShowWhen: config.CookieModeCookieCloud.String(), Group: "douban", Wide: true},
+				},
+			},
+		}),
+		makeSection("filter", "AI", "本配置当前版本仅用于审核帖子", []configBlock{
+			{
+				Title: "模型接入", Hint: "选「无」关闭 AI 审核。连通检测 / 拉模型只测草稿，不写库。", Class: "bg-violet-50/80 border-violet-200", Tools: "llm",
+				Items: []configField{
+					{Key: "secret.filter.llm.api_style", Label: "LLM 提供方", Value: apiStyle, Type: "select", Options: []string{"none", "openai", "other"}, OptionLabels: []string{"无", "OpenAI", "其他"}, Hint: "选「无」关闭 AI；OpenAI/其他需填 endpoint 与密钥"},
+					{Key: "secret.filter.llm.base_url", Label: "Base URL", Value: get("secret.filter.llm.base_url", env.Filter.LLM.BaseURL), Type: "text", CanClear: true, Hint: "如 https://api.openai.com/v1；修改后需重启", ShowWhen: "openai,other"},
+					{Key: "secret.filter.llm.api_key", Label: "API Key", Value: "", Type: "password", CanClear: true, Hint: "修改后需重启", ShowWhen: "openai,other"},
+					{Key: "secret.filter.llm.model", Label: "主模型", Value: get("secret.filter.llm.model", env.Filter.LLM.Model), Type: "text", CanClear: true, Hint: "修改后需重启", ShowWhen: "openai,other", Wide: true},
+					{Key: "secret.filter.llm.fallback_models", Label: "Fallback 模型", Value: get("secret.filter.llm.fallback_models", strings.Join(env.Filter.LLM.FallbackModels, ",")), Type: "textarea", CanClear: true, Hint: "逗号或换行分隔；失败时按序回退", ShowWhen: "openai,other"},
+				},
+			},
+			{
+				Title: "高级", Hint: "一般不用改", Class: "bg-slate-50 border-dashed border-slate-200",
+				Items: []configField{
+					{Key: "filter.batch_size", Label: "组批大小", Value: get("filter.batch_size", strconv.Itoa(app.Filter.BatchSize)), Type: "number", Hint: "筛选一次抽干上限，有帖立刻处理不等凑批", Advanced: true},
+					{Key: "filter.ai_batch_size", Label: "AI 批大小", Value: get("filter.ai_batch_size", strconv.Itoa(app.Filter.AIBatchSize)), Type: "number", ShowWhen: "openai,other", Hint: "AI 审核从库读 pending 凑满此数（或超时）再调模型", Advanced: true},
+				},
+			},
+		}),
+		makeSection("notifier", "通知", "飞书 / PushPlus", []configBlock{
+			{
+				Title: "发送节奏", Hint: "组批、失败重试", Class: "bg-slate-50 border-slate-200", Group: "common",
+				Items: []configField{
+					{Key: "notifier.batch_size", Label: "组批大小", Value: get("notifier.batch_size", strconv.Itoa(app.Notifier.BatchSize)), Type: "number", Hint: "通知单次从库拉取处理的最大条数", Group: "common"},
+					{Key: "notifier.max_attempts", Label: "最大重试", Value: get("notifier.max_attempts", strconv.Itoa(app.Notifier.MaxAttempts)), Type: "number", Group: "common"},
+					{Key: "notifier.retry_base_interval", Label: "重试间隔(秒)", Value: get("notifier.retry_base_interval", strconv.Itoa(app.Notifier.RetryBaseInterval)), Type: "number", Group: "common", Wide: true},
+				},
+			},
+			{
+				Title: "飞书", Class: "bg-sky-50 border-sky-200", Group: "feishu",
+				Items: []configField{
+					{Key: "secret.notifier.feishu.webhook", Label: "飞书 Webhook", Value: "", Type: "password", CanClear: true, Hint: "修改后需重启服务", Group: "feishu", Wide: true},
+				},
+			},
+			{
+				Title: "PushPlus", Class: "bg-orange-50 border-orange-200", Group: "pushplus",
+				Items: []configField{
+					{Key: "secret.notifier.pushplus.token", Label: "PushPlus Token", Value: "", Type: "password", CanClear: true, Hint: "修改后需重启服务", Group: "pushplus", Wide: true},
+				},
+			},
+		}),
+		makeSection("admin", "管理", "控制台鉴权", []configBlock{
+			{
+				Title: "鉴权", Class: "bg-rose-50/70 border-rose-100",
 				Items: []configField{
 					{Key: "admin.auth_required", Label: "启用鉴权", Value: get("admin.auth_required", auth), Type: "checkbox"},
 					{Key: "admin.token", Label: "访问 Token", Value: "", Type: "password", CanClear: true},
 				},
 			},
-		}
+		}),
 	}
+}
+
+func makeSection(id, title, desc string, blocks []configBlock) configSection {
+	var items []configField
+	for _, b := range blocks {
+		items = append(items, b.Items...)
+	}
+	return configSection{ID: id, Title: title, Desc: desc, Items: items, Blocks: blocks}
+}
 
 func sectionByID(sections []configSection, id string) *configSection {
 	for i := range sections {
@@ -246,6 +317,16 @@ func ParseSectionForm(form url.Values, section string, keepSecrets map[string]st
 			v = joinFormValues(values)
 		}
 		v = config.NormalizeValue(v)
+		if key == "collector.douban.range_from" || key == "collector.douban.range_to" {
+			v = config.CanonicalDayOffset(v)
+			if v == "" {
+				if key == "collector.douban.range_from" {
+					v = "-10"
+				} else {
+					v = "now"
+				}
+			}
+		}
 		if key == "secret.filter.llm.fallback_models" {
 			// textarea 可能用换行，统一成逗号
 			v = strings.Join(splitFlexible(v), ",")
@@ -295,11 +376,7 @@ func ParseSectionForm(form url.Values, section string, keepSecrets map[string]st
 
 // normalizeLLMAPIStyle 旧 custom → other；非法空串原样
 func normalizeLLMAPIStyle(s string) string {
-	s = strings.ToLower(strings.TrimSpace(s))
-	if s == "custom" {
-		return "other"
-	}
-	return s
+	return config.ParseLLMAPIStyle(s).String()
 }
 
 func joinFormValues(values []string) string {

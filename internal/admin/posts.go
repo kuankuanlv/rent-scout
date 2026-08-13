@@ -3,7 +3,6 @@ package admin
 import (
 	"encoding/json"
 	"html/template"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -53,7 +52,7 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
 	f := postListFilterFromQuery(r.URL.Query())
 	posts, err := s.db.ListPosts(f, 200, 0)
 	if err != nil {
-		pkglog.Component(pkglog.Admin).Error("[posts_list_failed] 帖子列表查询失败", "err", err)
+		pkglog.Component(pkglog.Admin).Error("帖子列表查询失败", "err", err)
 		http.Error(w, "查询失败", http.StatusInternalServerError)
 		return
 	}
@@ -66,7 +65,7 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
 		"Handled":     f.Handled,
 		"FilterQuery": template.URL(fq), // 避免 action 里 = 被 html/template 编成 %3d
 	})); err != nil {
-		pkglog.Component(pkglog.Admin).Error("[template_render_failed] 模板渲染失败", "err", err)
+		pkglog.Component(pkglog.Admin).Error("模板渲染失败", "err", err)
 	}
 }
 
@@ -89,11 +88,11 @@ func (s *Server) handleMark(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.db.InsertFeedback(models.Feedback{PostID: postID, Action: action, Reason: r.PostFormValue("reason"), CreatedAt: time.Now()}); err != nil {
-		pkglog.Component(pkglog.Admin).Error("[feedback_write_failed] 反馈写入失败", "post_id", postID, "action", action, "err", err)
+		pkglog.Component(pkglog.Admin).Error("反馈写入失败", "post_id", postID, "action", action, "err", err)
 		http.Error(w, "写入失败", http.StatusInternalServerError)
 		return
 	}
-	pkglog.Component(pkglog.Admin).Info("[admin_marked] 控制台标记反馈", "post_id", postID, "action", action)
+	pkglog.Component(pkglog.Admin).Info("控制台标记反馈", "post_id", postID, "action", action)
 	// PRG：防重复提交；透传筛选 + token，避免跳回后丢条件或 401
 	http.Redirect(w, r, adminPostsPath(r), http.StatusSeeOther)
 }
@@ -122,11 +121,11 @@ func (s *Server) handleHandled(w http.ResponseWriter, r *http.Request) {
 		err = s.db.ClearPostHandled(postID)
 	}
 	if err != nil {
-		pkglog.Component(pkglog.Admin).Error("[handled_write_failed] 已处理写入失败", "post_id", postID, "handled", handled, "err", err)
+		pkglog.Component(pkglog.Admin).Error("已处理写入失败", "post_id", postID, "handled", handled, "err", err)
 		http.Error(w, "写入失败", http.StatusInternalServerError)
 		return
 	}
-	pkglog.Component(pkglog.Admin).Info("[admin_handled] 控制台标记已处理", "post_id", postID, "handled", handled)
+	pkglog.Component(pkglog.Admin).Info("控制台标记已处理", "post_id", postID, "handled", handled)
 	http.Redirect(w, r, adminPostsPath(r), http.StatusSeeOther)
 }
 
@@ -147,7 +146,7 @@ func (s *Server) handlePosts(w http.ResponseWriter, r *http.Request) {
 	}
 	list, err := s.db.ListPosts(postListFilterFromQuery(q), limit, offset)
 	if err != nil {
-		slog.Error("帖子列表失败", "err", err)
+		pkglog.Component(pkglog.Admin).Error("帖子列表失败", "err", err)
 		http.Error(w, "查询失败", http.StatusInternalServerError)
 		return
 	}
@@ -173,7 +172,7 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 	}
 	post, ok, err := s.db.GetPost(id)
 	if err != nil {
-		slog.Error("查帖子详情失败", "id", id, "err", err)
+		pkglog.Component(pkglog.Admin).Error("查帖子详情失败", "id", id, "err", err)
 		http.Error(w, "查询失败", http.StatusInternalServerError)
 		return
 	}
@@ -183,19 +182,19 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 	}
 	filterResult, _, err := s.db.FilterResultByPostID(id)
 	if err != nil {
-		slog.Error("查筛选结果失败", "id", id, "err", err)
+		pkglog.Component(pkglog.Admin).Error("查筛选结果失败", "id", id, "err", err)
 		http.Error(w, "查询失败", http.StatusInternalServerError)
 		return
 	}
 	notifications, err := s.db.ListNotificationsByPost(id)
 	if err != nil {
-		slog.Error("查通知失败", "id", id, "err", err)
+		pkglog.Component(pkglog.Admin).Error("查通知失败", "id", id, "err", err)
 		http.Error(w, "查询失败", http.StatusInternalServerError)
 		return
 	}
 	feedbacks, err := s.db.ListFeedbacksByPost(id)
 	if err != nil {
-		slog.Error("查反馈失败", "id", id, "err", err)
+		pkglog.Component(pkglog.Admin).Error("查反馈失败", "id", id, "err", err)
 		http.Error(w, "查询失败", http.StatusInternalServerError)
 		return
 	}

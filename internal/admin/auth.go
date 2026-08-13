@@ -16,7 +16,7 @@ func (s *Server) auth(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if !store.IsSetupComplete(s.db) && (path == "/admin/setup" || path == CookieTestPath) {
+		if !store.IsSetupComplete(s.db) && (path == "/admin/setup" || path == CookieTestPath || path == CookieCloudTestPath) {
 			next.ServeHTTP(w, r)
 			return
 		}

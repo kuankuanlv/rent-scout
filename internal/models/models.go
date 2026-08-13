@@ -5,8 +5,8 @@ import "time"
 // 帖子主状态：仅四态 collected|pending|passed|rejected（Spec 09 §1）
 // 渠道是否发出 → notifications；有用/无用 → feedbacks；运营已处理 → handled_at；禁止写 sent/acked。
 const (
-	PostStatusCollected = "collected" // 已采集入库，待筛选
-	PostStatusPending   = "pending"   // 筛选处理中/瞬时失败待重试
+	PostStatusCollected = "collected" // 已采集入库，待硬规则筛选
+	PostStatusPending   = "pending"   // 硬规则未定案，待 AI 审核 / AI 瞬时失败待重试
 	PostStatusPassed    = "passed"    // 筛选通过，待通知
 	PostStatusRejected  = "rejected"  // 筛选拒绝
 )

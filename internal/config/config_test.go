@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"rent-scout/internal/models"
 	"rent-scout/internal/store"
 )
 
@@ -24,8 +25,17 @@ func TestDefaultValues(t *testing.T) {
 	if cfg.Notifier.BatchSize != 20 {
 		t.Errorf("默认 notifier.batch_size = %d, want 20", cfg.Notifier.BatchSize)
 	}
-	if cfg.Collector.Douban.RangeFrom != "-10d" || cfg.Collector.Douban.RangeTo != "now" {
-		t.Errorf("豆瓣默认范围 = %q → %q, want -10d → now", cfg.Collector.Douban.RangeFrom, cfg.Collector.Douban.RangeTo)
+	if cfg.Log.MemoryLines != DefaultLogMemoryLines {
+		t.Errorf("默认 log.memory_lines = %d, want %d", cfg.Log.MemoryLines, DefaultLogMemoryLines)
+	}
+	if cfg.Collector.Douban.RangeFrom != "-10" || cfg.Collector.Douban.RangeTo != "now" {
+		t.Errorf("豆瓣默认范围 = %q → %q, want -10 → now", cfg.Collector.Douban.RangeFrom, cfg.Collector.Douban.RangeTo)
+	}
+	if cfg.Collector.Douban.Interval != 3 {
+		t.Errorf("默认豆瓣间隔 = %d, want 3", cfg.Collector.Douban.Interval)
+	}
+	if cfg.Collector.SourceInterval(models.SourceDouban.String()) != 1800 {
+		t.Errorf("豆瓣轮次间隔应走全局 1800，不应被请求间隔 3 覆盖")
 	}
 	if len(cfg.Collector.Douban.Groups) < 5 {
 		t.Error("内置豆瓣小组应至少 5 个")
@@ -55,6 +65,7 @@ func TestKVRoundTrip(t *testing.T) {
 	app := DefaultApp()
 	app.Server.Addr = ":9090"
 	app.Log.Level = "debug"
+	app.Log.MemoryLines = 2000
 	disabled := false
 	app.Filter.AIEnabled = &disabled
 	sec := DefaultSecrets()
@@ -70,6 +81,9 @@ func TestKVRoundTrip(t *testing.T) {
 	}
 	if gotApp.Log.Level != "debug" {
 		t.Errorf("Log.Level = %q", gotApp.Log.Level)
+	}
+	if gotApp.Log.MemoryLines != 2000 {
+		t.Errorf("Log.MemoryLines = %d", gotApp.Log.MemoryLines)
 	}
 	if gotApp.Filter.AIEnabled == nil || *gotApp.Filter.AIEnabled {
 		t.Error("AIEnabled 应为 false")
@@ -106,8 +120,12 @@ func TestSourceIntervalOverride(t *testing.T) {
 		"collector.douban.interval": "300",
 		"collector.sources":         "douban",
 	})
-	if got := cfg.Collector.SourceInterval("douban"); got != 300 {
-		t.Errorf("douban = %d, want 300", got)
+	// 轮次间隔用全局；豆瓣 300 是请求间隔，不覆盖轮次
+	if got := cfg.Collector.SourceInterval("douban"); got != 600 {
+		t.Errorf("douban 轮次 = %d, want 600", got)
+	}
+	if cfg.Collector.Douban.Interval != 300 {
+		t.Errorf("豆瓣请求间隔 = %d, want 300", cfg.Collector.Douban.Interval)
 	}
 }
 
@@ -118,6 +136,11 @@ func TestValidateApp(t *testing.T) {
 	bad := &AppConfig{}
 	if errs := ValidateApp(bad); len(errs) == 0 {
 		t.Error("空配置应校验失败")
+	}
+	over := DefaultApp()
+	over.Log.MemoryLines = MaxLogMemoryLines + 1
+	if errs := ValidateApp(over); len(errs) == 0 {
+		t.Error("memory_lines 超上限应失败")
 	}
 }
 

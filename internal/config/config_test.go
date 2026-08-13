@@ -18,8 +18,36 @@ func TestDefaultValues(t *testing.T) {
 	if cfg.Filter.AIEnabled == nil || !*cfg.Filter.AIEnabled {
 		t.Error("默认 AIEnabled 应为 true")
 	}
+	if cfg.Filter.BatchSize != 20 {
+		t.Errorf("默认 filter.batch_size = %d, want 20", cfg.Filter.BatchSize)
+	}
+	if cfg.Notifier.BatchSize != 20 {
+		t.Errorf("默认 notifier.batch_size = %d, want 20", cfg.Notifier.BatchSize)
+	}
+	if cfg.Collector.Douban.RangeFrom != "-10d" || cfg.Collector.Douban.RangeTo != "now" {
+		t.Errorf("豆瓣默认范围 = %q → %q, want -10d → now", cfg.Collector.Douban.RangeFrom, cfg.Collector.Douban.RangeTo)
+	}
 	if len(cfg.Collector.Douban.Groups) < 5 {
 		t.Error("内置豆瓣小组应至少 5 个")
+	}
+}
+
+func TestKVBatchSizeFallback(t *testing.T) {
+	// 仅有旧 pipeline.batch_size 时，filter/notifier 应继承
+	cfg := KVToApp(map[string]string{
+		"pipeline.batch_size": "35",
+	})
+	if cfg.Filter.BatchSize != 35 || cfg.Notifier.BatchSize != 35 {
+		t.Errorf("fallback batch = filter %d notifier %d, want 35", cfg.Filter.BatchSize, cfg.Notifier.BatchSize)
+	}
+	// 新 key 优先
+	cfg = KVToApp(map[string]string{
+		"pipeline.batch_size": "35",
+		"filter.batch_size":   "11",
+		"notifier.batch_size": "12",
+	})
+	if cfg.Filter.BatchSize != 11 || cfg.Notifier.BatchSize != 12 {
+		t.Errorf("新 key 优先 = filter %d notifier %d", cfg.Filter.BatchSize, cfg.Notifier.BatchSize)
 	}
 }
 
@@ -29,13 +57,13 @@ func TestKVRoundTrip(t *testing.T) {
 	app.Log.Level = "debug"
 	disabled := false
 	app.Filter.AIEnabled = &disabled
-	env := DefaultEnv()
-	env.Filter.LLM.APIKey = "sk-test"
-	env.Notifier.Feishu.Webhook = "https://example.com/hook"
+	sec := DefaultSecrets()
+	sec.Filter.LLM.APIKey = "sk-test"
+	sec.Notifier.Feishu.Webhook = "https://example.com/hook"
 
-	kv := MergeKV(AppToKV(app), EnvToKV(env))
+	kv := MergeKV(AppToKV(app), SecretsToKV(sec))
 	gotApp := KVToApp(kv)
-	gotEnv := KVToEnv(kv)
+	gotSec := KVToSecrets(kv)
 
 	if gotApp.Server.Addr != ":9090" {
 		t.Errorf("Addr = %q, want :9090", gotApp.Server.Addr)
@@ -46,12 +74,12 @@ func TestKVRoundTrip(t *testing.T) {
 	if gotApp.Filter.AIEnabled == nil || *gotApp.Filter.AIEnabled {
 		t.Error("AIEnabled 应为 false")
 	}
-	if gotEnv.Filter.LLM.APIKey != "sk-test" {
-		t.Errorf("APIKey = %q", gotEnv.Filter.LLM.APIKey)
+	if gotSec.Filter.LLM.APIKey != "sk-test" {
+		t.Errorf("APIKey = %q", gotSec.Filter.LLM.APIKey)
 	}
 }
 
-func TestRuntimeFromDB(t *testing.T) {
+func TestHotConfigFromDB(t *testing.T) {
 	s, err := store.Open(filepath.Join(t.TempDir(), "cfg.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -63,12 +91,12 @@ func TestRuntimeFromDB(t *testing.T) {
 	if err := store.SetConfigBatch(s, kv); err != nil {
 		t.Fatal(err)
 	}
-	rt := NewRuntime(s)
-	if err := rt.ReloadOnce(); err != nil {
+	hc := NewHotConfig(s)
+	if err := hc.ReloadOnce(); err != nil {
 		t.Fatal(err)
 	}
-	if rt.Get().Server.Addr != ":8888" {
-		t.Errorf("Addr = %q, want :8888", rt.Get().Server.Addr)
+	if hc.Get().Server.Addr != ":8888" {
+		t.Errorf("Addr = %q, want :8888", hc.Get().Server.Addr)
 	}
 }
 
@@ -93,69 +121,69 @@ func TestValidateApp(t *testing.T) {
 	}
 }
 
-func TestValidateEnvCookieMode(t *testing.T) {
-	if errs := ValidateEnv(DefaultEnv()); len(errs) != 0 {
-		t.Errorf("DefaultEnv 应通过: %v", errs)
+func TestValidateSecretsCookieMode(t *testing.T) {
+	if errs := ValidateSecrets(DefaultSecrets()); len(errs) != 0 {
+		t.Errorf("DefaultSecrets 应通过: %v", errs)
 	}
-	if errs := ValidateEnv(&EnvLocalConfig{}); len(errs) != 0 {
+	if errs := ValidateSecrets(&Secrets{}); len(errs) != 0 {
 		t.Errorf("空 CookieMode 应视为 none 通过: %v", errs)
 	}
-	none := DefaultEnv()
+	none := DefaultSecrets()
 	none.Collector.Douban.CookieMode = "none"
-	if errs := ValidateEnv(none); len(errs) != 0 {
+	if errs := ValidateSecrets(none); len(errs) != 0 {
 		t.Errorf("cookie_mode=none 应通过: %v", errs)
 	}
 
-	fileMissing := DefaultEnv()
-	fileMissing.Collector.Douban.CookieMode = "file"
-	if errs := ValidateEnv(fileMissing); len(errs) == 0 {
-		t.Error("file 缺 cookie_file 应失败")
+	fileGone := DefaultSecrets()
+	fileGone.Collector.Douban.CookieMode = "file"
+	if errs := ValidateSecrets(fileGone); len(errs) == 0 {
+		t.Error("cookie_mode=file 应失败（已移除）")
 	}
 
-	cloudMissing := DefaultEnv()
+	cloudMissing := DefaultSecrets()
 	cloudMissing.Collector.Douban.CookieMode = "cookiecloud"
-	if errs := ValidateEnv(cloudMissing); len(errs) == 0 {
+	if errs := ValidateSecrets(cloudMissing); len(errs) == 0 {
 		t.Error("cookiecloud 缺字段应失败")
 	}
 
-	rawMissing := DefaultEnv()
+	rawMissing := DefaultSecrets()
 	rawMissing.Collector.Douban.CookieMode = "raw"
-	if errs := ValidateEnv(rawMissing); len(errs) == 0 {
+	if errs := ValidateSecrets(rawMissing); len(errs) == 0 {
 		t.Error("raw 缺 cookie_raw 应失败")
 	}
-	rawOK := DefaultEnv()
+	rawOK := DefaultSecrets()
 	rawOK.Collector.Douban.CookieMode = "raw"
 	rawOK.Collector.Douban.CookieRaw = "dbcl2=x"
-	if errs := ValidateEnv(rawOK); len(errs) != 0 {
+	if errs := ValidateSecrets(rawOK); len(errs) != 0 {
 		t.Errorf("raw 有 cookie_raw 应通过: %v", errs)
 	}
 }
 
 func TestKVCookieRawRoundTrip(t *testing.T) {
-	env := DefaultEnv()
-	env.Collector.Douban.CookieMode = "raw"
-	env.Collector.Douban.CookieRaw = "a=1; b=2"
-	kv := EnvToKV(env)
+	sec := DefaultSecrets()
+	sec.Collector.Douban.CookieMode = "raw"
+	sec.Collector.Douban.CookieRaw = "a=1; b=2"
+	kv := SecretsToKV(sec)
 	if kv["secret.collector.douban.cookie_raw"] != "a=1; b=2" {
-		t.Errorf("EnvToKV cookie_raw = %q", kv["secret.collector.douban.cookie_raw"])
+		t.Errorf("SecretsToKV cookie_raw = %q", kv["secret.collector.douban.cookie_raw"])
 	}
-	got := KVToEnv(kv)
+	got := KVToSecrets(kv)
 	if got.Collector.Douban.CookieRaw != "a=1; b=2" || got.Collector.Douban.CookieMode != "raw" {
-		t.Errorf("KVToEnv = %+v", got.Collector.Douban)
+		t.Errorf("KVToSecrets = %+v", got.Collector.Douban)
 	}
 }
 
-func TestKVToEnvCookieModeNone(t *testing.T) {
-	env := KVToEnv(map[string]string{})
-	if env.Collector.Douban.CookieMode != "none" {
-		t.Errorf("缺 key 时应为 none, got %q", env.Collector.Douban.CookieMode)
+func TestKVToSecretsCookieModeNone(t *testing.T) {
+	sec := KVToSecrets(map[string]string{})
+	if sec.Collector.Douban.CookieMode != "none" {
+		t.Errorf("缺 key 时应为 none, got %q", sec.Collector.Douban.CookieMode)
 	}
-	env = KVToEnv(map[string]string{"secret.collector.douban.cookie_mode": ""})
-	if env.Collector.Douban.CookieMode != "none" {
-		t.Errorf("空串应归一化为 none, got %q", env.Collector.Douban.CookieMode)
+	sec = KVToSecrets(map[string]string{"secret.collector.douban.cookie_mode": ""})
+	if sec.Collector.Douban.CookieMode != "none" {
+		t.Errorf("空串应归一化为 none, got %q", sec.Collector.Douban.CookieMode)
 	}
-	kv := EnvToKV(&EnvLocalConfig{})
+	kv := SecretsToKV(&Secrets{})
 	if kv["secret.collector.douban.cookie_mode"] != "none" {
-		t.Errorf("EnvToKV 空模式应写出 none, got %q", kv["secret.collector.douban.cookie_mode"])
+		t.Errorf("SecretsToKV 空模式应写出 none, got %q", kv["secret.collector.douban.cookie_mode"])
 	}
 }

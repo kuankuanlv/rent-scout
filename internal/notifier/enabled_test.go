@@ -10,19 +10,19 @@ import (
 // EnabledChannels 已配 webhook 的渠道名列表（规格 7.2 约定：配了即启用）
 func TestEnabledChannels(t *testing.T) {
 	// 全空 env → 空切片
-	if got := EnabledChannels(config.EnvNotifier{}); len(got) != 0 {
+	if got := EnabledChannels(config.SecretsNotifier{}); len(got) != 0 {
 		t.Fatalf("全空 env: %v, want 空切片", got)
 	}
 
 	// 仅配 feishu → [feishu]
-	got := EnabledChannels(config.EnvNotifier{Feishu: config.WebhookSecretConfig{Webhook: "https://x"}})
+	got := EnabledChannels(config.SecretsNotifier{Feishu: config.WebhookSecretConfig{Webhook: "https://x"}})
 	want := []string{ChannelFeishu}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("仅 feishu: %v, want %v", got, want)
 	}
 
 	// 配 pushplus+serverchan → 按常量序
-	got = EnabledChannels(config.EnvNotifier{
+	got = EnabledChannels(config.SecretsNotifier{
 		Pushplus:   config.PushplusConfig{Token: "t"},
 		Serverchan: config.ServerchanConfig{Sendkey: "s"},
 	})
@@ -32,7 +32,7 @@ func TestEnabledChannels(t *testing.T) {
 	}
 
 	// 全配 → 六渠道常量序
-	got = EnabledChannels(config.EnvNotifier{
+	got = EnabledChannels(config.SecretsNotifier{
 		Feishu:     config.WebhookSecretConfig{Webhook: "f"},
 		Dingtalk:   config.DingtalkConfig{Webhook: "d", Secret: "s"},
 		Wecom:      config.WebhookSecretConfig{Webhook: "w"},

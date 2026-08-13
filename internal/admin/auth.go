@@ -16,7 +16,7 @@ func (s *Server) auth(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if !store.IsSetupComplete(s.db) && (path == "/admin/setup" || path == cookieTestPath) {
+		if !store.IsSetupComplete(s.db) && (path == "/admin/setup" || path == CookieTestPath) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -28,7 +28,7 @@ func (s *Server) auth(next http.Handler) http.Handler {
 	})
 }
 
-// validToken 校验 token：URL ?token= 或 Bearer，与 Runtime 中 admin.token 比较
+// validToken 校验 token：URL ?token= 或 Bearer，与 HotConfig 中 admin.token 比较
 func (s *Server) validToken(r *http.Request) bool {
 	tok := r.URL.Query().Get("token")
 	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {

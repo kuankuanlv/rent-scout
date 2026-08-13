@@ -13,10 +13,10 @@ import (
 
 // NotifierOptions 通知重试参数（规格 6.6）
 type NotifierOptions struct {
-	MaxAttempts       int             // 单渠道失败重试次数（超过进死信）；<=0 用 3
-	RetryBaseInterval int             // 重试退避基础间隔（秒）；<=0 用 300
-	Runtime           *config.Runtime // 签名密钥每次从 Runtime 读；优先于 FeedbackSecret
-	FeedbackSecret    string          // 仅测试兜底；生产应注入 Runtime
+	MaxAttempts       int               // 单渠道失败重试次数（超过进死信）；<=0 用 3
+	RetryBaseInterval int               // 重试退避基础间隔（秒）；<=0 用 300
+	HotConfig         *config.HotConfig // 签名密钥每次从 HotConfig 读；优先于 FeedbackSecret
+	FeedbackSecret    string            // 仅测试兜底；生产应注入 HotConfig
 }
 
 // Notifier 通知消费器：按渠道过滤未 sent → 地址分组 → 每组 Send → 状态写库（规格 6.5/6.6）
@@ -37,14 +37,10 @@ func NewNotifier(st *store.Store, opts NotifierOptions, channels ...Channel) *No
 	return &Notifier{st: st, channels: channels, opts: opts}
 }
 
-// currentFeedbackSecret 每次签名读 Runtime 当前 admin token；鉴权关则空（规格 7.1）
+// currentFeedbackSecret 每次签名读 HotConfig 当前 admin token；鉴权关则空（规格 7.1）
 func (n *Notifier) currentFeedbackSecret() string {
-	if n.opts.Runtime != nil {
-		app := n.opts.Runtime.Get()
-		if !app.Admin.AuthRequired {
-			return ""
-		}
-		return app.Admin.Token
+	if n.opts.HotConfig != nil {
+		return n.opts.HotConfig.FeedbackSecret()
 	}
 	return n.opts.FeedbackSecret
 }

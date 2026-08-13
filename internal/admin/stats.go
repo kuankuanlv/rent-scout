@@ -2,7 +2,6 @@ package admin
 
 import (
 	"log/slog"
-	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -14,14 +13,6 @@ import (
 type channelRow struct {
 	store.ChannelStat
 	Total int
-}
-
-// percent 百分比（保留 1 位小数）；b=0 返回 0（模板已用 {{if .Total}} 守卫，防御性兜底）
-func percent(a, b int) float64 {
-	if b == 0 {
-		return 0
-	}
-	return math.Round(float64(a)/float64(b)*1000) / 10
 }
 
 // handleStats 统计报表 + 死信（GET /admin/stats）

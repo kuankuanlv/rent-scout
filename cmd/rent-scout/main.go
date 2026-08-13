@@ -13,11 +13,14 @@ import (
 
 	"rent-scout/internal/admin"
 	"rent-scout/internal/collector"
+	"rent-scout/internal/collector/cookie"
+	"rent-scout/internal/collector/sources/douban"
 	"rent-scout/internal/config"
 	"rent-scout/internal/filter"
 	"rent-scout/internal/filter/llm"
 	"rent-scout/internal/models"
 	"rent-scout/internal/notifier"
+	"rent-scout/internal/notifier/channels"
 	"rent-scout/internal/pipeline"
 	"rent-scout/internal/pkglog"
 	"rent-scout/internal/store"
@@ -47,7 +50,7 @@ func main() {
 		boot.Warn("[boot_config_empty] 配置为空，请完成引导", "hint", "visit /admin/setup")
 	}
 
-	rt := config.NewRuntime(db)
+	rt := config.NewHotConfig(db)
 	if err := rt.ReloadOnce(); err != nil {
 		boot.Error("[boot_config_load_failed] 首次加载配置失败", "err", err)
 		os.Exit(1)
@@ -137,19 +140,19 @@ func main() {
 	}
 }
 
-// newCollectorRunner 从 Runtime 读配置与敏感项构造采集调度器
-func newCollectorRunner(rt *config.Runtime, db *store.Store, trigger chan<- struct{}) *collector.Runner {
+// newCollectorRunner 从 HotConfig 读配置与敏感项构造采集调度器
+func newCollectorRunner(rt *config.HotConfig, db *store.Store, trigger chan<- struct{}) *collector.Runner {
 	log := pkglog.Component(pkglog.Main)
 	cfg := rt.Get()
 	var sources []collector.Source
 	for _, name := range cfg.Collector.Sources {
 		switch name {
 		case "douban":
-			// Cookie 每次 Get 从 Runtime 读最新配置，改 KV 后无需重启
-			cookie := collector.NewRuntimeCookieProvider(rt)
-			d, err := collector.NewDouban(collector.DoubanOptions{
+			// Cookie 每次 Get 从 HotConfig 读最新配置，改 KV 后无需重启
+			cp := cookie.NewHotConfigProvider(rt)
+			d, err := douban.NewDouban(douban.DoubanOptions{
 				GroupURLs: cfg.Collector.Douban.Groups,
-				Cookie:    cookie,
+				Cookie:    cp,
 			})
 			if err != nil {
 				log.Error("[boot_source_init_failed] 源初始化失败", "source", name, "err", err)
@@ -167,10 +170,10 @@ func newCollectorRunner(rt *config.Runtime, db *store.Store, trigger chan<- stru
 	return collector.NewRunner(rt, db, sources, trigger)
 }
 
-func newFilterConsumer(rt *config.Runtime, db *store.Store, notifyTrigger chan<- struct{}) *pipeline.Consumer[models.RentPost] {
+func newFilterConsumer(rt *config.HotConfig, db *store.Store, notifyTrigger chan<- struct{}) *pipeline.Consumer[models.RentPost] {
 	log := pkglog.Component(pkglog.Main)
 	cfg := rt.Get()
-	env := rt.GetEnv()
+	env := rt.Secrets()
 	var ai filter.AIEvaluator
 	if cfg.Filter.AIEnabled != nil && *cfg.Filter.AIEnabled && env.Filter.LLM.APIKey != "" {
 		baseURL := env.Filter.LLM.BaseURL
@@ -186,30 +189,30 @@ func newFilterConsumer(rt *config.Runtime, db *store.Store, notifyTrigger chan<-
 			opts = append(opts, llm.ClientOptions{BaseURL: baseURL, APIKey: env.Filter.LLM.APIKey, Model: m})
 		}
 		pool := llm.NewPool(opts, llm.PoolOptions{})
-		ai = filter.NewAIBatchEvaluator(pool, trimLimits(cfg))
+		ai = filter.NewAIBatchEvaluator(pool, nil)
 		log.Info("[boot_filter_ai_enabled] 筛选 AI 已启用", "model", model)
 	} else {
 		log.Warn("[boot_filter_ai_disabled] 筛选 AI 已关闭")
 	}
 	chain := filter.NewRuleChain(ai)
-	fc := filter.NewConsumerWithOptions(chain, db, notifyTrigger, trimLimitFor(cfg, "douban"),
+	fc := filter.NewConsumerWithOptions(chain, db, notifyTrigger, filter.DefaultTrimLimit,
 		filter.ConsumerOptions{AIBatchSize: cfg.Filter.AIBatchSize})
 	return pipeline.New(
 		fc.FetchBatch,
 		func(ctx context.Context, batch []models.RentPost) error { return fc.ProcessBatch(ctx, batch) },
 		pipeline.Options{
-			BatchSize: cfg.Pipeline.BatchSize,
-			Linger:    time.Duration(cfg.Pipeline.LingerInterval) * time.Second,
+			BatchSize: cfg.Filter.BatchSize,
+			Linger:    pipeline.DefaultLinger,
 			Component: pkglog.Filter,
 		},
 	)
 }
 
-func newNotifierConsumer(rt *config.Runtime, db *store.Store, notifyTrigger <-chan struct{}) *pipeline.Consumer[models.RentPost] {
+func newNotifierConsumer(rt *config.HotConfig, db *store.Store, notifyTrigger <-chan struct{}) *pipeline.Consumer[models.RentPost] {
 	log := pkglog.Component(pkglog.Main)
 	cfg := rt.Get()
-	env := rt.GetEnv()
-	var channels []notifier.Channel
+	env := rt.Secrets()
+	var chs []notifier.Channel
 	enabled := notifier.EnabledChannels(env.Notifier)
 	if len(cfg.Notifier.Channels) > 0 {
 		enabled = cfg.Notifier.Channels
@@ -218,46 +221,46 @@ func newNotifierConsumer(rt *config.Runtime, db *store.Store, notifyTrigger <-ch
 		switch name {
 		case notifier.ChannelFeishu:
 			if env.Notifier.Feishu.Webhook != "" {
-				channels = append(channels, notifier.NewFeishuChannel(env.Notifier.Feishu.Webhook))
+				chs = append(chs, channels.NewFeishuChannel(env.Notifier.Feishu.Webhook))
 			}
 		case notifier.ChannelDingtalk:
 			if env.Notifier.Dingtalk.Webhook != "" {
-				channels = append(channels, notifier.NewDingtalkChannel(env.Notifier.Dingtalk.Webhook, env.Notifier.Dingtalk.Secret))
+				chs = append(chs, channels.NewDingtalkChannel(env.Notifier.Dingtalk.Webhook, env.Notifier.Dingtalk.Secret))
 			}
 		case notifier.ChannelWecom:
 			if env.Notifier.Wecom.Webhook != "" {
-				channels = append(channels, notifier.NewWecomChannel(env.Notifier.Wecom.Webhook))
+				chs = append(chs, channels.NewWecomChannel(env.Notifier.Wecom.Webhook))
 			}
 		case notifier.ChannelPushplus:
 			if env.Notifier.Pushplus.Token != "" {
-				channels = append(channels, notifier.NewPushplusChannel("", env.Notifier.Pushplus.Token))
+				chs = append(chs, channels.NewPushplusChannel("", env.Notifier.Pushplus.Token))
 			}
 		case notifier.ChannelServerchan:
 			if env.Notifier.Serverchan.Sendkey != "" {
-				channels = append(channels, notifier.NewServerchanChannel(env.Notifier.Serverchan.Sendkey))
+				chs = append(chs, channels.NewServerchanChannel(env.Notifier.Serverchan.Sendkey))
 			}
 		case notifier.ChannelWebhook:
 			if env.Notifier.Webhook.URL != "" {
-				channels = append(channels, notifier.NewWebhookChannel(env.Notifier.Webhook.URL, env.Notifier.Webhook.Template))
+				chs = append(chs, channels.NewWebhookChannel(env.Notifier.Webhook.URL, env.Notifier.Webhook.Template))
 			}
 		}
 	}
-	if len(channels) == 0 {
+	if len(chs) == 0 {
 		log.Warn("[boot_notifier_skipped] 通知未启动")
 		return nil
 	}
-	// 反馈签名密钥每次从 Runtime 读，不在此钉死
+	// 反馈签名密钥每次从 HotConfig 读，不在此钉死
 	n := notifier.NewNotifier(db,
-		notifier.NotifierOptions{MaxAttempts: cfg.Notifier.MaxAttempts, RetryBaseInterval: cfg.Notifier.RetryBaseInterval, Runtime: rt},
-		channels...)
+		notifier.NotifierOptions{MaxAttempts: cfg.Notifier.MaxAttempts, RetryBaseInterval: cfg.Notifier.RetryBaseInterval, HotConfig: rt},
+		chs...)
 	return pipeline.New(
 		func(ctx context.Context, limit int) ([]models.RentPost, error) {
-			return db.FetchNotifyBatch(channelNames(channels), limit)
+			return db.FetchNotifyBatch(channelNames(chs), limit)
 		},
 		n.ProcessBatch,
 		pipeline.Options{
-			BatchSize: cfg.Pipeline.BatchSize,
-			Linger:    time.Duration(cfg.Pipeline.LingerInterval) * time.Second,
+			BatchSize: cfg.Notifier.BatchSize,
+			Linger:    pipeline.DefaultLinger,
 			Component: pkglog.Notifier,
 		},
 	)
@@ -269,25 +272,6 @@ func channelNames(channels []notifier.Channel) []string {
 		names[i] = c.Name()
 	}
 	return names
-}
-
-func trimLimitFor(cfg *config.AppConfig, source string) int {
-	if cfg.Filter.TrimLimits != nil {
-		if n, ok := cfg.Filter.TrimLimits[source]; ok && n > 0 {
-			return n
-		}
-	}
-	return 500
-}
-
-func trimLimits(cfg *config.AppConfig) map[string]int {
-	limits := map[string]int{}
-	for src, n := range cfg.Filter.TrimLimits {
-		if n > 0 {
-			limits[src] = n
-		}
-	}
-	return limits
 }
 
 func randomHex(n int) string {

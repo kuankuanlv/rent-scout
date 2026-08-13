@@ -12,12 +12,12 @@ import (
 	"rent-scout/internal/store"
 )
 
-// ruleRow 规则列表行：Rule + 命中统计（Hits/UselessCount，规格 5.5）+ 中文类型标签
-type ruleRow struct {
+// Row 规则列表行：Rule + 命中统计（Hits/UselessCount，规格 5.5）+ 中文类型标签
+type Row struct {
 	models.Rule
 	Hits         int
 	UselessCount int
-	TypeLabel    string // 白名单/黑名单/AI 自然语言；列表展示用，不强调 mode
+	TypeLabel    string // 白名单/黑名单/AI审核；列表展示用，不强调 mode
 }
 
 // ruleTypeLabel type → 中文标签（Spec 09 §2.3 UI）
@@ -28,7 +28,7 @@ func ruleTypeLabel(t string) string {
 	case models.RuleTypeBlacklist:
 		return "黑名单"
 	case models.RuleTypeAINatural:
-		return "AI 自然语言"
+		return "AI审核"
 	default:
 		return t
 	}
@@ -54,28 +54,28 @@ func (s *Server) handleRules(w http.ResponseWriter, r *http.Request) {
 }
 
 // loadRuleRows 先 ensure 默认规则，再 ListRules(false) 全量 + RuleHitStats 合并；统计失败不阻塞
-func (s *Server) loadRuleRows() ([]ruleRow, error) {
+func loadRuleRows(db *store.Store) ([]Row, error) {
 	log := pkglog.Component(pkglog.Admin)
-	if err := s.db.EnsureDefaultRule(); err != nil {
+	if err := db.EnsureDefaultRule(); err != nil {
 		log.Error("[rule_seed_failed] 默认规则播种失败", "err", err)
 		return nil, err
 	}
-	rules, err := s.db.ListRules(false)
+	list, err := db.ListRules(false)
 	if err != nil {
 		log.Error("[rule_list_failed] 规则列表失败", "err", err)
 		return nil, err
 	}
 	statsMap := map[int64]store.RuleStat{}
-	if stats, err := s.db.RuleHitStats(); err != nil {
+	if stats, err := db.RuleHitStats(); err != nil {
 		log.Error("[rule_stats_failed] 规则统计失败", "err", err)
 	} else {
 		for _, st := range stats {
 			statsMap[st.RuleID] = st
 		}
 	}
-	rows := make([]ruleRow, 0, len(rules))
-	for _, rl := range rules {
-		row := ruleRow{Rule: rl, TypeLabel: ruleTypeLabel(rl.Type)}
+	rows := make([]Row, 0, len(list))
+	for _, rl := range list {
+		row := Row{Rule: rl, TypeLabel: ruleTypeLabel(rl.Type)}
 		if st, ok := statsMap[rl.ID]; ok {
 			row.Hits = st.Hits
 			row.UselessCount = st.UselessCount

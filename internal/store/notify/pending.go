@@ -1,4 +1,4 @@
-package store
+package notify
 
 import (
 	"database/sql"
@@ -13,7 +13,7 @@ import (
 // 语义（规格 6.5）：批内帖子至少有一个渠道待发；终止态（sent/dead）渠道数 = 启用渠道数的帖子不再返回。
 // 实现：终止态渠道数 < 启用渠道数（notifications 表 UNIQUE(post_id, channel)，每帖每渠道至多一条）
 // channels 为空时返回空批（防御，调用方恒传启用渠道列表；调用方不得传重复渠道名）
-func (s *Store) FetchNotifyBatch(channels []string, limit int) ([]models.RentPost, error) {
+func (r *Repo) FetchNotifyBatch(channels []string, limit int) ([]models.RentPost, error) {
 	if len(channels) == 0 {
 		return nil, nil
 	}
@@ -33,7 +33,7 @@ func (s *Store) FetchNotifyBatch(channels []string, limit int) ([]models.RentPos
 		args = append(args, c)
 	}
 	args = append(args, len(channels), limit)
-	rows, err := s.db.Query(query, args...)
+	rows, err := r.DB.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("拉取待通知批: %w", err)
 	}
@@ -60,7 +60,7 @@ func (s *Store) FetchNotifyBatch(channels []string, limit int) ([]models.RentPos
 
 // NotificationStatuses 批量查询帖子的渠道通知状态：返回 map[postID]map[channel]status。
 // 无记录的渠道不出现（调用方视为未发送）
-func (s *Store) NotificationStatuses(postIDs []int64, channels []string) (map[int64]map[string]string, error) {
+func (r *Repo) NotificationStatuses(postIDs []int64, channels []string) (map[int64]map[string]string, error) {
 	out := make(map[int64]map[string]string)
 	if len(postIDs) == 0 || len(channels) == 0 {
 		return out, nil
@@ -79,7 +79,7 @@ func (s *Store) NotificationStatuses(postIDs []int64, channels []string) (map[in
 	for _, c := range channels {
 		args = append(args, c)
 	}
-	rows, err := s.db.Query(query, args...)
+	rows, err := r.DB.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("查询通知状态: %w", err)
 	}

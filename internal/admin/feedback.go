@@ -5,9 +5,11 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -91,6 +93,48 @@ func (s *Server) handleHandledLink(w http.ResponseWriter, r *http.Request) {
 	}
 	pkglog.Component(pkglog.Admin).Info("[handled_link_recorded] 已处理链接已生效", "post_id", postID)
 	s.renderHandledResult(w, "已标记为已处理（该链接 7 天内有效）", true)
+}
+
+// handleFeedbacks 反馈写入接口（POST /api/feedbacks，规格 7.1）。
+// 鉴权：带 query sig → HMAC 校验（卡片链接场景）；否则走管理 token（auth 中间件）
+func (s *Server) handleFeedbacks(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var in struct {
+		PostID  int64  `json:"post_id"`
+		Channel string `json:"channel"`
+		Action  string `json:"action"` // useful / useless
+		Reason  string `json:"reason"` // 可选
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		http.Error(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+	q := r.URL.Query()
+	if !s.rt.Get().Admin.AuthRequired {
+		// 鉴权关闭：一律放行（开关为准，不验证）
+	} else if q.Get("sig") != "" {
+		// 带签名：HMAC 校验（卡片链接场景）
+		if err := s.verifyFeedbackSig(in.PostID, in.Action, q.Get("exp"), q.Get("sig")); err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+		// 无签名：auth 中间件已校验管理 token
+	}
+	if in.PostID <= 0 || (in.Action != "useful" && in.Action != "useless") {
+		http.Error(w, "post_id/action 无效", http.StatusBadRequest)
+		return
+	}
+	if err := s.db.InsertFeedback(models.Feedback{PostID: in.PostID, Channel: in.Channel, Action: in.Action, Reason: in.Reason, CreatedAt: time.Now()}); err != nil {
+		slog.Error("写反馈失败", "post_id", in.PostID, "err", err)
+		http.Error(w, "写入失败", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 }
 
 // renderHandledResult 已处理结果页（内联 HTML）

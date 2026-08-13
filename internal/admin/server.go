@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"embed"
 	"html/template"
 	"net/http"
 
@@ -8,36 +9,36 @@ import (
 	"rent-scout/internal/store"
 )
 
-// SourceController 采集源控制接口（main 注入 collector.Runner；admin 不依赖 collector 包）
-type SourceController interface {
-	SetEnabled(name string, on bool) error
-	Trigger(name string) error
-	Sources() []string
-	SourceEnabled(name string) bool
+//go:embed templates/*.html
+var templatesFS embed.FS
+
+func changedRestartKeys(before, updates map[string]string) []string {
+	return ChangedRestartKeys(before, updates)
 }
 
 // Server 管理面 HTTP 服务
 type Server struct {
 	db   *store.Store
-	rt   *config.Runtime
+	rt   *config.HotConfig
 	ctrl SourceController
 	tmpl *template.Template
 }
 
 // NewServer 创建管理面服务
-func NewServer(db *store.Store, rt *config.Runtime, ctrl SourceController) *Server {
+func NewServer(db *store.Store, rt *config.HotConfig, ctrl SourceController) *Server {
 	t := template.New("").Funcs(template.FuncMap{
-		"percent":        percent,
-		"setupStepTitle": setupStepTitle,
-		"seq": func(n int) []int {
-			s := make([]int, n)
-			for i := range s {
-				s[i] = i + 1
-			}
-			return s
-		},
-		"sub": func(a, b int) int { return a - b },
-	})
+			"percent":        percent,
+			"setupStepTitle": setupStepTitle,
+			"csvHas":         csvHas,
+			"seq": func(n int) []int {
+				s := make([]int, n)
+				for i := range s {
+					s[i] = i + 1
+				}
+				return s
+			},
+			"sub": func(a, b int) int { return a - b },
+		})
 	t = template.Must(t.ParseFS(templatesFS, "templates/*.html"))
 	return &Server{db: db, rt: rt, ctrl: ctrl, tmpl: t}
 }
@@ -62,8 +63,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/admin/rules/", s.handleRulesID)
 	mux.HandleFunc("/admin/config", s.handleConfig)
 	mux.HandleFunc("/admin/config/save", s.handleConfig)
-	mux.HandleFunc("/admin/config/cookie/test", s.handleCookieTest)
-	mux.HandleFunc("/admin/stats", s.handleStats)
+		mux.HandleFunc("/admin/config/cookie/test", s.handleCookieTest)
+		mux.HandleFunc("/admin/config/llm/test", s.handleLLMTest)
+		mux.HandleFunc("/admin/config/llm/models", s.handleLLMModels)
+		mux.HandleFunc("/admin/stats", s.handleStats)
 	mux.HandleFunc("/admin/dead/reset", s.handleDeadReset)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {

@@ -27,10 +27,13 @@ func TestConfigTabs(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("GET /admin/config status = %d, want 200", code)
 	}
-	for _, want := range []string{"tab=general", "tab=sources", "tab=rules", "tab=filter", "tab=notifier", "tab=admin"} {
+	for _, want := range []string{"tab=general", "tab=sources", "tab=rules", "tab=ai", "tab=notifier", "tab=admin"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("缺二级 Tab 链接 %q", want)
 		}
+	}
+	if strings.Contains(body, "tab=filter\"") || strings.Contains(body, ">筛选<") {
+		t.Errorf("顶栏不应再露出旧 filter/筛选 tab")
 	}
 	if !strings.Contains(body, "服务运行基础参数") {
 		t.Errorf("默认 tab 应渲染 general")
@@ -38,7 +41,7 @@ func TestConfigTabs(t *testing.T) {
 	if !strings.Contains(body, "变更历史（只读）") {
 		t.Errorf("general 应含变更历史")
 	}
-	if strings.Contains(body, "信息源与 Cookie") || strings.Contains(body, "AI 与 LLM") {
+	if strings.Contains(body, "信息源与 Cookie") || strings.Contains(body, "本配置用于审核帖子") {
 		t.Errorf("默认 general 不应渲染其他分区表单")
 	}
 
@@ -58,11 +61,98 @@ func TestConfigTabs(t *testing.T) {
 	if !strings.Contains(body, "cookie-test-btn") {
 		t.Errorf("sources 应含 Cookie 测试按钮")
 	}
+	if !strings.Contains(body, "cookie-test-summary") {
+		t.Errorf("sources Cookie 结果区应始终可见")
+	}
+	if !strings.Contains(body, `value="douban"`) || !strings.Contains(body, `value="weibo"`) {
+		t.Errorf("sources 启用源应多选 douban/weibo")
+	}
+	if !strings.Contains(body, `data-source-tab="douban"`) || !strings.Contains(body, `data-source-tab="weibo"`) {
+		t.Errorf("sources 应有豆瓣/微博子 tab")
+	}
+	if !strings.Contains(body, "collector.douban.range_from") || !strings.Contains(body, "collector.douban.range_to") {
+		t.Errorf("豆瓣 tab 应有拉取范围从/到")
+	}
+	if !strings.Contains(body, `value="-10d"`) || !strings.Contains(body, `value="now"`) {
+		t.Errorf("拉取范围默认应显示 -10d 与 now")
+	}
+	if !strings.Contains(body, "暂未实现") {
+		t.Errorf("微博子 tab 应有占位文案")
+	}
+	if strings.Contains(body, "豆瓣截断") || strings.Contains(body, "trim_limits") {
+		t.Errorf("不应再出现 trim_limits UI")
+	}
 	if strings.Contains(body, "变更历史（只读）") {
 		t.Errorf("非 general 不应含变更历史")
 	}
 	if strings.Contains(body, "服务运行基础参数") {
 		t.Errorf("sources 不应渲染 general")
+	}
+
+	code, body = get("/admin/config?tab=general")
+	if code != http.StatusOK {
+		t.Fatalf("GET tab=general status = %d", code)
+	}
+	if strings.Contains(body, "pipeline.batch_size") || strings.Contains(body, "pipeline.linger_interval") {
+		t.Errorf("general 不应再含组批/兜底字段")
+	}
+	if strings.Contains(body, "积压够了就开干") || strings.Contains(body, "最多等多久也强制跑一轮") {
+		t.Errorf("general 不应再有组批/兜底 tip")
+	}
+
+	code, body = get("/admin/config?tab=ai")
+	if code != http.StatusOK {
+		t.Fatalf("GET tab=ai status = %d", code)
+	}
+	if !strings.Contains(body, "本配置用于审核帖子，并会记录审核通过/拒绝的具体原因") {
+		t.Errorf("ai tab Desc 不符")
+	}
+	if !strings.Contains(body, "filter.batch_size") || !strings.Contains(body, "积压够了就开干") {
+		t.Errorf("ai 应含 filter 组批大小")
+	}
+	if strings.Contains(body, "豆瓣截断") || strings.Contains(body, "trim_limits") {
+		t.Errorf("ai 不应含 trim_limits")
+	}
+	if !strings.Contains(body, "secret.filter.llm.api_style") || !strings.Contains(body, "llm-test-btn") {
+		t.Errorf("ai 应含 API 风格与连通检测")
+	}
+	if !strings.Contains(body, `value="none"`) || !strings.Contains(body, ">无<") {
+		t.Errorf("ai 应含「无」选项")
+	}
+	if !strings.Contains(body, `value="openai"`) || !strings.Contains(body, ">OpenAI<") {
+		t.Errorf("ai 应含 OpenAI 选项")
+	}
+	if !strings.Contains(body, `value="other"`) || !strings.Contains(body, ">其他<") {
+		t.Errorf("ai 应含「其他」选项")
+	}
+	if strings.Contains(body, `value="custom"`) {
+		t.Errorf("ai 不应再露出 custom 选项")
+	}
+	if strings.Contains(body, "启用 AI") {
+		t.Errorf("ai 不应再有单独「启用 AI」checkbox")
+	}
+
+	// 旧 tab=filter 兼容映射到 ai
+	code, body = get("/admin/config?tab=filter")
+	if code != http.StatusOK {
+		t.Fatalf("GET tab=filter status = %d", code)
+	}
+	if !strings.Contains(body, "本配置用于审核帖子") {
+		t.Errorf("tab=filter 应兼容渲染 AI 分区")
+	}
+
+	code, body = get("/admin/config?tab=notifier")
+	if code != http.StatusOK {
+		t.Fatalf("GET tab=notifier status = %d", code)
+	}
+	if !strings.Contains(body, "PushPlus") || !strings.Contains(body, "secret.notifier.pushplus.token") {
+		t.Errorf("notifier 应含飞书/PushPlus 子 tab")
+	}
+	if !strings.Contains(body, "notifier.batch_size") {
+		t.Errorf("notifier common 应含组批大小")
+	}
+	if strings.Contains(body, "secret.notifier.serverchan") {
+		t.Errorf("notifier UI 本期不应露出 Server酱")
 	}
 
 	code, body = get("/admin/config?tab=rules")
@@ -72,11 +162,19 @@ func TestConfigTabs(t *testing.T) {
 	if !strings.Contains(body, "规则管理") {
 		t.Errorf("rules tab 应渲染规则面板")
 	}
+	if !strings.Contains(body, `value="50"`) || !strings.Contains(body, "数字越大越先执行") {
+		t.Errorf("规则新增区默认优先级 50 + tip")
+	}
+	if !strings.Contains(body, ">黑名单<") || !strings.Contains(body, ">白名单<") || !strings.Contains(body, ">AI审核<") {
+		t.Errorf("规则类型下拉应为黑名单/白名单/AI审核")
+	}
+	if strings.Contains(body, ">保存<") || strings.Contains(body, ">保存</button>") {
+		t.Errorf("规则行不应再有保存按钮")
+	}
 	if strings.Contains(body, `name="section"`) {
 		t.Errorf("rules tab 不应渲染配置分区表单")
 	}
 }
-
 // TestConfigSectionSaveRestartBanner 改需重启项 → Location 带 restart=1；admin.token 不带
 func TestConfigSectionSaveRestartBanner(t *testing.T) {
 	s := newAdminTestStore(t)
@@ -97,12 +195,10 @@ func TestConfigSectionSaveRestartBanner(t *testing.T) {
 
 	// server.addr 在 RestartKeys → 应提示重启
 	loc := post(url.Values{
-		"section":                  {"general"},
-		"server.addr":              {":9999"},
-		"log.level":                {"info"},
-		"log.path":                 {""},
-		"pipeline.batch_size":      {"20"},
-		"pipeline.linger_interval": {"30"},
+		"section":     {"general"},
+		"server.addr": {":9999"},
+		"log.level":   {"info"},
+		"log.path":    {""},
 	})
 	if !strings.Contains(loc, "restart=1") || !strings.Contains(loc, "ok=general") {
 		t.Errorf("改 server.addr Location = %q, want restart=1", loc)

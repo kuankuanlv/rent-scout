@@ -1,25 +1,19 @@
 package admin
 
 import (
-	"embed"
+	"encoding/json"
 	"html/template"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"rent-scout/internal/models"
 	"rent-scout/internal/pkglog"
 	"rent-scout/internal/store"
 )
-
-//go:embed templates/*.html
-var templatesFS embed.FS
-
-// pageCtx 页面公共数据：Token 透传 + Active 导航高亮
-func pageCtx(r *http.Request, active string) map[string]any {
-	return map[string]any{"Token": r.URL.Query().Get("token"), "Active": active}
-}
 
 // postListFilterFromQuery 从 URL 取帖子列表筛选（admin / API 共用）
 func postListFilterFromQuery(q url.Values) store.PostListFilter {
@@ -52,6 +46,7 @@ func adminPostsPath(r *http.Request) string {
 	return "/admin?" + q.Encode()
 }
 
+// handleAdmin 帖子列表页（GET /admin）
 // 页面数据 {Posts, Token, Q, Status, Tag, Handled}：Token/筛选透传 URL query，
 // 供 nav 链接/筛选链接/表单 action 追加，保证鉴权开启时页面内跳转与提交不 401。
 func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
@@ -135,14 +130,80 @@ func (s *Server) handleHandled(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, adminPostsPath(r), http.StatusSeeOther)
 }
 
-// mergePageCtx 合并页面数据（pageCtx 优先保留 Token/Active）
-func mergePageCtx(base map[string]any, extra map[string]any) map[string]any {
-	out := make(map[string]any, len(base)+len(extra))
-	for k, v := range extra {
-		out[k] = v
+// handlePosts 帖子列表（GET /api/posts?q=&status=&tag=&handled=&limit=&offset=，规格 7.1 + §6）
+func (s *Server) handlePosts(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
 	}
-	for k, v := range base {
-		out[k] = v
+	q := r.URL.Query()
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	if limit <= 0 {
+		limit = 50
 	}
-	return out
+	offset, _ := strconv.Atoi(q.Get("offset"))
+	if offset < 0 {
+		offset = 0
+	}
+	list, err := s.db.ListPosts(postListFilterFromQuery(q), limit, offset)
+	if err != nil {
+		slog.Error("帖子列表失败", "err", err)
+		http.Error(w, "查询失败", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(map[string]any{"posts": list})
+}
+
+// handlePost 帖子详情（GET /api/posts/{id}）：post + filter_result + notifications + feedbacks
+func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	idStr := strings.TrimPrefix(r.URL.Path, "/api/posts/")
+	if idStr == "" {
+		http.Error(w, "缺少帖子 id", http.StatusBadRequest)
+		return
+	}
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil || id <= 0 {
+		http.Error(w, "帖子 id 无效", http.StatusBadRequest)
+		return
+	}
+	post, ok, err := s.db.GetPost(id)
+	if err != nil {
+		slog.Error("查帖子详情失败", "id", id, "err", err)
+		http.Error(w, "查询失败", http.StatusInternalServerError)
+		return
+	}
+	if !ok {
+		http.Error(w, "帖子不存在", http.StatusNotFound)
+		return
+	}
+	filterResult, _, err := s.db.FilterResultByPostID(id)
+	if err != nil {
+		slog.Error("查筛选结果失败", "id", id, "err", err)
+		http.Error(w, "查询失败", http.StatusInternalServerError)
+		return
+	}
+	notifications, err := s.db.ListNotificationsByPost(id)
+	if err != nil {
+		slog.Error("查通知失败", "id", id, "err", err)
+		http.Error(w, "查询失败", http.StatusInternalServerError)
+		return
+	}
+	feedbacks, err := s.db.ListFeedbacksByPost(id)
+	if err != nil {
+		slog.Error("查反馈失败", "id", id, "err", err)
+		http.Error(w, "查询失败", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"post":          post,
+		"filter_result": filterResult,
+		"notifications": notifications,
+		"feedbacks":     feedbacks,
+	})
 }

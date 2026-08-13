@@ -17,3 +17,14 @@ func TestHashKVValueChange(t *testing.T) {
 		t.Fatal("改 value 后 hash 应不同")
 	}
 }
+
+func TestFeedbackSecret(t *testing.T) {
+	off := NewHotConfigWithSnapshot(&AppConfig{Admin: AdminConfig{AuthRequired: false, Token: "x"}}, nil)
+	if off.FeedbackSecret() != "" {
+		t.Errorf("鉴权关应返回空, got %q", off.FeedbackSecret())
+	}
+	on := NewHotConfigWithSnapshot(&AppConfig{Admin: AdminConfig{AuthRequired: true, Token: "tok"}}, nil)
+	if on.FeedbackSecret() != "tok" {
+		t.Errorf("鉴权开应返回 token, got %q", on.FeedbackSecret())
+	}
+}

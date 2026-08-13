@@ -24,20 +24,20 @@ func DefaultLocationRule() models.Rule {
 }
 
 // CreateRule 新建规则，返回带 ID 的完整规则
-func (s *Store) CreateRule(r models.Rule) (models.Rule, error) {
+func (s *Store) CreateRule(rule models.Rule) (models.Rule, error) {
 	res, err := s.db.Exec(`INSERT INTO rules (name, type, mode, value, enabled, priority, created_at)
 	    VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		r.Name, r.Type, r.Mode, r.Value, r.Enabled, r.Priority, time.Now())
+		rule.Name, rule.Type, rule.Mode, rule.Value, rule.Enabled, rule.Priority, time.Now())
 	if err != nil {
-		return r, fmt.Errorf("新建规则: %w", err)
+		return rule, fmt.Errorf("新建规则: %w", err)
 	}
 	id, err := res.LastInsertId()
 	if err != nil {
-		return r, err
+		return rule, err
 	}
-	r.ID = id
-	r.CreatedAt = time.Now()
-	return r, nil
+	rule.ID = id
+	rule.CreatedAt = time.Now()
+	return rule, nil
 }
 
 // ListRules 规则列表；onlyEnabled=true 只取启用，按 priority 降序（先执行优先级高的）
@@ -52,15 +52,15 @@ func (s *Store) ListRules(onlyEnabled bool) ([]models.Rule, error) {
 		return nil, fmt.Errorf("查规则: %w", err)
 	}
 	defer rows.Close()
-	var rules []models.Rule
+	var out []models.Rule
 	for rows.Next() {
-		var r models.Rule
-		if err := rows.Scan(&r.ID, &r.Name, &r.Type, &r.Mode, &r.Value, &r.Enabled, &r.Priority, &r.CreatedAt); err != nil {
+		var rule models.Rule
+		if err := rows.Scan(&rule.ID, &rule.Name, &rule.Type, &rule.Mode, &rule.Value, &rule.Enabled, &rule.Priority, &rule.CreatedAt); err != nil {
 			return nil, err
 		}
-		rules = append(rules, r)
+		out = append(out, rule)
 	}
-	return rules, rows.Err()
+	return out, rows.Err()
 }
 
 // CountEnabledRules 启用规则总数（任意类型合计）
@@ -88,12 +88,12 @@ func (s *Store) EnsureDefaultRule() error {
 }
 
 // UpdateRule 全量更新（/admin 规则管理用）；禁止禁用导致启用总数为 0
-func (s *Store) UpdateRule(r models.Rule) error {
-	if !r.Enabled {
+func (s *Store) UpdateRule(rule models.Rule) error {
+	if !rule.Enabled {
 		var currentlyEnabled bool
-		err := s.db.QueryRow(`SELECT enabled FROM rules WHERE id=?`, r.ID).Scan(&currentlyEnabled)
+		err := s.db.QueryRow(`SELECT enabled FROM rules WHERE id=?`, rule.ID).Scan(&currentlyEnabled)
 		if err == sql.ErrNoRows {
-			return fmt.Errorf("更新规则: 不存在 id=%d", r.ID)
+			return fmt.Errorf("更新规则: 不存在 id=%d", rule.ID)
 		}
 		if err != nil {
 			return fmt.Errorf("更新规则: %w", err)
@@ -109,7 +109,7 @@ func (s *Store) UpdateRule(r models.Rule) error {
 		}
 	}
 	_, err := s.db.Exec(`UPDATE rules SET name=?, type=?, mode=?, value=?, enabled=?, priority=? WHERE id=?`,
-		r.Name, r.Type, r.Mode, r.Value, r.Enabled, r.Priority, r.ID)
+		rule.Name, rule.Type, rule.Mode, rule.Value, rule.Enabled, rule.Priority, rule.ID)
 	if err != nil {
 		return fmt.Errorf("更新规则: %w", err)
 	}

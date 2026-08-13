@@ -10,8 +10,12 @@
 | v0.2 | 2026-08-13 | IA（三顶栏+六 tab）、热加载矩阵、Cookie raw/探测、日志约定；修正规则入口 |
 | v0.3 | 2026-08-13 11:35:00 | Spec 09：三规则类型、硬链白→黑→AI、Post 四态真相表、NotifyBatch/Item/handled `/h`、§7 日志与 hash-COW |
 | v0.4 | 2026-08-13 11:40:00 | 架构说明改为仓库根 `ARCHITECTURE.md`（`docs/` 被 gitignore，避免死链） |
+| v0.5 | 2026-08-13 12:00:00 | Plan 10：包分层（collector sources / store·admin 子包）；Cookie 去掉 file，UI 按 mode 联动 |
+| v0.6 | 2026-08-13 12:10:00 | 架构说明迁回 `docs/ARCHITECTURE.md`；gitignore 仅忽略 docs 草稿、放行架构 |
+| v0.7 | 2026-08-13 12:05:00 | config：EnvLocal→Secrets、Runtime→HotConfig |
+| v0.8 | 2026-08-13 12:20:00 | cookie 子包、notifier/channels、架构依赖表 |
 
-> **当前版本：v0.4**
+> **当前版本：v0.8**
 
 ---
 
@@ -85,30 +89,31 @@ docker compose up -d
 
 ## Cookie（采集 / 源 Tab）
 
-| mode | 说明 |
-|------|------|
-| `none` | 匿名（默认） |
-| `raw` | 粘贴 cookie 原文（优先）；页面不回显全文，可显示「已保存 · 长度 N」 |
-| `file` | 本地文件路径 |
-| `cookiecloud` | 云同步 |
+| mode | 展示字段 |
+|------|----------|
+| `none` | 无附加字段（默认） |
+| `raw` | Cookie 原文 textarea（+ 已保存长度 hint；不回显全文） |
+| `cookiecloud` | url / key / password |
 
-**探测：** 配置页 `POST /admin/config/cookie/test` 用草稿探测（解析 + 轻量在线 GET），**不写库**；日志仅 `cookie_len` / `status`，无明文。
+旧 `file` 模式已移除；库内 `cookie_mode=file` 会规范为 `none`。
+
+**探测：** 配置页 / Setup `POST /admin/config/cookie/test` 用草稿探测（解析 + 轻量在线 GET），**不写库**；日志仅 `cookie_len` / `status`，无明文。
 
 ## 热加载矩阵 vs RestartKeys
 
-Runtime 约每 10s 轮询 SQLite：**先 hash，变化才 COW**；未变跳过并打 `[hot_config_skip]`。保存后也可立即 `ReloadOnce`。
+HotConfig 约每 10s 轮询 SQLite：**先 hash，变化才 COW**；未变跳过并打 `[hot_config_skip]`。保存后也可立即 `ReloadOnce`。
 
 | 项 | 期望 |
 |----|------|
 | interval / jitter / max_age、admin token、rules | 热生效 |
-| Cookie raw/file/cloud、Douban groups | 下次 Get / 下一轮跟 Runtime |
+| Cookie raw/cookiecloud、Douban groups | 下次 Get / 下一轮跟 HotConfig |
 | Cookie Test | 即时，不写库 |
 | LLM、webhook、`server.addr`、`log.path`、`collector.sources` 列表 | **需重启**（与 `RestartKeys` 一致；保存后黄条提示） |
-| 反馈签名密钥 | 跟 Runtime 当前 admin token |
+| 反馈签名密钥 | 跟 HotConfig 当前 admin token |
 
 ## 日志约定
 
-业务日志带 `component` ∈ `main|hot_config|collector|filter|notifier|admin|setup`，消息形态为 `[{event_tag}] {中文说明}`。热加载示例：`[hot_config_load] 配置变更，开始 COW 更换快照`、`[hot_config_skip] 配置 hash 未变，跳过 COW`、`[hot_config_load_failed] 配置重载失败`。禁止打印完整 cookie / token / LLM key。详见 [ARCHITECTURE.md](ARCHITECTURE.md)。
+业务日志带 `component` ∈ `main|hot_config|collector|filter|notifier|admin|setup`，消息形态为 `[{event_tag}] {中文说明}`。热加载示例：`[hot_config_load] 配置变更，开始 COW 更换快照`、`[hot_config_skip] 配置 hash 未变，跳过 COW`、`[hot_config_load_failed] 配置重载失败`。禁止打印完整 cookie / token / LLM key。详见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
 ## 配置说明
 
@@ -124,4 +129,4 @@ go test ./...
 go build ./cmd/rent-scout
 ```
 
-架构说明见 [ARCHITECTURE.md](ARCHITECTURE.md)。
+架构说明见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。

@@ -50,31 +50,30 @@
         <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">操作</th>
       </tr></thead>
       <tbody class="divide-y divide-gray-100">
-        {{range .Posts}}<tr class="hover:bg-gray-50">
+        {{range .Posts}}<tr class="hover:bg-gray-50 post-row" data-post-id="{{.ID}}">
           <td class="px-4 py-3 text-sm">{{.ID}}</td>
           <td class="px-4 py-3 text-sm max-w-xs">
             <a href="{{.URL}}" target="_blank" class="text-brand-600 hover:underline">{{.Title}}</a>
-            {{if .AddressTags}}<div class="mt-1 flex flex-wrap gap-1">{{range .AddressTags}}<span class="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 text-xs">{{.}}</span>{{end}}</div>{{end}}
+            <div class="mt-1 flex flex-wrap gap-1">
+              {{if .AddressTags}}{{range .AddressTags}}<span class="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 text-xs">{{.}}</span>{{end}}{{else}}<span class="text-xs text-gray-400">无标签</span>{{end}}
+            </div>
           </td>
           <td class="px-4 py-3 text-sm text-gray-500">{{.Source}}</td>
-          <td class="px-4 py-3"><span class="px-2 py-0.5 rounded-full text-xs bg-gray-100">{{.Status}}</span>{{if .HandledAt}}<span class="ml-1 px-2 py-0.5 rounded-full text-xs bg-emerald-100 text-emerald-800">已处理</span>{{end}}</td>
+          <td class="px-4 py-3"><span class="px-2 py-0.5 rounded-full text-xs bg-gray-100">{{.Status}}</span><span class="handled-badge ml-1 px-2 py-0.5 rounded-full text-xs bg-emerald-100 text-emerald-800 {{if not .HandledAt}}hidden{{end}}">已处理</span></td>
           <td class="px-4 py-3 text-sm text-gray-500">{{.PublishedAt.Format "01-02 15:04"}}</td>
           <td class="px-4 py-3 space-y-1">
-            <form method="post" action="/admin/mark{{if $.FilterQuery}}?{{$.FilterQuery}}{{end}}" class="flex flex-wrap gap-1 items-center">
+            <form method="post" action="/admin/mark{{if $.FilterQuery}}?{{$.FilterQuery}}{{end}}" class="js-mark-form flex flex-wrap gap-1 items-center">
               <input type="hidden" name="post_id" value="{{.ID}}">
               <select name="action" class="text-xs border rounded px-1 py-1"><option value="useful">有用</option><option value="useless">无用</option></select>
               <input name="reason" placeholder="原因" class="text-xs border rounded px-2 py-1 w-24">
               <button class="text-xs bg-brand-600 text-white px-2 py-1 rounded">提交</button>
             </form>
-            <form method="post" action="/admin/handled{{if $.FilterQuery}}?{{$.FilterQuery}}{{end}}" class="flex gap-1">
+            <p class="feedback-status text-xs text-gray-500 hidden"></p>
+            <p class="row-error text-xs text-red-600 hidden"></p>
+            <form method="post" action="/admin/handled{{if $.FilterQuery}}?{{$.FilterQuery}}{{end}}" class="js-handled-form flex gap-1">
               <input type="hidden" name="post_id" value="{{.ID}}">
-              {{if .HandledAt}}
-              <input type="hidden" name="handled" value="0">
-              <button class="text-xs border border-emerald-300 text-emerald-800 px-2 py-1 rounded">清除已处理</button>
-              {{else}}
-              <input type="hidden" name="handled" value="1">
-              <button class="text-xs bg-emerald-600 text-white px-2 py-1 rounded">已处理</button>
-              {{end}}
+              <input type="hidden" name="handled" class="handled-value" value="{{if .HandledAt}}0{{else}}1{{end}}">
+              <button type="submit" class="handled-btn text-xs px-2 py-1 rounded {{if .HandledAt}}border border-emerald-300 text-emerald-800{{else}}bg-emerald-600 text-white{{end}}">{{if .HandledAt}}清除已处理{{else}}已处理{{end}}</button>
             </form>
           </td>
         </tr>{{else}}<tr><td colspan="6" class="px-4 py-8 text-center text-gray-400">暂无帖子</td></tr>{{end}}
@@ -82,33 +81,114 @@
     </table>
   </div>
   <div class="mobile-card p-4 space-y-3">
-    {{range .Posts}}<div class="border border-gray-100 rounded-xl p-4 bg-gray-50/50">
+    {{range .Posts}}<div class="border border-gray-100 rounded-xl p-4 bg-gray-50/50 post-row" data-post-id="{{.ID}}">
       <div class="flex justify-between gap-2 mb-2">
         <a href="{{.URL}}" target="_blank" class="font-medium text-brand-600 text-sm">{{.Title}}</a>
         <span class="shrink-0 px-2 py-0.5 rounded-full text-xs bg-white border">{{.Status}}</span>
       </div>
-      {{if .AddressTags}}<div class="flex flex-wrap gap-1 mb-2">{{range .AddressTags}}<span class="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 text-xs">{{.}}</span>{{end}}</div>{{end}}
-      <div class="text-xs text-gray-500 mb-3">#{{.ID}} · {{.Source}}{{if .HandledAt}} · 已处理{{end}}</div>
-      <form method="post" action="/admin/mark{{if $.FilterQuery}}?{{$.FilterQuery}}{{end}}" class="space-y-2">
+      <div class="flex flex-wrap gap-1 mb-2">
+        {{if .AddressTags}}{{range .AddressTags}}<span class="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 text-xs">{{.}}</span>{{end}}{{else}}<span class="text-xs text-gray-400">无标签</span>{{end}}
+      </div>
+      <div class="text-xs text-gray-500 mb-3">#{{.ID}} · {{.Source}}<span class="handled-badge {{if not .HandledAt}}hidden{{end}}"> · 已处理</span></div>
+      <form method="post" action="/admin/mark{{if $.FilterQuery}}?{{$.FilterQuery}}{{end}}" class="js-mark-form space-y-2">
         <input type="hidden" name="post_id" value="{{.ID}}">
         <select name="action" class="w-full text-sm border rounded-lg px-2 py-2"><option value="useful">有用</option><option value="useless">无用</option></select>
         <input name="reason" placeholder="反馈原因" class="w-full text-sm border rounded-lg px-3 py-2">
         <button class="w-full bg-brand-600 text-white text-sm py-2 rounded-lg">提交反馈</button>
       </form>
-      <form method="post" action="/admin/handled{{if $.FilterQuery}}?{{$.FilterQuery}}{{end}}" class="mt-2">
+      <p class="feedback-status text-xs text-gray-500 mt-1 hidden"></p>
+      <p class="row-error text-xs text-red-600 mt-1 hidden"></p>
+      <form method="post" action="/admin/handled{{if $.FilterQuery}}?{{$.FilterQuery}}{{end}}" class="js-handled-form mt-2">
         <input type="hidden" name="post_id" value="{{.ID}}">
-        {{if .HandledAt}}
-        <input type="hidden" name="handled" value="0">
-        <button class="w-full border border-emerald-300 text-emerald-800 text-sm py-2 rounded-lg">清除已处理</button>
-        {{else}}
-        <input type="hidden" name="handled" value="1">
-        <button class="w-full bg-emerald-600 text-white text-sm py-2 rounded-lg">标记已处理</button>
-        {{end}}
+        <input type="hidden" name="handled" class="handled-value" value="{{if .HandledAt}}0{{else}}1{{end}}">
+        <button type="submit" class="handled-btn w-full text-sm py-2 rounded-lg {{if .HandledAt}}border border-emerald-300 text-emerald-800{{else}}bg-emerald-600 text-white{{end}}">{{if .HandledAt}}清除已处理{{else}}标记已处理{{end}}</button>
       </form>
     </div>{{else}}<p class="text-center text-gray-400 py-8">暂无帖子</p>{{end}}
   </div>
 </div>
 </main>
 <footer class="text-center text-xs text-gray-400 py-6">rent-scout</footer>
+<script>
+(function(){
+  function rowOf(el){ return el.closest('.post-row'); }
+  function showErr(row, msg){
+    var err = row.querySelector('.row-error');
+    if (!err) return;
+    err.textContent = msg || '操作失败';
+    err.classList.remove('hidden');
+  }
+  function clearErr(row){
+    var err = row.querySelector('.row-error');
+    if (err){ err.textContent=''; err.classList.add('hidden'); }
+  }
+  function postForm(form){
+    // 跟随 302 到列表页；redirect:manual 在部分浏览器会冒成 HTTP 404
+    return fetch(form.action, {
+      method: 'POST',
+      body: new FormData(form),
+      credentials: 'same-origin',
+      redirect: 'follow'
+    });
+  }
+  function isOK(r){
+    return r.ok || r.type === 'opaqueredirect' || (r.status >= 200 && r.status < 400);
+  }
+  document.querySelectorAll('.js-mark-form').forEach(function(form){
+    form.addEventListener('submit', function(e){
+      e.preventDefault();
+      var row = rowOf(form);
+      clearErr(row);
+      var action = (form.querySelector('[name="action"]') || {}).value || '';
+      var label = action === 'useless' ? '无用' : '有用';
+      postForm(form).then(function(r){
+        if (!isOK(r)) throw new Error('HTTP ' + r.status);
+        var st = row.querySelector('.feedback-status');
+        if (st){
+          st.textContent = '已反馈：' + label;
+          st.classList.remove('hidden');
+        }
+      }).catch(function(err){
+        showErr(row, '反馈失败：' + (err && err.message ? err.message : err));
+      });
+    });
+  });
+  document.querySelectorAll('.js-handled-form').forEach(function(form){
+    form.addEventListener('submit', function(e){
+      e.preventDefault();
+      var row = rowOf(form);
+      clearErr(row);
+      var hv = form.querySelector('.handled-value');
+      var next = hv ? hv.value : '1';
+      postForm(form).then(function(r){
+        if (!isOK(r)) throw new Error('HTTP ' + r.status);
+        var nowHandled = next === '1';
+        row.querySelectorAll('.handled-badge').forEach(function(b){
+          if (nowHandled) b.classList.remove('hidden'); else b.classList.add('hidden');
+        });
+        row.querySelectorAll('.js-handled-form').forEach(function(f){
+          var v = f.querySelector('.handled-value');
+          var btn = f.querySelector('.handled-btn');
+          if (v) v.value = nowHandled ? '0' : '1';
+          if (!btn) return;
+          var mobile = btn.classList.contains('w-full');
+          if (nowHandled){
+            btn.textContent = mobile ? '清除已处理' : '清除已处理';
+            btn.className = mobile
+              ? 'handled-btn w-full text-sm py-2 rounded-lg border border-emerald-300 text-emerald-800'
+              : 'handled-btn text-xs px-2 py-1 rounded border border-emerald-300 text-emerald-800';
+          } else {
+            btn.textContent = mobile ? '标记已处理' : '已处理';
+            btn.className = mobile
+              ? 'handled-btn w-full text-sm py-2 rounded-lg bg-emerald-600 text-white'
+              : 'handled-btn text-xs px-2 py-1 rounded bg-emerald-600 text-white';
+          }
+        });
+      }).catch(function(err){
+        showErr(row, '已处理失败：' + (err && err.message ? err.message : err));
+      });
+    });
+  });
+})();
+</script>
 </body></html>
 {{end}}

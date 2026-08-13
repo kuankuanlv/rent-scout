@@ -1,4 +1,4 @@
-package store
+package posts
 
 import (
 	"database/sql"
@@ -19,7 +19,7 @@ type PostListFilter struct {
 }
 
 // ListPosts 帖子列表（/api/posts，规格 7.1 + §6）；id 倒序分页
-func (s *Store) ListPosts(f PostListFilter, limit, offset int) ([]models.RentPost, error) {
+func (r *Repo) ListPosts(f PostListFilter, limit, offset int) ([]models.RentPost, error) {
 	var where []string
 	var args []any
 	if f.Status != "" {
@@ -49,25 +49,25 @@ func (s *Store) ListPosts(f PostListFilter, limit, offset int) ([]models.RentPos
 	sqlStr += " ORDER BY id DESC LIMIT ? OFFSET ?"
 	args = append(args, limit, offset)
 
-	rows, err := s.db.Query(sqlStr, args...)
+	rows, err := r.DB.Query(sqlStr, args...)
 	if err != nil {
 		return nil, fmt.Errorf("帖子列表: %w", err)
 	}
 	defer rows.Close()
-	posts := make([]models.RentPost, 0)
+	out := make([]models.RentPost, 0)
 	for rows.Next() {
 		p, err := scanRentPost(rows)
 		if err != nil {
 			return nil, err
 		}
-		posts = append(posts, p)
+		out = append(out, p)
 	}
-	return posts, rows.Err()
+	return out, rows.Err()
 }
 
 // GetPost 单帖详情（/api/posts/{id}）；不存在返回 ok=false
-func (s *Store) GetPost(id int64) (models.RentPost, bool, error) {
-	row := s.db.QueryRow(`SELECT id, source, external_id, url, title, content, author, author_url,
+func (r *Repo) GetPost(id int64) (models.RentPost, bool, error) {
+	row := r.DB.QueryRow(`SELECT id, source, external_id, url, title, content, author, author_url,
 	    published_at, collected_at, status, address_tags, handled_at, raw FROM posts WHERE id=?`, id)
 	p, err := scanRentPost(row)
 	if err == sql.ErrNoRows {
@@ -80,61 +80,19 @@ func (s *Store) GetPost(id int64) (models.RentPost, bool, error) {
 }
 
 // MarkPostHandled 写 handled_at=现在（不改 status / 反馈）
-func (s *Store) MarkPostHandled(postID int64) error {
-	if _, err := s.db.Exec(`UPDATE posts SET handled_at=? WHERE id=?`, time.Now(), postID); err != nil {
+func (r *Repo) MarkPostHandled(postID int64) error {
+	if _, err := r.DB.Exec(`UPDATE posts SET handled_at=? WHERE id=?`, time.Now(), postID); err != nil {
 		return fmt.Errorf("标记已处理: %w", err)
 	}
 	return nil
 }
 
 // ClearPostHandled 清 handled_at=NULL（不改 status / 反馈）
-func (s *Store) ClearPostHandled(postID int64) error {
-	if _, err := s.db.Exec(`UPDATE posts SET handled_at=NULL WHERE id=?`, postID); err != nil {
+func (r *Repo) ClearPostHandled(postID int64) error {
+	if _, err := r.DB.Exec(`UPDATE posts SET handled_at=NULL WHERE id=?`, postID); err != nil {
 		return fmt.Errorf("清除已处理: %w", err)
 	}
 	return nil
-}
-
-// ListNotificationsByPost 帖子的全部通知记录（详情页展示），按 id 升序
-func (s *Store) ListNotificationsByPost(postID int64) ([]models.Notification, error) {
-	rows, err := s.db.Query(`SELECT id, post_id, channel, status, attempts, last_error, sent_at
-	    FROM notifications WHERE post_id=? ORDER BY id`, postID)
-	if err != nil {
-		return nil, fmt.Errorf("查帖子通知: %w", err)
-	}
-	defer rows.Close()
-	var items []models.Notification
-	for rows.Next() {
-		var n models.Notification
-		var sent sql.NullTime
-		if err := rows.Scan(&n.ID, &n.PostID, &n.Channel, &n.Status, &n.Attempts, &n.LastError, &sent); err != nil {
-			return nil, err
-		}
-		if sent.Valid {
-			n.SentAt = &sent.Time
-		}
-		items = append(items, n)
-	}
-	return items, rows.Err()
-}
-
-// ListFeedbacksByPost 帖子的反馈记录（详情页展示），按 id 升序
-func (s *Store) ListFeedbacksByPost(postID int64) ([]models.Feedback, error) {
-	rows, err := s.db.Query(`SELECT id, post_id, channel, action, reason, created_at
-	    FROM feedbacks WHERE post_id=? ORDER BY id`, postID)
-	if err != nil {
-		return nil, fmt.Errorf("查帖子反馈: %w", err)
-	}
-	defer rows.Close()
-	var items []models.Feedback
-	for rows.Next() {
-		var f models.Feedback
-		if err := rows.Scan(&f.ID, &f.PostID, &f.Channel, &f.Action, &f.Reason, &f.CreatedAt); err != nil {
-			return nil, err
-		}
-		items = append(items, f)
-	}
-	return items, rows.Err()
 }
 
 // rowScanner 统一 QueryRow / Rows 的 Scan

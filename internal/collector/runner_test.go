@@ -44,7 +44,7 @@ func testRunner(t *testing.T) (*Runner, *store.Store) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rt := config.NewRuntimeWithSnapshot(&config.AppConfig{
+	rt := config.NewHotConfigWithSnapshot(&config.AppConfig{
 		Collector: config.CollectorConfig{
 			Interval: 3600, JitterRatio: 0.2, MaxAgeDays: 7,
 			Sources: []string{"fake"},
@@ -161,7 +161,7 @@ func newControlRunner(t *testing.T) (*Runner, *fakeSource) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	rt := config.NewRuntimeWithSnapshot(&config.AppConfig{
+	rt := config.NewHotConfigWithSnapshot(&config.AppConfig{
 		Collector: config.CollectorConfig{
 			Interval: 1, JitterRatio: 0, MaxAgeDays: 7,
 			Sources: []string{"fake"},

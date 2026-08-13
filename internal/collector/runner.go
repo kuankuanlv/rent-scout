@@ -19,7 +19,7 @@ import (
 // 控制面（规格 7.1）：enabled 启停 + manual 手动触发（容量 1 非阻塞），
 // 由 /api/sources 经 SourceController 接口驱动
 type Runner struct {
-	rt      *config.Runtime
+	rt      *config.HotConfig
 	store   *store.Store
 	sources []Source
 	trigger chan<- struct{}
@@ -29,7 +29,7 @@ type Runner struct {
 }
 
 // NewRunner 创建调度器
-func NewRunner(rt *config.Runtime, st *store.Store, sources []Source, trigger chan<- struct{}) *Runner {
+func NewRunner(rt *config.HotConfig, st *store.Store, sources []Source, trigger chan<- struct{}) *Runner {
 	enabled := make(map[string]bool, len(sources))
 	manual := make(map[string]chan struct{}, len(sources))
 	for _, src := range sources {
@@ -166,12 +166,16 @@ func (r *Runner) runSource(ctx context.Context, src Source) {
 func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- struct{}) error {
 	log := pkglog.Component(pkglog.Collector)
 	cfg := r.rt.Get()
-	maxAge := cfg.Collector.MaxAgeDays
-	cutoff := time.Now().Add(-time.Duration(maxAge) * 24 * time.Hour)
+	now := time.Now()
+	start, end, err := sourceTimeWindow(src.Name(), cfg, now)
+	if err != nil {
+		return err
+	}
 
 	// 游标断点续传（规格 3.5）：上次位置继续
 	cursorVal, _, _ := r.store.GetCursor(src.Name())
-	log.Info("[round_start] 开始本轮采集", "source", src.Name(), "cursor", cursorVal, "max_age_days", maxAge)
+	log.Info("[round_start] 开始本轮采集", "source", src.Name(), "cursor", cursorVal,
+		"range_from", start.Format(time.RFC3339), "range_to", end.Format(time.RFC3339))
 
 	newPosts := 0
 	for {
@@ -179,13 +183,16 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 		if err != nil {
 			return fmt.Errorf("列表页: %w", err)
 		}
-		// 时间窗过滤：列表按时间倒序，超窗即停止翻页（调整规格 D）
+		// 时间窗过滤：早于 from 或晚于 to 丢弃；倒序超 from 可停翻页
 		var fresh []ListItem
 		stop := false
 		for _, it := range items {
-			if it.PublishedAt.Before(cutoff) {
+			if it.PublishedAt.Before(start) {
 				stop = true
 				break
+			}
+			if it.PublishedAt.After(end) {
+				continue
 			}
 			fresh = append(fresh, it)
 		}
@@ -248,6 +255,22 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 	}
 	log.Info("[round_done] 本轮采集结束", "source", src.Name(), "new_posts", newPosts)
 	return nil
+}
+
+// sourceTimeWindow 豆瓣用 range_from/to；其它源仍用 MaxAgeDays → [now-N天, now]
+func sourceTimeWindow(name string, cfg *config.AppConfig, now time.Time) (time.Time, time.Time, error) {
+	if name == "douban" {
+		start, end, err := config.ResolveTimeRange(cfg.Collector.Douban.RangeFrom, cfg.Collector.Douban.RangeTo, now)
+		if err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("豆瓣拉取范围: %w", err)
+		}
+		return start, end, nil
+	}
+	maxAge := cfg.Collector.MaxAgeDays
+	if maxAge <= 0 {
+		maxAge = 7
+	}
+	return now.Add(-time.Duration(maxAge) * 24 * time.Hour), now, nil
 }
 
 // jittered 间隔随机抖动：interval * (1 ± jitter)

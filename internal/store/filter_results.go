@@ -10,10 +10,10 @@ import (
 
 // SaveFilterResult 写入/覆盖筛选结果（1:1 posts，upsert）。
 // hard_rules 与 ai_result 以 JSON 存储（规格 3.2）
-func (s *Store) SaveFilterResult(r models.FilterResult) error {
+func (s *Store) SaveFilterResult(fr models.FilterResult) error {
 	// nil HardRules 归一化为空数组（与 InsertPost 的 nil→[] 一致）：JSON 存 "[]" 而非 "null"。
 	// 否则 json_each('null') 会产出 value=NULL 的假行 → RuleHitStats 幽灵 rule_id=0 统计（审查 K2）
-	hardRules := r.HardRules
+	hardRules := fr.HardRules
 	if hardRules == nil {
 		hardRules = []models.RuleHit{}
 	}
@@ -22,8 +22,8 @@ func (s *Store) SaveFilterResult(r models.FilterResult) error {
 		return fmt.Errorf("序列化命中规则: %w", err)
 	}
 	var aiJSON string
-	if r.AI != nil {
-		b, err := json.Marshal(r.AI)
+	if fr.AI != nil {
+		b, err := json.Marshal(fr.AI)
 		if err != nil {
 			return fmt.Errorf("序列化 AI 结果: %w", err)
 		}
@@ -34,7 +34,7 @@ func (s *Store) SaveFilterResult(r models.FilterResult) error {
 	    ON CONFLICT(post_id) DO UPDATE SET status=excluded.status, stage=excluded.stage,
 	    rejected_by=excluded.rejected_by, decided_at=excluded.decided_at,
 	    hard_rules=excluded.hard_rules, ai_result=excluded.ai_result`,
-		r.PostID, r.Status, r.Stage, r.RejectedBy, r.DecidedAt, string(hardJSON), aiJSON)
+		fr.PostID, fr.Status, fr.Stage, fr.RejectedBy, fr.DecidedAt, string(hardJSON), aiJSON)
 	if err != nil {
 		return fmt.Errorf("保存筛选结果: %w", err)
 	}
@@ -56,25 +56,25 @@ func (s *Store) UpdatePostAddressTags(postID int64, tags []string) error {
 
 // FilterResultByPostID 回读筛选结果（ok=false = 尚未判定）
 func (s *Store) FilterResultByPostID(postID int64) (models.FilterResult, bool, error) {
-	var r models.FilterResult
+	var fr models.FilterResult
 	var hardJSON, aiJSON string
 	err := s.db.QueryRow(`SELECT post_id, status, stage, rejected_by, decided_at, hard_rules, ai_result
 	    FROM filter_results WHERE post_id=?`, postID).
-		Scan(&r.PostID, &r.Status, &r.Stage, &r.RejectedBy, &r.DecidedAt, &hardJSON, &aiJSON)
+		Scan(&fr.PostID, &fr.Status, &fr.Stage, &fr.RejectedBy, &fr.DecidedAt, &hardJSON, &aiJSON)
 	if err == sql.ErrNoRows {
-		return r, false, nil
+		return fr, false, nil
 	}
 	if err != nil {
-		return r, false, fmt.Errorf("查筛选结果: %w", err)
+		return fr, false, fmt.Errorf("查筛选结果: %w", err)
 	}
-	if err := json.Unmarshal([]byte(hardJSON), &r.HardRules); err != nil {
-		return r, false, fmt.Errorf("解析命中规则: %w", err)
+	if err := json.Unmarshal([]byte(hardJSON), &fr.HardRules); err != nil {
+		return fr, false, fmt.Errorf("解析命中规则: %w", err)
 	}
 	if aiJSON != "" {
-		r.AI = &models.AIResult{}
-		if err := json.Unmarshal([]byte(aiJSON), r.AI); err != nil {
-			return r, false, fmt.Errorf("解析 AI 结果: %w", err)
+		fr.AI = &models.AIResult{}
+		if err := json.Unmarshal([]byte(aiJSON), fr.AI); err != nil {
+			return fr, false, fmt.Errorf("解析 AI 结果: %w", err)
 		}
 	}
-	return r, true, nil
+	return fr, true, nil
 }

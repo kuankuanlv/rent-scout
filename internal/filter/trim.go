@@ -6,9 +6,11 @@ import (
 	"rent-scout/internal/models"
 )
 
-// defaultTrimLimit 正文截断默认上限（rune）。BuildLLMView 在 limit<=0 时内部回退到此值，
-// 调用方无需处理默认值（规格 5.2 + 调整 C）
-const defaultTrimLimit = 500
+// DefaultTrimLimit 正文截断默认上限（rune）。BuildLLMView 在 limit<=0 时内部回退到此值。
+const DefaultTrimLimit = 500
+
+// defaultTrimLimit 兼容旧名
+const defaultTrimLimit = DefaultTrimLimit
 
 // LLMView LLM 输入精简视图（规格 5.2 + 调整 C）：标题 + 关键字段 + 正文截断。
 // 去 HTML 标签/图片链接省 token；正文按 limit（rune）截断，避免切碎中文字符。

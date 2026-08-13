@@ -6,12 +6,18 @@ import (
 	"os"
 	"path/filepath"
 
+	"rent-scout/internal/store/notify"
+	"rent-scout/internal/store/posts"
+
 	_ "modernc.org/sqlite" // 纯 Go 驱动，无 CGO，利于 Docker 交叉编译
 )
 
-// Store 数据访问层：单一 *sql.DB 封装
+// Store 数据访问层：单一 *sql.DB 封装；posts/notify 委托子包，其余方法直接挂 *Store
 type Store struct {
 	db *sql.DB
+
+	posts  *posts.Repo
+	notify *notify.Repo
 }
 
 // Open 打开（不存在则创建）SQLite 库并执行迁移。
@@ -32,7 +38,11 @@ func Open(dbPath string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("设置 PRAGMA: %w", err)
 	}
-	s := &Store{db: db}
+	s := &Store{
+		db:     db,
+		posts:  &posts.Repo{DB: db},
+		notify: &notify.Repo{DB: db},
+	}
 	if err := s.migrate(); err != nil {
 		db.Close()
 		return nil, err
@@ -152,6 +162,10 @@ func (s *Store) migrate() error {
 	if err := s.migrateRuleTypes(); err != nil {
 		return err
 	}
+	// cookie_mode=file 已废弃 → none（保留 cookie_file 键但不使用）
+	if err := s.migrateCookieModeFile(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -171,6 +185,16 @@ func (s *Store) migrateRuleTypes() error {
 			return fmt.Errorf("迁移规则类型(%s): %w", st.what, err)
 		}
 	}
+	return nil
+}
+
+// migrateCookieModeFile 旧 file 模式改为 none；幂等
+func (s *Store) migrateCookieModeFile() error {
+	res, err := s.db.Exec(`UPDATE kv_config SET value='none' WHERE key='secret.collector.douban.cookie_mode' AND lower(value)='file'`)
+	if err != nil {
+		return fmt.Errorf("迁移 cookie_mode=file→none: %w", err)
+	}
+	_ = res
 	return nil
 }
 

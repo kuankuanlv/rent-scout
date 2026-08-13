@@ -17,24 +17,12 @@ type llmChat interface {
 // AIBatchEvaluator AI 批量评估器（规格 5.4 + 调整 C）：
 // system 固定（规则集+判定标准+Schema，全批共享一次） + user 只放 N 条精简帖
 type AIBatchEvaluator struct {
-	llm        llmChat
-	trimLimits map[string]int // 每源截断字数（trim_limits[source]，缺省 500——规格 5.2）
+	llm llmChat
 }
 
-// NewAIBatchEvaluator 创建批量评估器；trimLimits 为每源 LLM 输入截断字数映射。
-// 未配置的源按 defaultTrimLimit（500）截断（规格 5.2 + 调整 C：每源独立 limit）
-func NewAIBatchEvaluator(c llmChat, trimLimits map[string]int) *AIBatchEvaluator {
-	return &AIBatchEvaluator{llm: c, trimLimits: trimLimits}
-}
-
-// trimLenFor 某源 LLM 输入截断字数（trim_limits[source]，缺省 500）
-func (e *AIBatchEvaluator) trimLenFor(source string) int {
-	if e.trimLimits != nil {
-		if n, ok := e.trimLimits[source]; ok && n > 0 {
-			return n
-		}
-	}
-	return defaultTrimLimit
+// NewAIBatchEvaluator 创建批量评估器；截断统一用 DefaultTrimLimit（不再读配置 map）
+func NewAIBatchEvaluator(c llmChat, _ map[string]int) *AIBatchEvaluator {
+	return &AIBatchEvaluator{llm: c}
 }
 
 // EvaluateBatch 批量判定：返回 map[PostID]*AIResult（index 与输入对齐）。
@@ -43,10 +31,10 @@ func (e *AIBatchEvaluator) EvaluateBatch(ctx context.Context, posts []models.Ren
 	if len(posts) == 0 {
 		return map[int64]*models.AIResult{}, nil
 	}
-	// 构造精简帖（Trim：去 HTML/图片，按源截断——规格 5.2 每源独立 limit）
+	// 构造精简帖（Trim：去 HTML/图片，统一 DefaultTrimLimit）
 	var sb strings.Builder
 	for i, p := range posts {
-		v := BuildLLMView(p, e.trimLenFor(p.Source))
+		v := BuildLLMView(p, DefaultTrimLimit)
 		sb.WriteString(fmt.Sprintf("第%d条 [%s] 标题：%s\n", i, v.Source, v.Title))
 		if v.URL != "" {
 			sb.WriteString("链接：" + v.URL + "\n")

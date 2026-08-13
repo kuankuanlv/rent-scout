@@ -36,16 +36,16 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if tab == "rules" {
-		rows, err := s.loadRuleRows()
+		rows, err := loadRuleRows(s.db)
 		if err != nil {
 			http.Error(w, "查询失败", http.StatusInternalServerError)
 			return
 		}
 		data["Rules"] = rows
 	} else {
-		kv := s.currentConfigKV()
+		kv := CurrentConfigKV(s.db)
 		app := s.rt.Get()
-		env := s.rt.GetEnv()
+		env := s.rt.Secrets()
 		secID := tabToSectionID(tab)
 		sec := sectionByID(buildConfigSections(app, env, kv), secID)
 		if sec == nil {
@@ -76,8 +76,8 @@ func (s *Server) handleConfigSectionSave(w http.ResponseWriter, r *http.Request)
 	}
 	tab := sectionIDToTab(section)
 	rawKV, _ := store.GetConfigMap(s.db)
-	updates := parseSectionForm(r.Form, section, rawKV)
-	needRestart := len(changedRestartKeys(rawKV, updates)) > 0
+	updates := ParseSectionForm(r.Form, section, rawKV)
+	needRestart := len(ChangedRestartKeys(rawKV, updates)) > 0
 	if err := s.saveSectionUpdates(section, updates); err != nil {
 		q := url.Values{"tab": {tab}, "err": {err.Error()}}
 		if tok := r.URL.Query().Get("token"); tok != "" {

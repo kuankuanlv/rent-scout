@@ -1,4 +1,4 @@
-package collector
+package cookie
 
 import (
 	"context"
@@ -31,7 +31,7 @@ func TestCookiecloudProvider(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	p, err := NewCookieProvider("cookiecloud", "", config.DoubanCookieConfig{
+	p, err := New("cookiecloud", config.DoubanCookieConfig{
 		CookiecloudURL:  srv.URL,
 		CookiecloudKey:  key,
 		CookiecloudPass: password,
@@ -43,10 +43,52 @@ func TestCookiecloudProvider(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(got, "cookie-value-123") {
-		t.Errorf("解密结果缺少 cookie 值: %q", got)
+		if !strings.Contains(got, "cookie-value-123") {
+			t.Errorf("解密结果缺少 cookie 值: %q", got)
+		}
 	}
-}
+
+	func TestBuildCookieStringDoubanDomainFilter(t *testing.T) {
+		plain := `[
+			{"domain":".douban.com","name":"dbcl2","value":"yes"},
+			{"domain":".weibo.com","name":"SUB","value":"no"},
+			{"name":"bid","value":"legacy-no-domain"}
+		]`
+		got := buildCookieString(plain)
+		if !strings.Contains(got, "dbcl2=yes") || !strings.Contains(got, "bid=legacy-no-domain") {
+			t.Errorf("应保留豆瓣/无 domain: %q", got)
+		}
+		if strings.Contains(got, "SUB=") {
+			t.Errorf("不应含微博 cookie: %q", got)
+		}
+		names := ListDoubanCookieNames(plain)
+		if len(names) != 2 {
+			t.Fatalf("names=%v", names)
+		}
+
+		wrapped := `{"cookie_data":{"douban.com":[{"name":"ck","value":"1"}],"weibo.com":[{"name":"w","value":"2"}]}}`
+		got = buildCookieString(wrapped)
+		if got != "ck=1" {
+			t.Errorf("cookie_data 过滤 = %q", got)
+		}
+		if n := ListDoubanCookieNames(wrapped); len(n) != 1 || n[0] != "ck" {
+			t.Errorf("ListDoubanCookieNames = %v", n)
+		}
+	}
+
+	func TestRiskSnippet(t *testing.T) {
+		body := `<html><body>抱歉，检测到有异常请求，请稍后再试</body></html>`
+		if !RiskDetected(body) {
+			t.Fatal("应判定风控")
+		}
+		snip := RiskSnippet(body)
+		if !strings.Contains(snip, "异常请求") {
+			t.Errorf("snippet=%q", snip)
+		}
+		if RiskSnippet("正常页面") != "" {
+			t.Error("正常页不应有 snippet")
+		}
+	}
 
 // encryptForTest 测试辅助：构造 legacy（Salted__ + salt + AES-128-CBC）格式密文，
 // 与 decryptCookieCloud 的 Salted__ 分支互逆（密钥派生同为 evpBytesToKey(password, salt, 32)）

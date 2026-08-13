@@ -88,6 +88,42 @@ func (c *Client) Chat(ctx context.Context, system, user string) (string, error) 
 	return out.Choices[0].Message.Content, nil
 }
 
+// ListModels GET {baseURL}/models（OpenAI 兼容）；返回模型 id 列表
+func (c *Client) ListModels(ctx context.Context) ([]string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/models", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("LLM models 请求失败: %w", err)
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("LLM models HTTP %d: %s", resp.StatusCode, truncate(string(b), 200))
+	}
+	var out struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(b, &out); err != nil {
+		return nil, fmt.Errorf("解析 models 响应: %w", err)
+	}
+	ids := make([]string, 0, len(out.Data))
+	for _, d := range out.Data {
+		if id := strings.TrimSpace(d.ID); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return ids, nil
+}
+
 // truncate 错误消息截断（防日志膨胀）
 func truncate(s string, n int) string {
 	r := []rune(s)

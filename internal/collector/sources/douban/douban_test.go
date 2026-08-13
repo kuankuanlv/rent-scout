@@ -1,4 +1,4 @@
-package collector
+package douban
 
 import (
 	"context"
@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"rent-scout/internal/collector"
 )
 
 // 豆瓣讨论列表页 fixture（参照参考仓库 service_test.go 结构）
@@ -152,7 +154,7 @@ func TestDoubanDetail(t *testing.T) {
 	defer srv.Close()
 	d, _ := NewDouban(DoubanOptions{GroupURLs: []string{srv.URL + "/x"}, Client: srv.Client()})
 
-	item := ListItem{ExternalID: "111", URL: srv.URL + "/group/topic/111/",
+	item := collector.ListItem{ExternalID: "111", URL: srv.URL + "/group/topic/111/",
 		Title: "望京整租两居", Author: "user1", PublishedAt: time.Now()}
 	post, err := d.Detail(context.Background(), item)
 	if err != nil {

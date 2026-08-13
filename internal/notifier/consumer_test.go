@@ -1,4 +1,4 @@
-package notifier
+package notifier_test
 
 import (
 	"context"
@@ -14,6 +14,8 @@ import (
 
 	"rent-scout/internal/config"
 	"rent-scout/internal/models"
+	"rent-scout/internal/notifier"
+	"rent-scout/internal/notifier/channels"
 	"rent-scout/internal/store"
 )
 
@@ -59,7 +61,7 @@ func TestNotifierProcessBatch(t *testing.T) {
 	}))
 	defer fsrv.Close()
 
-	n := NewNotifier(s, NotifierOptions{MaxAttempts: 3}, NewFeishuChannel(fsrv.URL))
+	n := notifier.NewNotifier(s, notifier.NotifierOptions{MaxAttempts: 3}, channels.NewFeishuChannel(fsrv.URL))
 	err := n.ProcessBatch(context.Background(), []models.RentPost{p1, p2})
 	if err != nil {
 		t.Fatal(err)
@@ -69,12 +71,12 @@ func TestNotifierProcessBatch(t *testing.T) {
 	}
 	// 状态检查：两帖 feishu 均 sent
 	for _, p := range []models.RentPost{p1, p2} {
-		st, err := s.NotificationStatuses([]int64{p.ID}, []string{ChannelFeishu})
+		st, err := s.NotificationStatuses([]int64{p.ID}, []string{notifier.ChannelFeishu})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if st[p.ID][ChannelFeishu] != "sent" {
-			t.Errorf("post %d feishu 状态: %q, want sent", p.ID, st[p.ID][ChannelFeishu])
+		if st[p.ID][notifier.ChannelFeishu] != "sent" {
+			t.Errorf("post %d feishu 状态: %q, want sent", p.ID, st[p.ID][notifier.ChannelFeishu])
 		}
 	}
 }
@@ -90,7 +92,7 @@ func TestNotifierRetryThenDead(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	n := NewNotifier(s, NotifierOptions{MaxAttempts: 2}, NewFeishuChannel(srv.URL))
+	n := notifier.NewNotifier(s, notifier.NotifierOptions{MaxAttempts: 2}, channels.NewFeishuChannel(srv.URL))
 	// 第一轮：发送失败 → failed attempt=1
 	if err := n.ProcessBatch(context.Background(), []models.RentPost{p}); err == nil {
 		t.Error("发送失败应返回 err")
@@ -103,12 +105,12 @@ func TestNotifierRetryThenDead(t *testing.T) {
 	if err := n.ProcessBatch(context.Background(), []models.RentPost{p}); err != nil {
 		t.Fatal(err)
 	}
-	st, err := s.NotificationStatuses([]int64{p.ID}, []string{ChannelFeishu})
+	st, err := s.NotificationStatuses([]int64{p.ID}, []string{notifier.ChannelFeishu})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st[p.ID][ChannelFeishu] != "dead" {
-		t.Errorf("feishu 状态: %q, want dead", st[p.ID][ChannelFeishu])
+	if st[p.ID][notifier.ChannelFeishu] != "dead" {
+		t.Errorf("feishu 状态: %q, want dead", st[p.ID][notifier.ChannelFeishu])
 	}
 }
 
@@ -141,17 +143,17 @@ func TestNotifierGroupIsolation(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	n := NewNotifier(s, NotifierOptions{MaxAttempts: 1}, NewFeishuChannel(srv.URL))
+	n := notifier.NewNotifier(s, notifier.NotifierOptions{MaxAttempts: 1}, channels.NewFeishuChannel(srv.URL))
 	_ = n.ProcessBatch(context.Background(), []models.RentPost{pA, pB})
-	st, err := s.NotificationStatuses([]int64{pA.ID, pB.ID}, []string{ChannelFeishu})
+	st, err := s.NotificationStatuses([]int64{pA.ID, pB.ID}, []string{notifier.ChannelFeishu})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st[pA.ID][ChannelFeishu] != "sent" {
-		t.Errorf("望京组应 sent: %q", st[pA.ID][ChannelFeishu])
+	if st[pA.ID][notifier.ChannelFeishu] != "sent" {
+		t.Errorf("望京组应 sent: %q", st[pA.ID][notifier.ChannelFeishu])
 	}
-	if st[pB.ID][ChannelFeishu] != "dead" {
-		t.Errorf("回龙观组失败应 dead（MaxAttempts=1）: %q", st[pB.ID][ChannelFeishu])
+	if st[pB.ID][notifier.ChannelFeishu] != "dead" {
+		t.Errorf("回龙观组失败应 dead（MaxAttempts=1）: %q", st[pB.ID][notifier.ChannelFeishu])
 	}
 }
 
@@ -174,7 +176,7 @@ func TestDualFeedbackLinksPresent(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	n := NewNotifier(s, NotifierOptions{MaxAttempts: 3}, NewFeishuChannel(srv.URL))
+	n := notifier.NewNotifier(s, notifier.NotifierOptions{MaxAttempts: 3}, channels.NewFeishuChannel(srv.URL))
 	err := n.ProcessBatch(context.Background(), []models.RentPost{p})
 	if err != nil {
 		t.Fatal(err)
@@ -216,7 +218,7 @@ func TestDualFeedbackLinksWithSignature(t *testing.T) {
 	defer srv.Close()
 
 	// 使用非空的 feedbackSecret
-	n := NewNotifier(s, NotifierOptions{MaxAttempts: 3, FeedbackSecret: "test-secret-123"}, NewFeishuChannel(srv.URL))
+	n := notifier.NewNotifier(s, notifier.NotifierOptions{MaxAttempts: 3, FeedbackSecret: "test-secret-123"}, channels.NewFeishuChannel(srv.URL))
 	err := n.ProcessBatch(context.Background(), []models.RentPost{p})
 	if err != nil {
 		t.Fatal(err)
@@ -289,7 +291,7 @@ func TestDualFeedbackLinksNoSignature(t *testing.T) {
 	defer srv.Close()
 
 	// 使用空的 feedbackSecret（降级模式）
-	n := NewNotifier(s, NotifierOptions{MaxAttempts: 3, FeedbackSecret: ""}, NewFeishuChannel(srv.URL))
+	n := notifier.NewNotifier(s, notifier.NotifierOptions{MaxAttempts: 3, FeedbackSecret: ""}, channels.NewFeishuChannel(srv.URL))
 	err := n.ProcessBatch(context.Background(), []models.RentPost{p})
 	if err != nil {
 		t.Fatal(err)
@@ -326,13 +328,13 @@ func TestDualFeedbackLinksNoSignature(t *testing.T) {
 	}
 }
 
-// 签名密钥跟 Runtime：改 token 后新通知用新密钥；鉴权关则不签名
-func TestFeedbackSecretFollowsRuntime(t *testing.T) {
+// 签名密钥跟 HotConfig：改 token 后新通知用新密钥；鉴权关则不签名
+func TestFeedbackSecretFollowsHotConfig(t *testing.T) {
 	s := newNotifierTestStore(t)
 	defer s.Close()
 
 	app := &config.AppConfig{Admin: config.AdminConfig{AuthRequired: true, Token: "tok-v1"}}
-	rt := config.NewRuntimeWithSnapshot(app, nil)
+	rt := config.NewHotConfigWithSnapshot(app, nil)
 
 	extractUseful := func(text string) string {
 		for _, line := range strings.Split(text, "\n") {
@@ -356,7 +358,7 @@ func TestFeedbackSecretFollowsRuntime(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	n := NewNotifier(s, NotifierOptions{MaxAttempts: 3, Runtime: rt}, NewFeishuChannel(srv.URL))
+	n := notifier.NewNotifier(s, notifier.NotifierOptions{MaxAttempts: 3, HotConfig: rt}, channels.NewFeishuChannel(srv.URL))
 
 	p1 := seedNotifierPost(t, s, models.PostStatusPassed)
 	if err := n.ProcessBatch(context.Background(), []models.RentPost{p1}); err != nil {

@@ -78,25 +78,22 @@ func (f *failLLM) Chat(ctx context.Context, system, user string) (string, error)
 	return "", context.DeadlineExceeded
 }
 
-// I2（最终审查）：不同源按各自 trim_limits 限额截断（规格 5.2 每源独立 limit），
-// 不再是单一 trimLen 处理整批。douban=100 / beike=20，各按源限额截断
-func TestAIBatchEvaluatorPerSourceTrim(t *testing.T) {
+// Plan 10 E1：截断统一 DefaultTrimLimit，不再按源读配置 map
+func TestAIBatchEvaluatorDefaultTrim(t *testing.T) {
 	fl := &fakeLLM{}
-	ev := NewAIBatchEvaluator(fl, map[string]int{"douban": 100, "beike": 20})
+	ev := NewAIBatchEvaluator(fl, map[string]int{"douban": 100}) // map 已忽略
+	long := strings.Repeat("甲", DefaultTrimLimit+50)
 	posts := []models.RentPost{
-		{ID: 1, Source: "douban", Title: "望京", Content: strings.Repeat("甲", 200)},
-		{ID: 2, Source: "beike", Title: "回龙观", Content: strings.Repeat("乙", 200)},
+		{ID: 1, Source: "douban", Title: "望京", Content: long},
+		{ID: 2, Source: "beike", Title: "回龙观", Content: long},
 	}
 	aiRules := []models.Rule{{ID: 10, Type: models.RuleTypeAINatural, Value: "只要整租", Enabled: true}}
 	if _, err := ev.EvaluateBatch(context.Background(), posts, aiRules); err != nil {
 		t.Fatal(err)
 	}
-	// douban 帖按 100 截断（不出现 101 个甲）；beike 帖按 20 截断（不出现 21 个乙）
-	if !strings.Contains(fl.user, strings.Repeat("甲", 100)) || strings.Contains(fl.user, strings.Repeat("甲", 101)) {
-		t.Error("douban 帖应按 100 字截断")
-	}
-	if !strings.Contains(fl.user, strings.Repeat("乙", 20)) || strings.Contains(fl.user, strings.Repeat("乙", 21)) {
-		t.Error("beike 帖应按 20 字截断")
+	want := strings.Repeat("甲", DefaultTrimLimit)
+	if !strings.Contains(fl.user, want) || strings.Contains(fl.user, strings.Repeat("甲", DefaultTrimLimit+1)) {
+		t.Error("各源均应按 DefaultTrimLimit 截断")
 	}
 }
 

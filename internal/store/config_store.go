@@ -7,6 +7,7 @@ import (
 
 const setupCompletedKey = "setup.completed"
 
+
 // ConfigEntry 配置项
 type ConfigEntry struct {
 	Key       string
@@ -23,7 +24,7 @@ type ConfigHistoryEntry struct {
 	CreatedAt time.Time
 }
 
-// GetConfigMap 读取全部 KV（供 Runtime 使用）
+// GetConfigMap 读取全部 KV（供 HotConfig 使用）
 func GetConfigMap(s *Store) (map[string]string, error) {
 	rows, err := s.db.Query(`SELECT key, value FROM kv_config ORDER BY key`)
 	if err != nil {

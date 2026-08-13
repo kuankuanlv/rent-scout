@@ -59,7 +59,7 @@ func TestRulesPage(t *testing.T) {
 	}
 	body := rec2.Body.String()
 	for _, want := range []string{"规则管理", "黑中介", "地铁近", "白名单 → 黑名单 → AI", "「或」", "Tag",
-		`value="whitelist"`, `value="blacklist"`, `value="ai_natural"`, "白名单", "黑名单", "AI 自然语言"} {
+		`value="whitelist"`, `value="blacklist"`, `value="ai_natural"`, "白名单", "黑名单", "AI审核"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("页面缺 %q", want)
 		}

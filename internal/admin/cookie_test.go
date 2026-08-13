@@ -6,12 +6,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
-	"rent-scout/internal/collector"
+	"rent-scout/internal/collector/cookie"
 	"rent-scout/internal/config"
 	"rent-scout/internal/store"
 )
@@ -81,14 +79,14 @@ func TestCookieTestRawDraftNoWrite(t *testing.T) {
 }
 
 func TestCookieTestRawUsesStoredWhenEmpty(t *testing.T) {
-	orig := collector.OnlineProbe
-	collector.OnlineProbe = func(ctx context.Context, cookie string, client *http.Client) (bool, string, string) {
-		if cookie != "dbcl2=storedvalue123456" {
-			t.Errorf("应使用已存 cookie, got len=%d", len(cookie))
+	orig := cookie.OnlineProbe
+	cookie.OnlineProbe = func(ctx context.Context, c string, client *http.Client) (bool, string, string) {
+		if c != "dbcl2=storedvalue123456" {
+			t.Errorf("应使用已存 cookie, got len=%d", len(c))
 		}
 		return true, "ok", "mocked"
 	}
-	defer func() { collector.OnlineProbe = orig }()
+	defer func() { cookie.OnlineProbe = orig }()
 
 	s := newAdminTestStore(t)
 	defer s.Close()
@@ -144,22 +142,12 @@ func TestCookieTestMethodNotAllowed(t *testing.T) {
 	}
 }
 
-func TestCookieTestFileDraft(t *testing.T) {
-	orig := collector.OnlineProbe
-	collector.OnlineProbe = func(ctx context.Context, cookie string, client *http.Client) (bool, string, string) {
-		return true, "ok", "mocked"
-	}
-	defer func() { collector.OnlineProbe = orig }()
-
+func TestCookieTestFileDraftRejected(t *testing.T) {
 	s := newAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 
-	path := filepath.Join(t.TempDir(), "c.txt")
-	if err := os.WriteFile(path, []byte("k=v; x=y"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	form := url.Values{"cookie_mode": {"file"}, "cookie_file": {path}}
+	form := url.Values{"cookie_mode": {"file"}, "cookie_file": {"/tmp/c.txt"}}
 	req := httptest.NewRequest(http.MethodPost, "/admin/config/cookie/test", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
@@ -171,8 +159,12 @@ func TestCookieTestFileDraft(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
+	if out["ok"] != false {
+		t.Errorf("file 草稿应失败: %v", out)
+	}
 	parse, _ := out["parse"].(map[string]any)
-	if parse["ok"] != true {
-		t.Errorf("file 草稿应 parse ok: %v", parse)
+	detail, _ := parse["detail"].(string)
+	if !strings.Contains(detail, "file") {
+		t.Errorf("应提示 file 已移除: %v", parse)
 	}
 }

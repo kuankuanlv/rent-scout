@@ -89,15 +89,21 @@ func TestAdminPageFilters(t *testing.T) {
 	if !strings.Contains(body, "望京") || !strings.Contains(body, "14号线") {
 		t.Errorf("页面缺 AddressTags chips")
 	}
-	if !strings.Contains(body, `name="handled" value="1"`) || !strings.Contains(body, "/admin/handled") {
+	if !strings.Contains(body, `name="handled"`) || !strings.Contains(body, "/admin/handled") {
 		t.Errorf("页面缺已处理表单")
+	}
+	if !strings.Contains(body, "js-mark-form") || !strings.Contains(body, "redirect: 'follow'") {
+		t.Errorf("页面缺 fetch 行内更新脚本")
+	}
+
+	if code, body := get("/admin"); code != http.StatusOK || !strings.Contains(body, "无标签") {
+		t.Errorf("无 AddressTags 帖应显示空态「无标签」: code=%d", code)
 	}
 
 	if code, body := get("/admin?tag=望京"); code != http.StatusOK || !strings.Contains(body, "望京合租帖") || strings.Contains(body, "其它帖") {
 		t.Errorf("tag=望京: code=%d body 异常", code)
 	}
 }
-
 // TestAdminMark 标记反馈：POST /admin/mark 合法 → 302（PRG）+ DB 有记录；非法 action → 400
 func TestAdminMark(t *testing.T) {
 	s := newAdminTestStore(t)

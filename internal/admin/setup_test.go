@@ -19,7 +19,7 @@ func newSetupInProgressServer(t *testing.T, s *store.Store, extra map[string]str
 	app := config.DefaultApp()
 	app.Admin.AuthRequired = true
 	app.Admin.Token = "setup-tok"
-	kv := config.MergeKV(config.AppToKV(app), config.EnvToKV(config.DefaultEnv()))
+	kv := config.MergeKV(config.AppToKV(app), config.SecretsToKV(config.DefaultSecrets()))
 	for k, v := range extra {
 		kv[k] = v
 	}
@@ -27,7 +27,7 @@ func newSetupInProgressServer(t *testing.T, s *store.Store, extra map[string]str
 	if err := store.SetConfigBatch(s, kv); err != nil {
 		t.Fatal(err)
 	}
-	rt := config.NewRuntime(s)
+	rt := config.NewHotConfig(s)
 	if err := rt.ReloadOnce(); err != nil {
 		t.Fatal(err)
 	}
@@ -103,8 +103,8 @@ func TestSetupSkipLastStepFinishes(t *testing.T) {
 	}
 }
 
-// TestSetupStep3ValidateEnvRejectsRawEmpty raw 且无 cookie_raw → 400
-func TestSetupStep3ValidateEnvRejectsRawEmpty(t *testing.T) {
+// TestSetupStep3ValidateSecretsRejectsRawEmpty raw 且无 cookie_raw → 400
+func TestSetupStep3ValidateSecretsRejectsRawEmpty(t *testing.T) {
 	s := newAdminTestStore(t)
 	defer s.Close()
 	srv := newSetupInProgressServer(t, s, nil)
@@ -172,8 +172,7 @@ func TestSetupStep3RendersCookieModeAndHint(t *testing.T) {
 	defer s.Close()
 	raw := "dbcl2=abcdefghijklmnopqrstuvwxyz"
 	srv := newSetupInProgressServer(t, s, map[string]string{
-		"secret.collector.douban.cookie_mode":     "file",
-		"secret.collector.douban.cookie_file":     "/tmp/douban.cookie",
+		"secret.collector.douban.cookie_mode":     "raw",
 		"secret.collector.douban.cookiecloud_url": "https://cc.example.com",
 		"secret.collector.douban.cookiecloud_key": "uuid-1",
 		"secret.collector.douban.cookie_raw":      raw,
@@ -186,11 +185,14 @@ func TestSetupStep3RendersCookieModeAndHint(t *testing.T) {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, `<option value="file" selected>`) {
-		t.Errorf("cookie_mode=file 未 selected:\n%s", body)
+	if !strings.Contains(body, `<option value="raw" selected>`) {
+		t.Errorf("cookie_mode=raw 未 selected:\n%s", body)
 	}
-	if !strings.Contains(body, `value="/tmp/douban.cookie"`) {
-		t.Error("应回显 cookie_file")
+	if strings.Contains(body, `value="file"`) || strings.Contains(body, `option value="file"`) {
+		t.Error("不应再有 file 选项")
+	}
+	if !strings.Contains(body, `data-cookie-panel="raw"`) {
+		t.Error("应有 raw 面板")
 	}
 	if !strings.Contains(body, `value="https://cc.example.com"`) {
 		t.Error("应回显 cookiecloud_url")

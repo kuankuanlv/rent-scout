@@ -35,28 +35,28 @@
       <div><label class="block text-sm font-medium mb-1">采集间隔（秒）</label>
       <input type="number" name="collector.interval" value="{{.App.Collector.Interval}}" class="w-full border rounded-xl px-3 py-2 text-sm"></div>
       <div><label class="block text-sm font-medium mb-1">Cookie 模式</label>
-      <select name="secret.collector.douban.cookie_mode" class="w-full border rounded-xl px-3 py-2 text-sm">
+      <select name="secret.collector.douban.cookie_mode" id="cookie-mode-select" class="w-full border rounded-xl px-3 py-2 text-sm">
         <option value="none" {{if or (eq .Env.Collector.Douban.CookieMode "none") (eq .Env.Collector.Douban.CookieMode "")}}selected{{end}}>none（匿名）</option>
         <option value="raw" {{if eq .Env.Collector.Douban.CookieMode "raw"}}selected{{end}}>raw（原文）</option>
-        <option value="file" {{if eq .Env.Collector.Douban.CookieMode "file"}}selected{{end}}>file（本地文件）</option>
         <option value="cookiecloud" {{if eq .Env.Collector.Douban.CookieMode "cookiecloud"}}selected{{end}}>cookiecloud</option></select></div>
-      <div><label class="block text-sm font-medium mb-1">Cookie 原文</label>
+      <div data-cookie-panel="raw"><label class="block text-sm font-medium mb-1">Cookie 原文</label>
       <textarea name="secret.collector.douban.cookie_raw" rows="3" class="w-full border rounded-xl px-3 py-2 text-sm" placeholder="cookie_mode=raw 时粘贴；留空不修改"></textarea>
       {{if .CookieRawHint}}<p class="text-xs text-gray-400 mt-1">{{.CookieRawHint}}</p>{{end}}</div>
-      <div><label class="block text-sm font-medium mb-1">Cookie 文件路径</label>
-      <input name="secret.collector.douban.cookie_file" value="{{.Env.Collector.Douban.CookieFile}}" class="w-full border rounded-xl px-3 py-2 text-sm" placeholder="cookie_mode=file 时使用"></div>
-      <div><label class="block text-sm font-medium mb-1">CookieCloud 地址</label>
+      <div data-cookie-panel="cookiecloud"><label class="block text-sm font-medium mb-1">CookieCloud 地址</label>
       <input name="secret.collector.douban.cookiecloud_url" value="{{.Env.Collector.Douban.CookiecloudURL}}" class="w-full border rounded-xl px-3 py-2 text-sm" placeholder="https://your-cc-host"></div>
-      <div><label class="block text-sm font-medium mb-1">CookieCloud UUID</label>
+      <div data-cookie-panel="cookiecloud"><label class="block text-sm font-medium mb-1">CookieCloud UUID</label>
       <input name="secret.collector.douban.cookiecloud_key" value="{{.Env.Collector.Douban.CookiecloudKey}}" class="w-full border rounded-xl px-3 py-2 text-sm"></div>
-      <div><label class="block text-sm font-medium mb-1">CookieCloud 密码</label>
+      <div data-cookie-panel="cookiecloud"><label class="block text-sm font-medium mb-1">CookieCloud 密码</label>
       <input type="password" name="secret.collector.douban.cookiecloud_password" class="w-full border rounded-xl px-3 py-2 text-sm" placeholder="留空不修改"></div>
       <div><label class="block text-sm font-medium mb-1">豆瓣小组（每行一个 URL）</label>
       <textarea name="collector.douban.groups" rows="4" class="w-full border rounded-xl px-3 py-2 text-sm">{{range $i, $g := .App.Collector.Douban.Groups}}{{if $i}}
 {{end}}{{$g}}{{end}}</textarea></div>
       <div class="flex flex-col gap-2">
         <button type="button" id="cookie-test-btn" class="px-4 py-2 border border-brand-200 text-brand-700 hover:bg-brand-50 rounded-xl text-sm font-medium">测试 Cookie</button>
-        <pre id="cookie-test-result" class="hidden text-xs bg-slate-50 border border-gray-100 rounded-xl p-3 overflow-x-auto whitespace-pre-wrap"></pre>
+        <div id="cookie-test-result" class="rounded-xl border border-gray-100 bg-slate-50 p-3 text-sm space-y-2">
+          <p id="cookie-test-summary" class="font-medium text-gray-700">点「测试 Cookie」查看结果</p>
+          <pre id="cookie-test-json" class="hidden text-xs overflow-x-auto whitespace-pre-wrap text-gray-500"></pre>
+        </div>
       </div>
       {{else if eq .Step 4}}
       <label class="flex items-center gap-2 text-sm"><input type="checkbox" name="filter.ai_enabled" value="on" checked> 启用 AI 筛选</label>
@@ -86,26 +86,72 @@
 {{if eq .Step 3}}
 <script>
 (function(){
+  function syncCookiePanels(){
+    var sel = document.getElementById('cookie-mode-select');
+    if (!sel) return;
+    var mode = sel.value || 'none';
+    document.querySelectorAll('[data-cookie-panel]').forEach(function(el){
+      el.style.display = (el.getAttribute('data-cookie-panel') === mode) ? '' : 'none';
+    });
+  }
+  var sel = document.getElementById('cookie-mode-select');
+  if (sel) {
+    sel.addEventListener('change', syncCookiePanels);
+    syncCookiePanels();
+  }
   var btn = document.getElementById('cookie-test-btn');
-  var out = document.getElementById('cookie-test-result');
-  if (!btn || !out) return;
+  var summary = document.getElementById('cookie-test-summary');
+  var jsonEl = document.getElementById('cookie-test-json');
+  if (!btn || !summary) return;
+  function cookieSummary(j){
+    if (!j) return '无响应';
+    var online = j.online || {};
+    var parse = j.parse || {};
+    if (j.ok && (online.status === 'skipped' || online.status === 'ok')) {
+      if (online.status === 'skipped') return '✅ 成功（匿名/跳过在线探测）';
+      return '✅ 成功：Cookie 可用';
+    }
+    if (online.status === 'risk' || online.status === 'captcha' || (online.detail && /风控|验证码|captcha|risk/i.test(online.detail))) {
+      return '⚠️ 风控：' + (online.detail || online.status || '疑似风控');
+    }
+    if (!parse.ok) return '❌ 失败：' + (parse.detail || 'Cookie 解析失败');
+    return '❌ 失败：' + (online.detail || online.status || '探测未通过');
+  }
   btn.addEventListener('click', function(){
     var form = btn.closest('form');
     var fd = new FormData();
     function v(name){ var el = form.querySelector('[name="'+name+'"]'); return el ? el.value : ''; }
     fd.set('cookie_mode', v('secret.collector.douban.cookie_mode'));
     fd.set('cookie_raw', v('secret.collector.douban.cookie_raw'));
-    fd.set('cookie_file', v('secret.collector.douban.cookie_file'));
     fd.set('cookiecloud_url', v('secret.collector.douban.cookiecloud_url'));
     fd.set('cookiecloud_key', v('secret.collector.douban.cookiecloud_key'));
     fd.set('cookiecloud_password', v('secret.collector.douban.cookiecloud_password'));
-    out.classList.remove('hidden');
-    out.textContent = '探测中…';
+    summary.textContent = '探测中…';
+    summary.className = 'font-medium text-gray-700';
+    if (jsonEl) jsonEl.classList.add('hidden');
     var url = '/admin/config/cookie/test{{if $.Token}}?token={{$.Token}}{{end}}';
     fetch(url, {method:'POST', body: fd, credentials:'same-origin'})
-      .then(function(r){ return r.json(); })
-      .then(function(j){ out.textContent = JSON.stringify(j, null, 2); })
-      .catch(function(e){ out.textContent = '请求失败: ' + e; });
+      .then(function(r){
+        if (!r.ok) {
+          var ct = r.headers.get('content-type') || '';
+          throw new Error('HTTP ' + r.status + (ct.indexOf('json') < 0 ? '（可能未登录）' : ''));
+        }
+        return r.json();
+      })
+      .then(function(j){
+        var text = cookieSummary(j);
+        summary.textContent = text;
+        summary.className = 'font-medium ' + (j.ok ? 'text-green-700' : (text.indexOf('风控')>=0 ? 'text-amber-700' : 'text-red-700'));
+        if (jsonEl) {
+          jsonEl.textContent = JSON.stringify(j, null, 2);
+          jsonEl.classList.remove('hidden');
+        }
+      })
+      .catch(function(e){
+        summary.textContent = '❌ 请求失败: ' + e;
+        summary.className = 'font-medium text-red-700';
+        if (jsonEl) jsonEl.classList.add('hidden');
+      });
   });
 })();
 </script>

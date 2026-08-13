@@ -3,7 +3,7 @@ package notifier
 import "rent-scout/internal/config"
 
 // EnabledChannels 已配 webhook 的渠道名列表（规格 7.2 约定：配了即启用）
-func EnabledChannels(env config.EnvNotifier) []string {
+func EnabledChannels(env config.SecretsNotifier) []string {
 	var names []string
 	if env.Feishu.Webhook != "" {
 		names = append(names, ChannelFeishu)

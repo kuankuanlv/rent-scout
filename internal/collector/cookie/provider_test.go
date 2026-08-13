@@ -1,40 +1,25 @@
-package collector
+package cookie
 
 import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"rent-scout/internal/config"
 )
 
-// file 模式：读本地 cookie 文件（规格 4.4）
-func TestFileCookieProvider(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "douban.txt")
-	if err := os.WriteFile(path, []byte("cookie-a=1; cookie-b=2\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	p, err := NewCookieProvider("file", path, config.DoubanCookieConfig{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	got, err := p.Get(context.Background(), "douban")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != "cookie-a=1; cookie-b=2" {
-		t.Errorf("Get = %q", got)
+// file 模式已移除：应报错
+func TestFileCookieProviderRejected(t *testing.T) {
+	if _, err := New("file", config.DoubanCookieConfig{CookieFile: "/tmp/x"}); err == nil {
+		t.Fatal("file 模式应报错")
 	}
 }
 
 // none 模式：匿名（返回空串）
 func TestNoneCookieProvider(t *testing.T) {
-	p, err := NewCookieProvider("none", "", config.DoubanCookieConfig{})
+	p, err := New("none", config.DoubanCookieConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +31,7 @@ func TestNoneCookieProvider(t *testing.T) {
 
 // raw 模式：返回配置原文
 func TestRawCookieProvider(t *testing.T) {
-	p, err := NewCookieProvider("raw", "", config.DoubanCookieConfig{CookieRaw: " dbcl2=abc; bid=xyz "})
+	p, err := New("raw", config.DoubanCookieConfig{CookieRaw: " dbcl2=abc; bid=xyz "})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,15 +44,15 @@ func TestRawCookieProvider(t *testing.T) {
 	}
 }
 
-// Runtime provider：每次 Get 读最新 Env
-func TestRuntimeCookieProviderFollowsEnv(t *testing.T) {
-	env := &config.EnvLocalConfig{
-		Collector: config.EnvCollector{
+// HotConfig provider：每次 Get 读最新 Secrets
+func TestHotConfigCookieProviderFollowsSecrets(t *testing.T) {
+	env := &config.Secrets{
+		Collector: config.SecretsCollector{
 			Douban: config.DoubanCookieConfig{CookieMode: "raw", CookieRaw: "a=1"},
 		},
 	}
-	rt := config.NewRuntimeWithSnapshot(nil, env)
-	p := NewRuntimeCookieProvider(rt)
+	rt := config.NewHotConfigWithSnapshot(nil, env)
+	p := NewHotConfigProvider(rt)
 	got, err := p.Get(context.Background(), "douban")
 	if err != nil || got != "a=1" {
 		t.Fatalf("首次 Get = %q %v", got, err)
@@ -84,24 +69,9 @@ func TestRuntimeCookieProviderFollowsEnv(t *testing.T) {
 	}
 }
 
-// file 模式文件缺失：降级匿名 + 不报错（规格 4.4 读取失败降级）
-func TestFileCookieProviderMissing(t *testing.T) {
-	p, err := NewCookieProvider("file", filepath.Join(t.TempDir(), "nope.txt"), config.DoubanCookieConfig{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	got, err := p.Get(context.Background(), "douban")
-	if err != nil {
-		t.Fatalf("缺失文件应降级匿名: %v", err)
-	}
-	if got != "" {
-		t.Errorf("缺失文件应返回空: %q", got)
-	}
-}
-
 // 未知模式：报错（配置错误应显式暴露）
 func TestUnknownCookieMode(t *testing.T) {
-	if _, err := NewCookieProvider("weird", "", config.DoubanCookieConfig{}); err == nil {
+	if _, err := New("weird", config.DoubanCookieConfig{}); err == nil {
 		t.Fatal("未知模式应报错")
 	}
 }

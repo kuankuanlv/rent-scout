@@ -1,4 +1,4 @@
-package store
+package posts
 
 import (
 	"database/sql"
@@ -10,9 +10,14 @@ import (
 	"rent-scout/internal/models"
 )
 
+// Repo 帖子领域数据访问
+type Repo struct {
+	DB *sql.DB
+}
+
 // InsertPost 去重入库：posts 表 UNIQUE(source, external_id)，
 // 已存在则跳过并返回 added=false（帖子内容以首抓为准，避免通知重复，规格 4.6）
-func (s *Store) InsertPost(p models.RentPost) (bool, error) {
+func (r *Repo) InsertPost(p models.RentPost) (bool, error) {
 	if err := validatePostStatusWrite(p.Status); err != nil {
 		return false, err
 	}
@@ -26,7 +31,7 @@ func (s *Store) InsertPost(p models.RentPost) (bool, error) {
 		return false, fmt.Errorf("序列化地址标签: %w", err)
 	}
 	// INSERT OR IGNORE：UNIQUE 冲突静默跳过，RowsAffected=0 → added=false
-	res, err := s.db.Exec(`INSERT OR IGNORE INTO posts
+	res, err := r.DB.Exec(`INSERT OR IGNORE INTO posts
 	    (source, external_id, url, title, content, author, author_url, published_at, collected_at, status, address_tags, raw)
 	    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.Source, p.ExternalID, p.URL, p.Title, p.Content, p.Author, p.AuthorURL,
@@ -43,8 +48,8 @@ func (s *Store) InsertPost(p models.RentPost) (bool, error) {
 
 // FetchPendingByStatus 拉取指定主状态的一批帖子，按 id 升序（先到先处理），限量。
 // 模块消费协议组批入口（规格 2.3）
-func (s *Store) FetchPendingByStatus(status string, limit int) ([]models.RentPost, error) {
-	rows, err := s.db.Query(`SELECT id, source, external_id, url, title, content, author, author_url,
+func (r *Repo) FetchPendingByStatus(status string, limit int) ([]models.RentPost, error) {
+	rows, err := r.DB.Query(`SELECT id, source, external_id, url, title, content, author, author_url,
 	    published_at, collected_at, status, address_tags, raw FROM posts WHERE status = ? ORDER BY id LIMIT ?`, status, limit)
 	if err != nil {
 		return nil, fmt.Errorf("拉取 %s 批: %w", status, err)
@@ -71,7 +76,7 @@ func (s *Store) FetchPendingByStatus(status string, limit int) ([]models.RentPos
 }
 
 // MarkStatus 原子更新一批帖子的主状态（仅四态，Spec 09 §1）
-func (s *Store) MarkStatus(ids []int64, status string) error {
+func (r *Repo) MarkStatus(ids []int64, status string) error {
 	if len(ids) == 0 {
 		return nil
 	}
@@ -85,7 +90,7 @@ func (s *Store) MarkStatus(ids []int64, status string) error {
 	for _, id := range ids {
 		args = append(args, id)
 	}
-	if _, err := s.db.Exec(`UPDATE posts SET status = ? WHERE id IN (`+placeholders+`)`, args...); err != nil {
+	if _, err := r.DB.Exec(`UPDATE posts SET status = ? WHERE id IN (`+placeholders+`)`, args...); err != nil {
 		return fmt.Errorf("批量状态流转 %s: %w", status, err)
 	}
 	return nil
@@ -104,7 +109,7 @@ func validatePostStatusWrite(status string) error {
 }
 
 // FetchPendingByStatuses 拉取多个主状态的一批帖子（filter 消费：collected+pending），按 id 升序限量
-func (s *Store) FetchPendingByStatuses(statuses []string, limit int) ([]models.RentPost, error) {
+func (r *Repo) FetchPendingByStatuses(statuses []string, limit int) ([]models.RentPost, error) {
 	// 防御：空 statuses 会生成无效的 IN () 查询，直接返回空结果不查库
 	if len(statuses) == 0 {
 		return nil, nil
@@ -114,7 +119,7 @@ func (s *Store) FetchPendingByStatuses(statuses []string, limit int) ([]models.R
 	for _, st := range statuses {
 		args = append(args, st)
 	}
-	rows, err := s.db.Query(`SELECT id, source, external_id, url, title, content, author, author_url,
+	rows, err := r.DB.Query(`SELECT id, source, external_id, url, title, content, author, author_url,
 	    published_at, collected_at, status, address_tags, raw FROM posts
 	    WHERE status IN (`+placeholders+`) ORDER BY id LIMIT ?`, append(args, limit)...)
 	if err != nil {

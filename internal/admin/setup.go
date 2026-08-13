@@ -13,8 +13,6 @@ import (
 
 const setupTotalSteps = 5
 
-const cookieTestPath = "/admin/config/cookie/test"
-
 // handleSetup 首次引导：步骤1鉴权必填，后续可跳过
 func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
@@ -28,8 +26,8 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 	if step > setupTotalSteps {
 		step = setupTotalSteps
 	}
-	kv := s.currentConfigKV()
-	env := config.KVToEnv(kv)
+	kv := CurrentConfigKV(s.db)
+	env := config.KVToSecrets(kv)
 	cookieRawHint := "粘贴 cookie 原文；留空不修改"
 	if raw := env.Collector.Douban.CookieRaw; raw != "" {
 		cookieRawHint = fmt.Sprintf("已保存 · 长度 %d；留空不修改", len(raw))
@@ -55,7 +53,7 @@ func (s *Server) handleSetupPost(w http.ResponseWriter, r *http.Request) {
 	}
 	step, _ := strconv.Atoi(r.PostFormValue("step"))
 	action := r.PostFormValue("action")
-	kv := s.currentConfigKV()
+	kv := CurrentConfigKV(s.db)
 
 	if action == "skip" {
 		if step <= 1 {
@@ -88,7 +86,7 @@ func (s *Server) handleSetupPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	updates := parseSectionForm(r.PostForm, section, kv)
+	updates := ParseSectionForm(r.PostForm, section, kv)
 	if step == 1 {
 		if updates["admin.auth_required"] == "true" && updates["admin.token"] == "" {
 			if old := kv["admin.token"]; old == "" {
@@ -97,10 +95,10 @@ func (s *Server) handleSetupPost(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	mergeDefaultsInto(updates, kv)
+	MergeDefaultsInto(updates, kv)
 	merged := config.MergeKV(kv, updates)
 	if step == 3 {
-		if errs := config.ValidateEnv(config.KVToEnv(merged)); len(errs) > 0 {
+		if errs := config.ValidateSecrets(config.KVToSecrets(merged)); len(errs) > 0 {
 			http.Error(w, "校验失败: "+strings.Join(errs, "; "), http.StatusBadRequest)
 			return
 		}
@@ -127,7 +125,7 @@ func (s *Server) finishSetup(w http.ResponseWriter, r *http.Request, kv map[stri
 		http.Error(w, "校验失败: "+strings.Join(errs, "; "), http.StatusBadRequest)
 		return
 	}
-	if errs := config.ValidateEnv(config.KVToEnv(kv)); len(errs) > 0 {
+	if errs := config.ValidateSecrets(config.KVToSecrets(kv)); len(errs) > 0 {
 		http.Error(w, "校验失败: "+strings.Join(errs, "; "), http.StatusBadRequest)
 		return
 	}
@@ -163,6 +161,7 @@ func (s *Server) redirectSetup(w http.ResponseWriter, r *http.Request, step int)
 	http.Redirect(w, r, "/admin/setup?"+q.Encode(), http.StatusSeeOther)
 }
 
+// setupGate setup 未完成时拦截管理页，强制进引导
 func (s *Server) setupGate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if store.IsSetupComplete(s.db) {
@@ -170,7 +169,7 @@ func (s *Server) setupGate(next http.Handler) http.Handler {
 			return
 		}
 		path := r.URL.Path
-		if path == "/admin/setup" || path == "/admin/config/save" || path == cookieTestPath || path == "/healthz" || path == "/metrics" || path == "/f" || path == "/h" {
+		if path == "/admin/setup" || path == "/admin/config/save" || path == CookieTestPath || path == "/healthz" || path == "/metrics" || path == "/f" || path == "/h" {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -182,6 +181,7 @@ func (s *Server) setupGate(next http.Handler) http.Handler {
 	})
 }
 
+// setupStepTitle 引导步骤标题（模板 func）
 func setupStepTitle(step int) string {
 	switch step {
 	case 1:

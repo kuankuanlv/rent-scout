@@ -1,5 +1,6 @@
-# 设计文档不入库（本地保留）
-docs/
+# 本地计划/规格草稿可不入库；架构说明入库
+docs/*
+!docs/ARCHITECTURE.md
 
 # SQLite 数据文件目录与文件
 db/

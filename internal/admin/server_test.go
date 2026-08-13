@@ -24,8 +24,8 @@ func newAdminTestStore(t *testing.T) *store.Store {
 	return s
 }
 
-// newTestRuntime 写入 setup 完成标记并加载 Runtime
-func newTestRuntime(t *testing.T, s *store.Store, app *config.AppConfig, token string) *config.Runtime {
+// newTestHotConfig 写入 setup 完成标记并加载 HotConfig
+func newTestHotConfig(t *testing.T, s *store.Store, app *config.AppConfig, token string) *config.HotConfig {
 	t.Helper()
 	if app == nil {
 		app = config.DefaultApp()
@@ -33,12 +33,12 @@ func newTestRuntime(t *testing.T, s *store.Store, app *config.AppConfig, token s
 	if token != "" {
 		app.Admin.Token = token
 	}
-	kv := config.MergeKV(config.AppToKV(app), config.EnvToKV(config.DefaultEnv()))
+	kv := config.MergeKV(config.AppToKV(app), config.SecretsToKV(config.DefaultSecrets()))
 	kv["setup.completed"] = "true"
 	if err := store.SetConfigBatch(s, kv); err != nil {
 		t.Fatal(err)
 	}
-	rt := config.NewRuntime(s)
+	rt := config.NewHotConfig(s)
 	if err := rt.ReloadOnce(); err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func newTestServer(t *testing.T, app *config.AppConfig, token string, ctrl Sourc
 // newTestServerWithStore 在已有 store 上创建 admin Server
 func newTestServerWithStore(t *testing.T, s *store.Store, app *config.AppConfig, token string, ctrl SourceController) *Server {
 	t.Helper()
-	rt := newTestRuntime(t, s, app, token)
+	rt := newTestHotConfig(t, s, app, token)
 	return NewServer(s, rt, ctrl)
 }
 

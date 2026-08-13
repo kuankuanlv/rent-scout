@@ -1,4 +1,4 @@
-package collector
+package douban
 
 import (
 	"context"
@@ -12,23 +12,25 @@ import (
 
 	"github.com/PuerkitoBio/goquery"
 
+	"rent-scout/internal/collector"
+	"rent-scout/internal/collector/cookie"
 	"rent-scout/internal/models"
 )
 
 // 编译断言：Douban 满足 Source 接口
-var _ Source = (*Douban)(nil)
+var _ collector.Source = (*Douban)(nil)
 
 // DoubanOptions douban 适配器参数
 type DoubanOptions struct {
-	GroupURLs []string       // 小组讨论列表 URL（config [collector.douban].groups）
-	Cookie    CookieProvider // cookie 来源（可为 none）
-	Client    *http.Client   // HTTP 客户端（测试注入 httptest 客户端）
+	GroupURLs []string        // 小组讨论列表 URL（config [collector.douban].groups）
+	Cookie    cookie.Provider // cookie 来源（可为 none）
+	Client    *http.Client    // HTTP 客户端（测试注入 httptest 客户端）
 }
 
 // Douban 豆瓣小组适配器（规格 4.3）：List 列表页 → Detail 详情页
 type Douban struct {
 	groupURLs []string
-	cookie    CookieProvider
+	cookie    cookie.Provider
 	client    *http.Client
 }
 
@@ -38,7 +40,7 @@ func NewDouban(opts DoubanOptions) (*Douban, error) {
 		return nil, fmt.Errorf("douban 需要至少一个小组 URL")
 	}
 	if opts.Cookie == nil {
-		opts.Cookie = noneProvider{}
+		opts.Cookie = noopCookie{}
 	}
 	if opts.Client == nil {
 		opts.Client = &http.Client{Timeout: 30 * time.Second}
@@ -48,9 +50,13 @@ func NewDouban(opts DoubanOptions) (*Douban, error) {
 
 func (d *Douban) Name() string { return "douban" }
 
+type noopCookie struct{}
+
+func (noopCookie) Get(context.Context, string) (string, error) { return "", nil }
+
 // Detail 抓取详情页并归一化为 RentPost（只对未存在的新帖调用）。
 // 正文 = 首帖正文 HTML（含图片链接，不含评论）；Raw = 原始 HTML（规格 3.1）
-func (d *Douban) Detail(ctx context.Context, item ListItem) (models.RentPost, error) {
+func (d *Douban) Detail(ctx context.Context, item collector.ListItem) (models.RentPost, error) {
 	body, err := d.get(ctx, item.URL)
 	if err != nil {
 		return models.RentPost{}, err
@@ -79,20 +85,11 @@ func (d *Douban) Detail(ctx context.Context, item ListItem) (models.RentPost, er
 	}, nil
 }
 
-// riskDetected 风控检测：响应体含异常关键字即触发（参考仓库 detail.go）
-func riskDetected(body string) bool {
-	for _, kw := range []string{"检测到有异常请求", "禁止访问", "turing.captcha", "有异常请求"} {
-		if strings.Contains(body, kw) {
-			return true
-		}
-	}
-	return false
-}
 
 // List 抓取一页讨论列表。cursor 格式 "组下标:偏移"（如 "0:25"；"" = 从第一组第一页）。
 // 当前组该页有条目 → 同组下一页 "gi:offset+25"；空页 → 推进到下一组 "gi+1:0"；
 // 最后一组结束或下标越界 → ""（无更多页）。多小组按配置 groups 轮转
-func (d *Douban) List(ctx context.Context, cursor string) ([]ListItem, string, error) {
+func (d *Douban) List(ctx context.Context, cursor string) ([]collector.ListItem, string, error) {
 	gi, offset := parseListCursor(cursor)
 	if gi >= len(d.groupURLs) {
 		return nil, "", nil // 已遍历全部小组：结束
@@ -115,7 +112,7 @@ func (d *Douban) List(ctx context.Context, cursor string) ([]ListItem, string, e
 		return nil, "", fmt.Errorf("解析列表页: %w", err)
 	}
 
-	var items []ListItem
+	var items []collector.ListItem
 	// 行解析：跳过表头行（参考仓库 service.go:82-120）
 	doc.Find("table.olt tr").Each(func(i int, sel *goquery.Selection) {
 		if i == 0 {
@@ -131,7 +128,7 @@ func (d *Douban) List(ctx context.Context, cursor string) ([]ListItem, string, e
 		if err != nil {
 			return // 时间解析失败跳过该条（列表时间必备）
 		}
-		items = append(items, ListItem{
+		items = append(items, collector.ListItem{
 			ExternalID:  topicIDFromURL(link),
 			URL:         link,
 			Title:       strings.TrimSpace(title),
@@ -164,15 +161,15 @@ func parseListCursor(cursor string) (groupIdx, offset int) {
 
 // get GET 请求带 cookie；风控响应转错误
 func (d *Douban) get(ctx context.Context, rawURL string) (string, error) {
-	cookie, _ := d.cookie.Get(ctx, "douban")
+	ck, _ := d.cookie.Get(ctx, "douban")
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return "", err
 	}
 	// 浏览器 UA + cookie（豆瓣对无 UA 请求风控严格）
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36")
-	if cookie != "" {
-		req.Header.Set("Cookie", cookie)
+	if ck != "" {
+		req.Header.Set("Cookie", ck)
 	}
 	resp, err := d.client.Do(req)
 	if err != nil {
@@ -184,7 +181,7 @@ func (d *Douban) get(ctx context.Context, rawURL string) (string, error) {
 		return "", err
 	}
 	body := string(b)
-	if riskDetected(body) {
+	if cookie.RiskDetected(body) {
 		return "", fmt.Errorf("触发风控: %s", rawURL)
 	}
 	return body, nil

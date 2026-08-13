@@ -55,17 +55,16 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	for _, c := range channels {
 		rows = append(rows, channelRow{ChannelStat: c, Total: c.Sent + c.Failed + c.Dead})
 	}
-	if err := s.tmpl.ExecuteTemplate(w, "stats", map[string]any{
-		"Today": today, "Channels": rows, "RuleStats": ruleStats, "Dead": dead,
-		"Token": r.URL.Query().Get("token"), "Msg": r.URL.Query().Get("msg"),
-	}); err != nil {
+	if err := s.tmpl.ExecuteTemplate(w, "stats", mergePageCtx(pageCtx(r, "stats"), map[string]any{
+		"Today": today, "Channels": rows, "RuleStats": ruleStats, "Dead": dead, "Msg": r.URL.Query().Get("msg"),
+	})); err != nil {
 		slog.Error("模板渲染失败", "err", err)
 	}
 }
 
 // handleDeadReset 死信重发（POST /admin/dead/reset：post_id/channel）→ ResetNotification
 // 仅接受 POST：GET 等请求一律 405，防止 <a>/<img> 链接触发写库。
-// 成功：slog.Info("dead_reset", ...) + 302 回 /admin/stats；false（非 dead 状态）→ 302 + 提示"该通知非死信"
+// 成功：slog.Info("[dead_reset] 死信已重置", ...) + 302 回 /admin/stats；false（非 dead 状态）→ 302 + 提示"该通知非死信"
 func (s *Server) handleDeadReset(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -89,7 +88,7 @@ func (s *Server) handleDeadReset(w http.ResponseWriter, r *http.Request) {
 	}
 	if !reset {
 		// 非 dead 状态（幂等保护）：提示后仍回统计页
-		slog.Info("dead_reset_skipped", "post_id", postID, "channel", channel)
+		slog.Info("[dead_reset_skipped] 死信重发跳过", "post_id", postID, "channel", channel)
 		q := url.Values{}
 		if tok := r.URL.Query().Get("token"); tok != "" {
 			q.Set("token", tok)
@@ -98,7 +97,7 @@ func (s *Server) handleDeadReset(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/admin/stats?"+q.Encode(), http.StatusSeeOther)
 		return
 	}
-	slog.Info("dead_reset", "post_id", postID, "channel", channel)
+	slog.Info("[dead_reset] 死信已重置", "post_id", postID, "channel", channel)
 	// PRG：防重复提交；鉴权开启时把 token 带回重定向目标，避免跳回后 401
 	redirectTo := "/admin/stats"
 	if tok := r.URL.Query().Get("token"); tok != "" {

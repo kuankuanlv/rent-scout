@@ -53,7 +53,7 @@ func (s *Server) handleFeedbacks(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 }
 
-// handlePosts 帖子列表（GET /api/posts?status=&limit=&offset=，规格 7.1）
+// handlePosts 帖子列表（GET /api/posts?q=&status=&tag=&handled=&limit=&offset=，规格 7.1 + §6）
 func (s *Server) handlePosts(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -68,7 +68,7 @@ func (s *Server) handlePosts(w http.ResponseWriter, r *http.Request) {
 	if offset < 0 {
 		offset = 0
 	}
-	posts, err := s.db.ListPosts(q.Get("status"), limit, offset)
+	posts, err := s.db.ListPosts(postListFilterFromQuery(q), limit, offset)
 	if err != nil {
 		slog.Error("帖子列表失败", "err", err)
 		http.Error(w, "查询失败", http.StatusInternalServerError)

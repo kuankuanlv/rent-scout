@@ -9,11 +9,8 @@ services:
     ports:
       - "7777:7777"
     environment:
-      - CONFIG_PATH=/app/config/config.toml
-      - ENV_PATH=/app/config/config.env.local.toml
       - DB_PATH=/app/db/rent-scout.db
     volumes:
-      - ./config:/app/config
       - ./data:/app/db
     logging:
       driver: "json-file"

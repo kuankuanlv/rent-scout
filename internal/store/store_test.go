@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -146,6 +147,39 @@ func TestMarkStatus(t *testing.T) {
 	}
 }
 
+// MarkStatus / InsertPost 拒写已废弃 sent/acked（Spec 09 §1）
+func TestPostStatusRejectSentAcked(t *testing.T) {
+	s := newTestStore(t)
+	defer s.Close()
+	p := models.RentPost{Source: "douban", ExternalID: "ok1", Title: "t", CollectedAt: time.Now(), Status: models.PostStatusCollected}
+	if _, err := s.InsertPost(p); err != nil {
+		t.Fatal(err)
+	}
+	var id int64
+	if err := s.db.QueryRow(`SELECT id FROM posts WHERE external_id = ?`, "ok1").Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []string{"sent", "acked"} {
+		if err := s.MarkStatus([]int64{id}, bad); err == nil {
+			t.Fatalf("MarkStatus(%s) 应失败", bad)
+		}
+		var st string
+		if err := s.db.QueryRow(`SELECT status FROM posts WHERE id = ?`, id).Scan(&st); err != nil {
+			t.Fatal(err)
+		}
+		if st != models.PostStatusCollected {
+			t.Fatalf("拒写后 status = %q, want collected", st)
+		}
+		_, err := s.InsertPost(models.RentPost{
+			Source: "douban", ExternalID: "bad-" + bad, Title: "t",
+			CollectedAt: time.Now(), Status: bad,
+		})
+		if err == nil {
+			t.Fatalf("InsertPost(%s) 应失败", bad)
+		}
+	}
+}
+
 // 多状态拉批：collected+pending 混合
 func TestFetchPendingByStatuses(t *testing.T) {
 	s := newTestStore(t)
@@ -186,15 +220,15 @@ func newTestStore(t *testing.T) *Store {
 func TestRulesCRUD(t *testing.T) {
 	s := newTestStore(t)
 	defer s.Close()
-	r1, err := s.CreateRule(models.Rule{Name: "黑中介", Type: models.RuleTypeHardBlacklist, Mode: models.RuleModeExclude, Value: "中介", Enabled: true, Priority: 10})
+	r1, err := s.CreateRule(models.Rule{Name: "黑中介", Type: models.RuleTypeBlacklist, Value: "中介", Enabled: true, Priority: 10})
 	if err != nil {
 		t.Fatalf("建规则1: %v", err)
 	}
-	_, err = s.CreateRule(models.Rule{Name: "地铁近", Type: models.RuleTypeHardWhitelist, Mode: models.RuleModeInclude, Value: "地铁", Enabled: true, Priority: 1})
+	_, err = s.CreateRule(models.Rule{Name: "地铁近", Type: models.RuleTypeWhitelist, Value: "地铁", Enabled: true, Priority: 1})
 	if err != nil {
 		t.Fatalf("建规则2: %v", err)
 	}
-	r3, err := s.CreateRule(models.Rule{Name: "停用规则", Type: models.RuleTypeHardBlacklist, Mode: models.RuleModeExclude, Value: "x", Enabled: false})
+	r3, err := s.CreateRule(models.Rule{Name: "停用规则", Type: models.RuleTypeBlacklist, Value: "x", Enabled: false})
 	if err != nil {
 		t.Fatalf("建规则3: %v", err)
 	}
@@ -211,7 +245,7 @@ func TestRulesCRUD(t *testing.T) {
 		t.Errorf("优先级排序错误: %+v", rules)
 	}
 	// 更新 + 删除
-	if err := s.UpdateRule(models.Rule{ID: r1.ID, Name: "黑中介", Type: models.RuleTypeHardBlacklist, Mode: models.RuleModeExclude, Value: "中介,代理", Enabled: true, Priority: 10}); err != nil {
+	if err := s.UpdateRule(models.Rule{ID: r1.ID, Name: "黑中介", Type: models.RuleTypeBlacklist, Value: "中介,代理", Enabled: true, Priority: 10}); err != nil {
 		t.Fatalf("更新: %v", err)
 	}
 	if err := s.DeleteRule(r3.ID); err != nil {
@@ -220,6 +254,68 @@ func TestRulesCRUD(t *testing.T) {
 	rules, _ = s.ListRules(false)
 	if len(rules) != 2 {
 		t.Errorf("删除后规则数 = %d, want 2", len(rules))
+	}
+}
+
+// EnsureDefaultRule：启用为 0 时种子默认地点；已有启用则不重复
+func TestEnsureDefaultRule(t *testing.T) {
+	s := newTestStore(t)
+	defer s.Close()
+	if err := s.EnsureDefaultRule(); err != nil {
+		t.Fatal(err)
+	}
+	rules, err := s.ListRules(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rules) != 1 {
+		t.Fatalf("启用 = %d, want 1", len(rules))
+	}
+	want := DefaultLocationRule()
+	r := rules[0]
+	if r.Name != want.Name || r.Type != want.Type || r.Mode != want.Mode ||
+		r.Value != want.Value || !r.Enabled || r.Priority != want.Priority {
+		t.Errorf("默认规则 = %+v, want %+v", r, want)
+	}
+	if err := s.EnsureDefaultRule(); err != nil {
+		t.Fatal(err)
+	}
+	rules, _ = s.ListRules(false)
+	if len(rules) != 1 {
+		t.Errorf("不应重复种子: %d", len(rules))
+	}
+}
+
+// 禁止删除/禁用导致启用总数为 0；仅禁用的可删
+func TestRulesLastEnabledGuard(t *testing.T) {
+	s := newTestStore(t)
+	defer s.Close()
+	r, err := s.CreateRule(models.Rule{Name: "唯一", Type: models.RuleTypeWhitelist, Value: "a", Enabled: true, Priority: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteRule(r.ID); !errors.Is(err, ErrLastEnabledRule) {
+		t.Fatalf("删唯一启用: %v, want ErrLastEnabledRule", err)
+	}
+	if err := s.UpdateRule(models.Rule{ID: r.ID, Name: "唯一", Type: r.Type, Mode: r.Mode, Value: "a", Enabled: false, Priority: 1}); !errors.Is(err, ErrLastEnabledRule) {
+		t.Fatalf("禁用唯一启用: %v, want ErrLastEnabledRule", err)
+	}
+	off, err := s.CreateRule(models.Rule{Name: "停用", Type: models.RuleTypeBlacklist, Value: "x", Enabled: false, Priority: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteRule(off.ID); err != nil {
+		t.Fatalf("删停用应成功: %v", err)
+	}
+	extra, err := s.CreateRule(models.Rule{Name: "另一条", Type: models.RuleTypeBlacklist, Value: "y", Enabled: true, Priority: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteRule(r.ID); err != nil {
+		t.Fatalf("有另一启用时删除应成功: %v", err)
+	}
+	if err := s.UpdateRule(models.Rule{ID: extra.ID, Name: "另一条", Type: extra.Type, Mode: extra.Mode, Value: "y", Enabled: false, Priority: 2}); !errors.Is(err, ErrLastEnabledRule) {
+		t.Fatalf("禁用最后启用: %v, want ErrLastEnabledRule", err)
 	}
 }
 
@@ -390,7 +486,7 @@ func TestSaveFilterResult(t *testing.T) {
 	r1 := models.FilterResult{
 		PostID: postID, Status: models.PostStatusRejected, Stage: models.StageHardRule,
 		RejectedBy: "黑名单命中:中介", DecidedAt: time.Now(),
-		HardRules: []models.RuleHit{{RuleID: 3, Mode: models.RuleModeExclude, Reason: "中介"}},
+		HardRules: []models.RuleHit{{RuleID: 3, Reason: "中介"}},
 	}
 	if err := s.SaveFilterResult(r1); err != nil {
 		t.Fatalf("首次保存: %v", err)
@@ -443,7 +539,7 @@ func TestRuleHitStats(t *testing.T) {
 		if err := s.SaveFilterResult(models.FilterResult{
 			PostID: id, Status: models.PostStatusPassed, Stage: models.StageHardRule,
 			DecidedAt: time.Now(),
-			HardRules: []models.RuleHit{{RuleID: 1, Mode: models.RuleModeInclude, Reason: "望京"}},
+			HardRules: []models.RuleHit{{RuleID: 1, Reason: "望京"}},
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -473,7 +569,7 @@ func TestRuleHitStatsAIPostsNoGhost(t *testing.T) {
 	if err := s.SaveFilterResult(models.FilterResult{
 		PostID: p1, Status: models.PostStatusPassed, Stage: models.StageHardRule,
 		DecidedAt: time.Now(),
-		HardRules: []models.RuleHit{{RuleID: 1, Mode: models.RuleModeInclude, Reason: "望京"}},
+		HardRules: []models.RuleHit{{RuleID: 1, Reason: "望京"}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -515,11 +611,10 @@ func TestRuleHitStatsAIPostsNoGhost(t *testing.T) {
 	}
 }
 
-// 帖子列表：状态过滤 / 分页 / 空 status 全量（id 倒序）
+// 帖子列表：状态过滤 / 分页 / 空 status 全量（id 倒序）+ q/tag/handled（规格 §6）
 func TestListPosts(t *testing.T) {
 	s := newTestStore(t)
 	defer s.Close()
-	// 3 帖不同状态（播种顺序 = id 升序）
 	statuses := []string{models.PostStatusCollected, models.PostStatusPassed, models.PostStatusRejected}
 	for i, st := range statuses {
 		p := models.RentPost{Source: "douban", ExternalID: fmt.Sprintf("lp%d", i), Title: "t",
@@ -529,8 +624,7 @@ func TestListPosts(t *testing.T) {
 		}
 	}
 
-	// 空 status：全量 3 帖，id 倒序（rejected 最后播种 id 最大 → 排最前）
-	all, err := s.ListPosts("", 10, 0)
+	all, err := s.ListPosts(PostListFilter{}, 10, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -541,8 +635,7 @@ func TestListPosts(t *testing.T) {
 		t.Errorf("倒序错误: 首帖状态 = %s, want rejected（id 最大）", all[0].Status)
 	}
 
-	// 按状态过滤
-	passed, err := s.ListPosts(models.PostStatusPassed, 10, 0)
+	passed, err := s.ListPosts(PostListFilter{Status: models.PostStatusPassed}, 10, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -550,13 +643,208 @@ func TestListPosts(t *testing.T) {
 		t.Errorf("过滤 passed = %+v, want 仅 1 帖", passed)
 	}
 
-	// 分页：limit=1 offset=1 → 第二新的一帖（passed）
-	page, err := s.ListPosts("", 1, 1)
+	page, err := s.ListPosts(PostListFilter{}, 1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(page) != 1 || page[0].Status != models.PostStatusPassed {
 		t.Errorf("分页 = %+v, want 1 帖 passed", page)
+	}
+}
+
+// ListPosts 扩展筛选：q（title/content）、tag（address_tags 文本）、handled（0/1）
+func TestListPostsFilters(t *testing.T) {
+	s := newTestStore(t)
+	defer s.Close()
+
+	p1 := models.RentPost{Source: "douban", ExternalID: "f1", Title: "望京合租", Content: "近地铁",
+		CollectedAt: time.Now(), Status: models.PostStatusPassed, AddressTags: []string{"望京"}}
+	p2 := models.RentPost{Source: "douban", ExternalID: "f2", Title: "回龙观次卧", Content: "望京通勤也可",
+		CollectedAt: time.Now(), Status: models.PostStatusPassed, AddressTags: []string{"回龙观"}}
+	p3 := models.RentPost{Source: "douban", ExternalID: "f3", Title: "其它", Content: "无标签",
+		CollectedAt: time.Now(), Status: models.PostStatusRejected}
+	for _, p := range []models.RentPost{p1, p2, p3} {
+		if _, err := s.InsertPost(p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	id2 := int64(0)
+	all, err := s.ListPosts(PostListFilter{}, 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range all {
+		if p.ExternalID == "f2" {
+			id2 = p.ID
+		}
+	}
+	if err := s.MarkPostHandled(id2); err != nil {
+		t.Fatal(err)
+	}
+
+	byQ, err := s.ListPosts(PostListFilter{Q: "合租"}, 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(byQ) != 1 || byQ[0].ExternalID != "f1" {
+		t.Errorf("q=合租 = %+v, want f1", byQ)
+	}
+	byContent, err := s.ListPosts(PostListFilter{Q: "望京通勤"}, 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(byContent) != 1 || byContent[0].ExternalID != "f2" {
+		t.Errorf("q=望京通勤 = %+v, want f2", byContent)
+	}
+
+	byTag, err := s.ListPosts(PostListFilter{Tag: "望京"}, 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(byTag) != 1 || byTag[0].ExternalID != "f1" {
+		t.Errorf("tag=望京 = %+v, want f1（不误伤 content）", byTag)
+	}
+
+	handled, err := s.ListPosts(PostListFilter{Handled: "1"}, 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(handled) != 1 || handled[0].ExternalID != "f2" || handled[0].HandledAt == nil {
+		t.Errorf("handled=1 = %+v, want f2 且 HandledAt 非空", handled)
+	}
+	unhandled, err := s.ListPosts(PostListFilter{Handled: "0"}, 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(unhandled) != 2 {
+		t.Errorf("handled=0 = %d, want 2", len(unhandled))
+	}
+}
+
+// Mark/Clear handled_at：写清往返，不改 status
+func TestMarkClearPostHandled(t *testing.T) {
+	s := newTestStore(t)
+	defer s.Close()
+	id := seedPost(t, s)
+
+	if err := s.MarkPostHandled(id); err != nil {
+		t.Fatal(err)
+	}
+	p, ok, err := s.GetPost(id)
+	if err != nil || !ok || p.HandledAt == nil {
+		t.Fatalf("标记后 HandledAt 应非空: ok=%v err=%v p=%+v", ok, err, p)
+	}
+	if p.Status != models.PostStatusPassed {
+		t.Errorf("status 被改成 %s, want passed", p.Status)
+	}
+
+	if err := s.ClearPostHandled(id); err != nil {
+		t.Fatal(err)
+	}
+	p, ok, err = s.GetPost(id)
+	if err != nil || !ok || p.HandledAt != nil {
+		t.Fatalf("清除后 HandledAt 应 nil: ok=%v err=%v HandledAt=%v", ok, err, p.HandledAt)
+	}
+}
+
+// 旧库无 handled_at：Open 幂等 ALTER 补列
+func TestMigrateAddsHandledAtColumn(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "legacy-handled.db")
+	legacy, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := legacy.Exec(`CREATE TABLE posts (
+	    id INTEGER PRIMARY KEY AUTOINCREMENT,
+	    source TEXT NOT NULL, external_id TEXT NOT NULL,
+	    url TEXT NOT NULL DEFAULT '', title TEXT NOT NULL DEFAULT '',
+	    content TEXT NOT NULL DEFAULT '', author TEXT NOT NULL DEFAULT '',
+	    author_url TEXT NOT NULL DEFAULT '', published_at DATETIME,
+	    collected_at DATETIME NOT NULL, status TEXT NOT NULL DEFAULT 'collected',
+	    address_tags TEXT NOT NULL DEFAULT '[]',
+	    raw TEXT NOT NULL DEFAULT '', UNIQUE(source, external_id)
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	legacy.Close()
+
+	s, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open 旧库失败: %v", err)
+	}
+	defer s.Close()
+	ok, err := s.columnExists("posts", "handled_at")
+	if err != nil || !ok {
+		t.Fatalf("旧库补 handled_at 失败: ok=%v err=%v", ok, err)
+	}
+}
+
+// 旧四 type+mode 经 Open/migrate 写成三 type（Spec 09 §2.2）
+func TestMigrateRuleTypes(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "legacy-rules.db")
+	legacy, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := legacy.Exec(`CREATE TABLE rules (
+	    id INTEGER PRIMARY KEY AUTOINCREMENT,
+	    name TEXT NOT NULL, type TEXT NOT NULL, mode TEXT NOT NULL,
+	    value TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
+	    priority INTEGER NOT NULL DEFAULT 0, created_at DATETIME NOT NULL
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	now := "2026-01-01 00:00:00"
+	seeds := []struct {
+		name, typ, mode, value string
+	}{
+		{"白", "hard_whitelist", "include", "望京"},
+		{"黑", "hard_blacklist", "exclude", "中介"},
+		{"关入", "hard_keyword", "include", "整租"},
+		{"关出", "hard_keyword", "exclude", "合租"},
+		{"关空", "hard_keyword", "", "中介"},
+		{"AI", "ai_natural", "", "只要地铁近"},
+		{"已新", "whitelist", "", "和平里"},
+	}
+	for _, s := range seeds {
+		if _, err := legacy.Exec(`INSERT INTO rules (name,type,mode,value,enabled,priority,created_at) VALUES (?,?,?,?,1,1,?)`,
+			s.name, s.typ, s.mode, s.value, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	legacy.Close()
+
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer st.Close()
+	rules, err := st.ListRules(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"白": "whitelist", "黑": "blacklist", "关入": "whitelist",
+		"关出": "blacklist", "关空": "blacklist", "AI": "ai_natural", "已新": "whitelist",
+	}
+	if len(rules) != len(want) {
+		t.Fatalf("规则数 = %d, want %d", len(rules), len(want))
+	}
+	for _, r := range rules {
+		if got := want[r.Name]; got == "" || r.Type != got {
+			t.Errorf("%s type = %q, want %q", r.Name, r.Type, got)
+		}
+	}
+	// 再 Open 一次仍幂等
+	st.Close()
+	st2, err := Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st2.Close()
+	rules2, _ := st2.ListRules(false)
+	if len(rules2) != len(want) {
+		t.Errorf("幂等后规则数 = %d", len(rules2))
 	}
 }
 
@@ -704,42 +992,6 @@ func TestFetchDeadNotifications(t *testing.T) {
 	}
 	if len(dead) != 1 || dead[0].PostID != deadID || dead[0].Status != models.NotifyStatusDead {
 		t.Errorf("死信列表 = %+v, want 仅 dead 帖 %d", dead, deadID)
-	}
-}
-
-// 反馈列表：id 倒序 + 限量
-func TestListFeedbacks(t *testing.T) {
-	s := newTestStore(t)
-	defer s.Close()
-	id1 := seedPost(t, s)
-	id2 := seedPost(t, s)
-	if err := s.InsertFeedback(models.Feedback{PostID: id1, Channel: "feishu", Action: models.FeedbackUseless, Reason: "假房源"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.InsertFeedback(models.Feedback{PostID: id2, Channel: "feishu", Action: models.FeedbackUseful, Reason: "真实"}); err != nil {
-		t.Fatal(err)
-	}
-
-	feedbacks, err := s.ListFeedbacks(10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(feedbacks) != 2 {
-		t.Errorf("反馈数 = %d, want 2", len(feedbacks))
-	}
-	if feedbacks[0].PostID != id2 {
-		t.Errorf("倒序错误: 首条 post_id = %d, want %d（后写入）", feedbacks[0].PostID, id2)
-	}
-	if feedbacks[1].Action != models.FeedbackUseless {
-		t.Errorf("反馈内容: %+v", feedbacks[1])
-	}
-	// 限量
-	one, err := s.ListFeedbacks(1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(one) != 1 {
-		t.Errorf("限量 = %d, want 1", len(one))
 	}
 }
 

@@ -1,35 +1,51 @@
 package admin
 
 import (
-	"log/slog"
+	"errors"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
 	"rent-scout/internal/models"
+	"rent-scout/internal/pkglog"
 	"rent-scout/internal/store"
 )
 
-// ruleRow 规则列表行：Rule + 命中统计（Hits/UselessCount，规格 5.5）
+// ruleRow 规则列表行：Rule + 命中统计（Hits/UselessCount，规格 5.5）+ 中文类型标签
 type ruleRow struct {
 	models.Rule
 	Hits         int
 	UselessCount int
+	TypeLabel    string // 白名单/黑名单/AI 自然语言；列表展示用，不强调 mode
 }
 
-// ruleTypes 合法规则类型集合（表单校验用，与 models 常量一致）
+// ruleTypeLabel type → 中文标签（Spec 09 §2.3 UI）
+func ruleTypeLabel(t string) string {
+	switch t {
+	case models.RuleTypeWhitelist:
+		return "白名单"
+	case models.RuleTypeBlacklist:
+		return "黑名单"
+	case models.RuleTypeAINatural:
+		return "AI 自然语言"
+	default:
+		return t
+	}
+}
+
+// ruleTypes 合法规则类型集合（表单校验用，与 models 常量一致；Spec 09 §2）
 var ruleTypes = map[string]bool{
-	models.RuleTypeHardKeyword:   true,
-	models.RuleTypeHardBlacklist: true,
-	models.RuleTypeHardWhitelist: true,
-	models.RuleTypeAINatural:     true,
+	models.RuleTypeWhitelist: true,
+	models.RuleTypeBlacklist: true,
+	models.RuleTypeAINatural: true,
 }
 
-// handleRules 规则管理（/admin/rules）：GET 列表页（含命中统计），POST 新增（PRG）
+// handleRules 规则管理（/admin/rules）：GET → 302 到配置 tab=rules；POST 新增（PRG）
 func (s *Server) handleRules(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		s.renderRules(w, r)
+		s.redirectRules(w, r)
 	case http.MethodPost:
 		s.createRule(w, r)
 	default:
@@ -37,18 +53,21 @@ func (s *Server) handleRules(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// renderRules 渲染规则列表页：ListRules(false) 全量 + RuleHitStats 命中统计合并到行数据
-func (s *Server) renderRules(w http.ResponseWriter, r *http.Request) {
+// loadRuleRows 先 ensure 默认规则，再 ListRules(false) 全量 + RuleHitStats 合并；统计失败不阻塞
+func (s *Server) loadRuleRows() ([]ruleRow, error) {
+	log := pkglog.Component(pkglog.Admin)
+	if err := s.db.EnsureDefaultRule(); err != nil {
+		log.Error("[rule_seed_failed] 默认规则播种失败", "err", err)
+		return nil, err
+	}
 	rules, err := s.db.ListRules(false)
 	if err != nil {
-		slog.Error("规则列表失败", "err", err)
-		http.Error(w, "查询失败", http.StatusInternalServerError)
-		return
+		log.Error("[rule_list_failed] 规则列表失败", "err", err)
+		return nil, err
 	}
-	// 命中统计失败不阻塞列表（仅记录日志）
 	statsMap := map[int64]store.RuleStat{}
 	if stats, err := s.db.RuleHitStats(); err != nil {
-		slog.Error("规则命中统计失败", "err", err)
+		log.Error("[rule_stats_failed] 规则统计失败", "err", err)
 	} else {
 		for _, st := range stats {
 			statsMap[st.RuleID] = st
@@ -56,20 +75,18 @@ func (s *Server) renderRules(w http.ResponseWriter, r *http.Request) {
 	}
 	rows := make([]ruleRow, 0, len(rules))
 	for _, rl := range rules {
-		row := ruleRow{Rule: rl}
+		row := ruleRow{Rule: rl, TypeLabel: ruleTypeLabel(rl.Type)}
 		if st, ok := statsMap[rl.ID]; ok {
 			row.Hits = st.Hits
 			row.UselessCount = st.UselessCount
 		}
 		rows = append(rows, row)
 	}
-	if err := s.tmpl.ExecuteTemplate(w, "rules", map[string]any{"Rules": rows, "Token": r.URL.Query().Get("token")}); err != nil {
-		slog.Error("模板渲染失败", "err", err)
-	}
+	return rows, nil
 }
 
-// createRule 新增规则（POST /admin/rules）：name/type/mode/value/priority 表单 → CreateRule
-// 校验：type ∈ 四枚举、mode ∈ {include, exclude}、value/name 非空、priority 可解析；非法 → 400
+// createRule 新增规则（POST /admin/rules）：name/type/value/priority 表单 → CreateRule
+// 校验：type ∈ 三枚举、value/name 非空、priority 可解析；mode 废弃可忽略；非法 → 400
 func (s *Server) createRule(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "bad form", http.StatusBadRequest)
@@ -77,20 +94,19 @@ func (s *Server) createRule(w http.ResponseWriter, r *http.Request) {
 	}
 	name := r.PostFormValue("name")
 	rtype := r.PostFormValue("type")
-	mode := r.PostFormValue("mode")
+	mode := r.PostFormValue("mode") // 废弃：不校验，落库兼容旧表单
 	value := r.PostFormValue("value")
 	priority, err := strconv.Atoi(r.PostFormValue("priority"))
-	if err != nil || name == "" || !ruleTypes[rtype] ||
-		(mode != models.RuleModeInclude && mode != models.RuleModeExclude) || value == "" {
+	if err != nil || name == "" || !ruleTypes[rtype] || value == "" {
 		http.Error(w, "参数无效", http.StatusBadRequest)
 		return
 	}
 	if _, err := s.db.CreateRule(models.Rule{Name: name, Type: rtype, Mode: mode, Value: value, Enabled: true, Priority: priority}); err != nil {
-		slog.Error("新增规则失败", "name", name, "err", err)
+		pkglog.Component(pkglog.Admin).Error("[rule_create_failed] 规则创建失败", "name", name, "err", err)
 		http.Error(w, "写入失败", http.StatusInternalServerError)
 		return
 	}
-	slog.Info("rule_created", "name", name, "type", rtype, "mode", mode, "priority", priority)
+	pkglog.Component(pkglog.Admin).Info("[rule_created] 规则已创建", "name", name, "type", rtype, "priority", priority)
 	s.redirectRules(w, r)
 }
 
@@ -119,48 +135,59 @@ func (s *Server) handleRulesID(w http.ResponseWriter, r *http.Request) {
 }
 
 // updateRule 更新规则（POST /admin/rules/{id}）：value/priority/enabled 表单 → UpdateRule
-// name/type/mode 随行内 hidden 回传（本页不支持改名/改型）；enabled 由 checkbox 存在性决定
+// name/type 随行内 hidden 回传（本页不支持改名/改型）；mode 废弃可忽略；enabled 由 checkbox 存在性决定
 func (s *Server) updateRule(w http.ResponseWriter, r *http.Request, id int64) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "bad form", http.StatusBadRequest)
 		return
 	}
 	rtype := r.PostFormValue("type")
-	mode := r.PostFormValue("mode")
+	mode := r.PostFormValue("mode") // 废弃：不校验
 	value := r.PostFormValue("value")
 	name := r.PostFormValue("name")
 	priority, err := strconv.Atoi(r.PostFormValue("priority"))
 	enabled := r.PostFormValue("enabled") != ""
-	if err != nil || name == "" || !ruleTypes[rtype] ||
-		(mode != models.RuleModeInclude && mode != models.RuleModeExclude) || value == "" {
+	if err != nil || name == "" || !ruleTypes[rtype] || value == "" {
 		http.Error(w, "参数无效", http.StatusBadRequest)
 		return
 	}
 	if err := s.db.UpdateRule(models.Rule{ID: id, Name: name, Type: rtype, Mode: mode, Value: value, Enabled: enabled, Priority: priority}); err != nil {
-		slog.Error("更新规则失败", "id", id, "err", err)
+		if errors.Is(err, store.ErrLastEnabledRule) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		pkglog.Component(pkglog.Admin).Error("[rule_update_failed] 规则更新失败", "id", id, "err", err)
 		http.Error(w, "写入失败", http.StatusInternalServerError)
 		return
 	}
-	slog.Info("rule_updated", "id", id, "value", value, "priority", priority, "enabled", enabled)
+	pkglog.Component(pkglog.Admin).Info("[rule_updated] 规则已更新", "id", id, "value", value, "priority", priority, "enabled", enabled)
 	s.redirectRules(w, r)
 }
 
 // deleteRule 删除规则（POST /admin/rules/{id}/delete）
 func (s *Server) deleteRule(w http.ResponseWriter, r *http.Request, id int64) {
 	if err := s.db.DeleteRule(id); err != nil {
-		slog.Error("删除规则失败", "id", id, "err", err)
+		if errors.Is(err, store.ErrLastEnabledRule) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		pkglog.Component(pkglog.Admin).Error("[rule_delete_failed] 规则删除失败", "id", id, "err", err)
 		http.Error(w, "写入失败", http.StatusInternalServerError)
 		return
 	}
-	slog.Info("rule_deleted", "id", id)
+	pkglog.Component(pkglog.Admin).Info("[rule_deleted] 规则已删除", "id", id)
 	s.redirectRules(w, r)
 }
 
-// redirectRules PRG：写操作成功后 302 回规则列表；鉴权开启时把 token 带回重定向目标，避免跳回后 401
+// redirectRules GET/PRG：回到配置页规则 Tab；鉴权开启时把 token 带回，避免跳回后 401
 func (s *Server) redirectRules(w http.ResponseWriter, r *http.Request) {
-	redirectTo := "/admin/rules"
+	q := url.Values{"tab": {"rules"}}
 	if tok := r.URL.Query().Get("token"); tok != "" {
-		redirectTo += "?token=" + tok
+		q.Set("token", tok)
 	}
-	http.Redirect(w, r, redirectTo, http.StatusSeeOther)
+	status := http.StatusSeeOther
+	if r.Method == http.MethodGet {
+		status = http.StatusFound
+	}
+	http.Redirect(w, r, "/admin/config?"+q.Encode(), status)
 }

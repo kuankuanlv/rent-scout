@@ -1,13 +1,6 @@
 package config
 
-import (
-	"fmt"
-	"os"
-
-	"github.com/BurntSushi/toml"
-)
-
-// AppConfig 公开配置（config.toml），按规格 7.2 四类组织
+// AppConfig 公开配置，按规格 7.2 四类组织
 type AppConfig struct {
 	Server    ServerConfig    `toml:"server"`    // 常规：服务运行基础
 	Log       LogConfig       `toml:"log"`       // 常规：日志
@@ -140,18 +133,4 @@ func (c CollectorConfig) SourceInterval(source string) int {
 		return c.Douban.Interval
 	}
 	return c.Interval
-}
-
-// Load 加载公开配置；envPath 为空则跳过敏感配置
-func Load(path string) (*AppConfig, error) {
-	cfg := &AppConfig{}
-	// 文件必须存在（使用者入口）；meta 记录文件名供热加载用
-	if _, err := os.Stat(path); err != nil {
-		return nil, fmt.Errorf("配置文件缺失 %s: %w", path, err)
-	}
-	if _, err := toml.DecodeFile(path, cfg); err != nil {
-		return nil, fmt.Errorf("解析配置 %s: %w", path, err)
-	}
-	applyDefaults(cfg)
-	return cfg, nil
 }

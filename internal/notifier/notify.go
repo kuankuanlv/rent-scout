@@ -15,7 +15,7 @@ const (
 // GroupUnknown 无地址标签帖子的分组名（调整规格 B：白名单未命中 → 未分组）
 const GroupUnknown = "未分组"
 
-// NotifyItem 单帖通知内容（规格 6.2 + 调整 B 3.3：增加 AddressTag）
+// NotifyItem 单帖通知内容（Spec 09 §3.2：content + actions）
 type NotifyItem struct {
 	PostID             int64
 	Title              string
@@ -27,6 +27,13 @@ type NotifyItem struct {
 	AddressTag         string // 分组主 tag（AddressTags[0]；无 tag = GroupUnknown）
 	FeedbackURL        string // 卡片内嵌「有用」反馈链接（action=useful，HMAC 签名，规格 7.1）
 	FeedbackUselessURL string // 卡片内嵌「无用」反馈链接（action=useless，规格 5.5 负向归因数据源）
+	HandledURL         string // 卡片内嵌「已处理」链接（action=handled，写 handled_at，不写 feedbacks）
+}
+
+// NotifyBatch 按分组键打包的一批 NotifyItem（Spec 09 §3.3）；组装层必经，不落库
+type NotifyBatch struct {
+	GroupKey string
+	Items    []NotifyItem
 }
 
 // Channel 通知渠道接口（规格 6.2）：新增渠道 = 新增一个实现。

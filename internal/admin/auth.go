@@ -4,14 +4,19 @@ import (
 	"crypto/subtle"
 	"net/http"
 	"strings"
+
+	"rent-scout/internal/store"
 )
 
-// auth 鉴权中间件：/healthz、/metrics、/f（反馈链接，HMAC 签名即其鉴权）豁免；
-// auth_required 实时读 rt（热加载 10s 生效）。
-// 认证方式：Authorization: Bearer <token> 或 URL ?token=<token>（constant-time 比较）
+// auth 鉴权中间件：setup 未完成时 /admin/setup 豁免；healthz/metrics/f/h 豁免
 func (s *Server) auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/healthz" || r.URL.Path == "/metrics" || r.URL.Path == "/f" {
+		path := r.URL.Path
+		if path == "/healthz" || path == "/metrics" || path == "/f" || path == "/h" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if !store.IsSetupComplete(s.db) && (path == "/admin/setup" || path == cookieTestPath) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -23,11 +28,12 @@ func (s *Server) auth(next http.Handler) http.Handler {
 	})
 }
 
-// validToken 校验请求携带的 token：URL ?token= 或 Authorization: Bearer（后者优先），constant-time 比较
+// validToken 校验 token：URL ?token= 或 Bearer，与 Runtime 中 admin.token 比较
 func (s *Server) validToken(r *http.Request) bool {
 	tok := r.URL.Query().Get("token")
 	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
 		tok = strings.TrimPrefix(h, "Bearer ")
 	}
-	return tok != "" && subtle.ConstantTimeCompare([]byte(tok), []byte(s.token)) == 1
+	want := s.rt.Get().Admin.Token
+	return tok != "" && want != "" && subtle.ConstantTimeCompare([]byte(tok), []byte(want)) == 1
 }

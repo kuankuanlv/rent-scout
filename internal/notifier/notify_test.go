@@ -26,10 +26,18 @@ func TestNotifyItem(t *testing.T) {
 	item := NotifyItem{
 		PostID: 1, Title: "望京整租", URL: "https://x", Price: 4500,
 		Contact: "张先生", Commuting: "14号线望京站", Reason: "近地铁",
-		AddressTag: "望京", FeedbackURL: "/f?post=1",
+		AddressTag: "望京", FeedbackURL: "/f?post=1", HandledURL: "/h?post=1",
 	}
-	if item.PostID != 1 || item.AddressTag != "望京" {
+	if item.PostID != 1 || item.AddressTag != "望京" || item.HandledURL == "" {
 		t.Errorf("字段丢失: %+v", item)
+	}
+}
+
+// NotifyBatch 具名类型：组装层用 Batch 再取 Items
+func TestNotifyBatch(t *testing.T) {
+	b := NotifyBatch{GroupKey: "望京", Items: []NotifyItem{{PostID: 1}}}
+	if b.GroupKey != "望京" || len(b.Items) != 1 {
+		t.Errorf("NotifyBatch: %+v", b)
 	}
 }
 

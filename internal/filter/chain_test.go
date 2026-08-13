@@ -12,7 +12,7 @@ import (
 func TestRuleChainWhitelistDecided(t *testing.T) {
 	chain := NewRuleChain(nil)
 	post := models.RentPost{ID: 1, Title: "望京整租", Content: "近14号线", CollectedAt: time.Now()}
-	rules := []models.Rule{{ID: 1, Type: models.RuleTypeHardWhitelist, Mode: models.RuleModeInclude, Value: "望京", Priority: 10}}
+	rules := []models.Rule{{ID: 1, Type: models.RuleTypeWhitelist, Value: "望京", Priority: 10}}
 	res, tags, decided, err := chain.EvaluateHard(context.Background(), post, rules)
 	if err != nil {
 		t.Fatal(err)
@@ -32,7 +32,7 @@ func TestRuleChainWhitelistDecided(t *testing.T) {
 func TestRuleChainUndecided(t *testing.T) {
 	chain := NewRuleChain(nil)
 	post := models.RentPost{ID: 2, Title: "普通帖子", Content: "x", CollectedAt: time.Now()}
-	rules := []models.Rule{{ID: 1, Type: models.RuleTypeHardBlacklist, Mode: models.RuleModeExclude, Value: "中介", Priority: 10}}
+	rules := []models.Rule{{ID: 1, Type: models.RuleTypeBlacklist, Value: "中介", Priority: 10}}
 	res, _, decided, err := chain.EvaluateHard(context.Background(), post, rules)
 	if err != nil {
 		t.Fatal(err)
@@ -80,7 +80,7 @@ func TestRuleChainAIBatch(t *testing.T) {
 func TestRuleChainAIBatchNoRules(t *testing.T) {
 	chain := NewRuleChain(&fakeAI{})
 	if _, err := chain.EvaluateAIBatch(context.Background(),
-		[]models.RentPost{{ID: 1}}, []models.Rule{{ID: 1, Type: models.RuleTypeHardBlacklist}}); err == nil {
+		[]models.RentPost{{ID: 1}}, []models.Rule{{ID: 1, Type: models.RuleTypeBlacklist}}); err == nil {
 		t.Fatal("无自然语言规则应报错")
 	}
 }

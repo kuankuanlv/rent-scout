@@ -2,14 +2,13 @@ package models
 
 import "time"
 
-// 帖子主状态（状态机见规格 2.4）
+// 帖子主状态：仅四态 collected|pending|passed|rejected（Spec 09 §1）
+// 渠道是否发出 → notifications；有用/无用 → feedbacks；运营已处理 → handled_at；禁止写 sent/acked。
 const (
 	PostStatusCollected = "collected" // 已采集入库，待筛选
 	PostStatusPending   = "pending"   // 筛选处理中/瞬时失败待重试
 	PostStatusPassed    = "passed"    // 筛选通过，待通知
 	PostStatusRejected  = "rejected"  // 筛选拒绝
-	PostStatusSent      = "sent"      // 所有启用渠道已发送
-	PostStatusAcked     = "acked"     // 已收到用户反馈
 )
 
 // 筛选阶段（FilterResult.Stage）
@@ -18,18 +17,11 @@ const (
 	StageAIRule   = "ai_rule"   // AI 自然语言规则链
 )
 
-// 规则类型（Rule.Type）
+// 规则类型（Rule.Type）：仅 whitelist|blacklist|ai_natural（Spec 09 §2）
 const (
-	RuleTypeHardKeyword   = "hard_keyword"   // 关键词（本地匹配）
-	RuleTypeHardBlacklist = "hard_blacklist" // 黑名单（本地匹配）
-	RuleTypeHardWhitelist = "hard_whitelist" // 白名单（本地匹配）
-	RuleTypeAINatural     = "ai_natural"     // 自然语言规则（LLM 判定）
-)
-
-// 规则模式（Rule.Mode）
-const (
-	RuleModeInclude = "include" // 命中即过
-	RuleModeExclude = "exclude" // 命中即拒
+	RuleTypeWhitelist = "whitelist"  // 白名单：命中通过并写入 address_tags
+	RuleTypeBlacklist = "blacklist"  // 黑名单：命中拒绝
+	RuleTypeAINatural = "ai_natural" // 自然语言（LLM）
 )
 
 // 通知状态（Notification.Status）
@@ -56,11 +48,12 @@ type RentPost struct {
 	Content     string // 原文正文（HTML 或纯文本）
 	Author      string
 	AuthorURL   string
-	PublishedAt time.Time // 源发布时间
-	CollectedAt time.Time // 采集时间
-	Status      string    // 主状态（见常量）
-	AddressTags []string  `json:"addressTags"` // 地址标签（调整规格 2.3）：白名单命中地点，多值；分组主键 = [0]
-	Raw         string    // 源适配器完整原始输出（JSON，供重放/排查）
+	PublishedAt time.Time  // 源发布时间
+	CollectedAt time.Time  // 采集时间
+	Status      string     // 主状态：仅 collected|pending|passed|rejected
+	AddressTags []string   `json:"addressTags"` // 地址标签（调整规格 2.3）：白名单命中地点，多值；分组主键 = [0]
+	HandledAt   *time.Time // 已处理时间；nil=未处理（独立于 useful/useless 反馈）
+	Raw         string     // 源适配器完整原始输出（JSON，供重放/排查）
 }
 
 // DedupKey 去重键：源 + 源内 ID（posts 唯一索引同构）
@@ -71,7 +64,7 @@ func (p RentPost) DedupKey() string {
 // RuleHit 硬编码规则命中详情（规格 3.2）
 type RuleHit struct {
 	RuleID int64  `json:"ruleId"`
-	Mode   string `json:"mode"`   // include / exclude
+	Mode   string `json:"mode"`   // 废弃；迁移期可空
 	Reason string `json:"reason"` // 命中的关键词/匹配文本
 }
 
@@ -102,9 +95,9 @@ type FilterResult struct {
 type Rule struct {
 	ID        int64
 	Name      string
-	Type      string // hard_keyword / hard_blacklist / hard_whitelist / ai_natural
-	Mode      string // include / exclude
-	Value     string // 关键词列表 / 正则 / 自然语言描述
+	Type      string // whitelist / blacklist / ai_natural
+	Mode      string // 废弃：校验忽略，迁移后可不读
+	Value     string // 白/黑：逗号分隔词；ai_natural：自然语言
 	Enabled   bool
 	Priority  int
 	CreatedAt time.Time

@@ -19,8 +19,8 @@ func TestConsumerProcessBatch(t *testing.T) {
 	defer st.Close()
 	// 白名单规则（地点）：Consumer 从 rules 表热拉取（c.rules → ListRules(true)），须先入库
 	chain := NewRuleChain(nil)
-	if _, err := st.CreateRule(models.Rule{Name: "望京", Type: models.RuleTypeHardWhitelist,
-		Mode: models.RuleModeInclude, Value: "望京", Enabled: true, Priority: 10}); err != nil {
+	if _, err := st.CreateRule(models.Rule{Name: "望京", Type: models.RuleTypeWhitelist,
+		Value: "望京", Enabled: true, Priority: 10}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -75,8 +75,8 @@ func TestConsumerRejects(t *testing.T) {
 	defer st.Close()
 	// 黑名单规则：Consumer 从 rules 表热拉取，须先入库
 	chain := NewRuleChain(nil)
-	if _, err := st.CreateRule(models.Rule{Name: "中介", Type: models.RuleTypeHardBlacklist,
-		Mode: models.RuleModeExclude, Value: "中介", Enabled: true, Priority: 10}); err != nil {
+	if _, err := st.CreateRule(models.Rule{Name: "中介", Type: models.RuleTypeBlacklist,
+		Value: "中介", Enabled: true, Priority: 10}); err != nil {
 		t.Fatal(err)
 	}
 	p := models.RentPost{Source: "douban", ExternalID: "c", Title: "中介勿扰", Content: "中介勿扰，代理绕行",
@@ -145,7 +145,7 @@ func setupAIConsumer(t *testing.T, ai AIEvaluator, opts ConsumerOptions) (*Consu
 	t.Cleanup(func() { st.Close() })
 	// AI 自然语言规则：Consumer 从 rules 表热拉取（c.rules → ListRules(true)），须先入库
 	if _, err := st.CreateRule(models.Rule{Name: "AI筛选", Type: models.RuleTypeAINatural,
-		Mode: models.RuleModeExclude, Value: "只要地铁 1 公里内的整租", Enabled: true, Priority: 10}); err != nil {
+		Value: "只要地铁 1 公里内的整租", Enabled: true, Priority: 10}); err != nil {
 		t.Fatal(err)
 	}
 	for _, eid := range []string{"a1", "a2", "a3"} {
@@ -333,7 +333,7 @@ func TestConsumerRulesReadErrorKeepsBatchPending(t *testing.T) {
 	// AI 已启用 + AI 规则已入库：正常路径应走 AI 批而非宽松放行
 	chain := NewRuleChain(&fakeAIEvaluator{})
 	if _, err := st.CreateRule(models.Rule{Name: "AI筛选", Type: models.RuleTypeAINatural,
-		Mode: models.RuleModeExclude, Value: "只要地铁1公里内", Enabled: true, Priority: 10}); err != nil {
+		Value: "只要地铁1公里内", Enabled: true, Priority: 10}); err != nil {
 		t.Fatal(err)
 	}
 	for _, eid := range []string{"r1", "r2"} {

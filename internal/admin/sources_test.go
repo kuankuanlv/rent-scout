@@ -58,8 +58,7 @@ func TestAPISourcesList(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctrl := &fakeController{known: map[string]bool{"douban": true}, enabled: map[string]bool{"douban": false}}
-	rt := config.NewRuntime(&config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}})
-	srv := NewServer(s, rt, "secret", ctrl)
+	srv := newTestServerWithStore(t, s, &config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}}, "secret", ctrl)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/sources", nil)
 	req.Header.Set("Authorization", "Bearer secret")
@@ -90,8 +89,7 @@ func TestAPISourceActions(t *testing.T) {
 	s := newAdminTestStore(t)
 	defer s.Close()
 	ctrl := &fakeController{known: map[string]bool{"douban": true}, enabled: map[string]bool{"douban": true}}
-	rt := config.NewRuntime(&config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}})
-	srv := NewServer(s, rt, "secret", ctrl)
+	srv := newTestServerWithStore(t, s, &config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}}, "secret", ctrl)
 
 	post := func(path string) (int, string) {
 		req := httptest.NewRequest(http.MethodPost, path, nil)
@@ -153,8 +151,7 @@ func TestAPISourceActions(t *testing.T) {
 func TestAPISourcesUnavailable(t *testing.T) {
 	s := newAdminTestStore(t)
 	defer s.Close()
-	rt := config.NewRuntime(&config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}})
-	srv := NewServer(s, rt, "secret", nil)
+	srv := newTestServerWithStore(t, s, &config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}}, "secret", nil)
 
 	for _, tc := range []struct {
 		path string
@@ -178,8 +175,7 @@ func TestAPISourcesAuth(t *testing.T) {
 	s := newAdminTestStore(t)
 	defer s.Close()
 	ctrl := &fakeController{known: map[string]bool{"douban": true}, enabled: map[string]bool{"douban": true}}
-	rt := config.NewRuntime(&config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}})
-	srv := NewServer(s, rt, "secret", ctrl)
+	srv := newTestServerWithStore(t, s, &config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}}, "secret", ctrl)
 
 	for _, path := range []string{"/api/sources", "/api/sources/douban/trigger"} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)

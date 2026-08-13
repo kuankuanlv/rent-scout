@@ -2,9 +2,9 @@ package filter
 
 import (
 	"context"
-	"log/slog"
 
 	"rent-scout/internal/models"
+	"rent-scout/internal/pkglog"
 	"rent-scout/internal/store"
 )
 
@@ -50,11 +50,16 @@ func (c *Consumer) ProcessBatch(ctx context.Context, batch []models.RentPost) er
 // processBatch 批处理（测试可见）：硬编码逐帖定案 → AI 批聚合 → 状态流转。
 // 返回 error 仅记录；单帖失败不影响批内其余
 func (c *Consumer) processBatch(ctx context.Context, batch []models.RentPost) error {
+	if len(batch) == 0 {
+		return nil
+	}
+	log := pkglog.Component(pkglog.Filter)
+	log.Info("[batch_start] 开始筛选批次", "count", len(batch))
 	rules, err := c.rules()
 	if err != nil {
 		// 规则读取失败（DB 层故障）：整批保持待判定下轮重试——不流转、不写 filter_results、不发 notify。
 		// 规格 5.6 仅授权"AI 链不可用/无启用规则"时默认放行；DB 故障不得静默放行（审查 K1）
-		slog.Error("规则读取失败，整批保持待判定（不放行）", "count", len(batch), "err", err)
+		log.Error("[rules_load_failed] 规则读取失败", "count", len(batch), "err", err)
 		return nil
 	}
 	var passedIDs, rejectedIDs, pendingIDs []int64
@@ -65,7 +70,7 @@ func (c *Consumer) processBatch(ctx context.Context, batch []models.RentPost) er
 		post := batch[i]
 		res, tags, decided, err := c.chain.EvaluateHard(ctx, post, rules)
 		if err != nil {
-			slog.Error("硬编码判定失败", "post_id", post.ID, "err", err)
+			log.Error("[hard_eval_failed] 硬链评估失败", "post_id", post.ID, "err", err)
 			pendingIDs = append(pendingIDs, post.ID)
 			continue
 		}
@@ -76,7 +81,7 @@ func (c *Consumer) processBatch(ctx context.Context, batch []models.RentPost) er
 		// 定案：白名单 tags 写库（调整规格 A 2.3）
 		if len(tags) > 0 {
 			if err := c.store.UpdatePostAddressTags(post.ID, tags); err != nil {
-				slog.Error("写回地址标签失败", "post_id", post.ID, "err", err)
+				log.Error("[address_tags_failed] 地点标签写回失败", "post_id", post.ID, "err", err)
 			}
 		}
 		c.recordDecision(res, &passedIDs, &rejectedIDs)
@@ -90,7 +95,7 @@ func (c *Consumer) processBatch(ctx context.Context, batch []models.RentPost) er
 				results, err := c.chain.EvaluateAIBatch(ctx, sub, rules)
 				if err != nil {
 					// 瞬时失败（429/5xx/解析）：该子批保持 pending 下轮重试，不误标记（规格 5.6）
-					slog.Warn("AI 批量判定失败，保持待判定", "count", len(sub), "err", err)
+					log.Warn("[llm_batch_failed] AI 批处理失败", "count", len(sub), "err", err)
 					for _, post := range sub {
 						pendingIDs = append(pendingIDs, post.ID)
 					}
@@ -98,13 +103,13 @@ func (c *Consumer) processBatch(ctx context.Context, batch []models.RentPost) er
 				}
 				for _, post := range sub {
 					res := results[post.ID]
-					// post_decided 日志由 recordDecision 统一记录（含硬编码路径，避免重复）
 					c.recordDecision(res, &passedIDs, &rejectedIDs)
 				}
+				log.Info("[llm_batch_done] AI 批处理完成", "count", len(sub))
 			}
 		} else {
 			// 无 AI（未配 key/已关闭）：默认放行（宽松模式）
-			slog.Info("AI 未启用，未定案帖子默认放行", "count", len(aiPending))
+			log.Info("[ai_disabled_pass] AI 关闭，未定案帖默认通过", "count", len(aiPending))
 			for _, post := range aiPending {
 				passedIDs = append(passedIDs, post.ID)
 			}
@@ -157,7 +162,7 @@ func splitBatches(posts []models.RentPost, size int) [][]models.RentPost {
 func (c *Consumer) recordDecision(res models.FilterResult, passedIDs, rejectedIDs *[]int64) {
 	if len(res.HardRules) > 0 || res.AI != nil || res.Status == models.PostStatusRejected {
 		if err := c.store.SaveFilterResult(res); err != nil {
-			slog.Error("保存筛选结果失败", "post_id", res.PostID, "err", err)
+			pkglog.Component(pkglog.Filter).Error("[filter_result_save_failed] 筛选结果写库失败", "post_id", res.PostID, "err", err)
 		}
 	}
 	if res.Status == models.PostStatusPassed {
@@ -166,7 +171,7 @@ func (c *Consumer) recordDecision(res models.FilterResult, passedIDs, rejectedID
 		*rejectedIDs = append(*rejectedIDs, res.PostID)
 	}
 	// 日志规范 8.3：逐帖判定结果
-	slog.Info("post_decided", "post_id", res.PostID, "stage", res.Stage, "result", res.Status,
+	pkglog.Component(pkglog.Filter).Info("[post_decided] 帖子已定案", "post_id", res.PostID, "stage", res.Stage, "result", res.Status,
 		"reason", res.RejectedBy, "ai_reason", aiReason(res.AI))
 }
 

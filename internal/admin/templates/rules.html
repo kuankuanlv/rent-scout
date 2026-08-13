@@ -1,29 +1,53 @@
-{{define "rules"}}
-<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8"><title>规则管理</title>
-<style>body{font-family:system-ui;margin:1rem}table{border-collapse:collapse;width:100%}
-th,td{border:1px solid #ccc;padding:4px 8px;font-size:14px;vertical-align:top}
-form{display:inline}select,input[type=text],input[type=number]{font-size:13px}</style></head>
-<body>{{template "nav" .}}
-<h2>规则管理</h2>
-<p>说明：规则实时生效（filter 每批从 rules 表读取，规格 3.3），改完即用；Type: hard_keyword 关键词（逗号分隔）/ hard_blacklist 黑名单 / hard_whitelist 白名单 / ai_natural 自然语言。</p>
-<table><tr><th>ID</th><th>名称</th><th>类型</th><th>模式</th><th>值</th><th>优先级</th><th>启用</th><th>命中</th><th>标无用</th><th>操作</th></tr>
-{{range .Rules}}<tr><td>{{.ID}}</td><td>{{.Name}}</td><td>{{.Type}}</td><td>{{.Mode}}</td>
-<td><input form="f{{.ID}}" type="text" name="value" value="{{.Value}}"></td>
-<td><input form="f{{.ID}}" type="number" name="priority" value="{{.Priority}}" style="width:4em"></td>
-<td><input form="f{{.ID}}" type="checkbox" name="enabled" {{if .Enabled}}checked{{end}}></td>
-<td>{{.Hits}}</td><td>{{.UselessCount}}</td>
-<td><form id="f{{.ID}}" method="post" action="/admin/rules/{{.ID}}{{if $.Token}}?token={{$.Token}}{{end}}" style="display:inline">
-<input type="hidden" name="name" value="{{.Name}}">
-<input type="hidden" name="type" value="{{.Type}}">
-<input type="hidden" name="mode" value="{{.Mode}}">
-<button type="submit">保存</button></form>
-<form method="post" action="/admin/rules/{{.ID}}/delete{{if $.Token}}?token={{$.Token}}{{end}}" style="display:inline"><button type="submit">删除</button></form></td></tr>{{end}}</table>
-<h3>新增规则</h3>
-<form method="post" action="/admin/rules{{if .Token}}?token={{.Token}}{{end}}">
-名称<input type="text" name="name" required> 类型<select name="type">
-<option value="hard_keyword">hard_keyword</option><option value="hard_blacklist">hard_blacklist</option>
-<option value="hard_whitelist">hard_whitelist</option><option value="ai_natural">ai_natural</option></select>
-模式<select name="mode"><option value="exclude">exclude(命中即拒)</option><option value="include">include(命中即过)</option></select>
-值<input type="text" name="value" required> 优先级<input type="number" name="priority" value="10">
-<button type="submit">新增</button></form></body></html>
+{{define "rules_panel"}}
+<div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 sm:p-6 mb-6">
+  <h1 class="text-xl sm:text-2xl font-bold mb-2">📜 规则管理</h1>
+  <p class="text-sm text-gray-500">判定顺序：白名单 → 黑名单 → AI。同条内逗号分隔表示「或」；白名单命中会写入地点 Tag。规则实时生效。</p>
+</div>
+<div class="desktop-table bg-white rounded-2xl shadow-sm border border-gray-100 overflow-x-auto mb-6">
+  <table class="min-w-full text-sm divide-y divide-gray-100">
+    <thead class="bg-gray-50 text-xs text-gray-500 uppercase"><tr>
+      <th class="px-3 py-3 text-left">ID</th><th class="px-3 py-3 text-left">名称</th><th class="px-3 py-3 text-left">类型</th>
+      <th class="px-3 py-3 text-left">值</th><th class="px-3 py-3">优先级</th><th class="px-3 py-3">启用</th><th class="px-3 py-3">命中</th><th class="px-3 py-3">无用</th><th class="px-3 py-3">操作</th>
+    </tr></thead>
+    <tbody>{{range .Rules}}<tr class="border-t border-gray-50 hover:bg-gray-50">
+      <td class="px-3 py-2">{{.ID}}</td><td class="px-3 py-2">{{.Name}}</td><td class="px-3 py-2 text-xs">{{.TypeLabel}}</td>
+      <td class="px-3 py-2"><input form="f{{.ID}}" name="value" value="{{.Value}}" class="border rounded px-2 py-1 w-full max-w-xs text-xs"></td>
+      <td class="px-3 py-2"><input form="f{{.ID}}" type="number" name="priority" value="{{.Priority}}" class="border rounded px-2 py-1 w-16 text-xs"></td>
+      <td class="px-3 py-2 text-center"><input form="f{{.ID}}" type="checkbox" name="enabled" {{if .Enabled}}checked{{end}}></td>
+      <td class="px-3 py-2 text-center">{{.Hits}}</td><td class="px-3 py-2 text-center">{{.UselessCount}}</td>
+      <td class="px-3 py-2 whitespace-nowrap">
+        <form id="f{{.ID}}" method="post" action="/admin/rules/{{.ID}}{{if $.Token}}?token={{$.Token}}{{end}}" class="inline">
+          <input type="hidden" name="name" value="{{.Name}}"><input type="hidden" name="type" value="{{.Type}}">
+          <button class="text-xs bg-brand-600 text-white px-2 py-1 rounded">保存</button></form>
+        <form method="post" action="/admin/rules/{{.ID}}/delete{{if $.Token}}?token={{$.Token}}{{end}}" class="inline ml-1">
+          <button class="text-xs text-red-600 px-2 py-1">删</button></form>
+      </td>
+    </tr>{{else}}<tr><td colspan="9" class="px-4 py-8 text-center text-gray-400">暂无规则</td></tr>{{end}}</tbody>
+  </table>
+</div>
+<div class="mobile-card space-y-3 mb-6">{{range .Rules}}<div class="bg-white rounded-xl border p-4">
+  <div class="font-medium mb-1">{{.Name}} <span class="text-xs text-gray-400">#{{.ID}}</span></div>
+  <div class="text-xs text-gray-500 mb-3">{{.TypeLabel}} · 命中 {{.Hits}}</div>
+  <form method="post" action="/admin/rules/{{.ID}}{{if $.Token}}?token={{$.Token}}{{end}}" class="space-y-2">
+    <input type="hidden" name="name" value="{{.Name}}"><input type="hidden" name="type" value="{{.Type}}">
+    <input name="value" value="{{.Value}}" class="w-full border rounded-lg px-3 py-2 text-sm">
+    <div class="flex gap-2"><input type="number" name="priority" value="{{.Priority}}" class="w-20 border rounded-lg px-2 py-2 text-sm">
+    <label class="flex items-center gap-1 text-sm"><input type="checkbox" name="enabled" {{if .Enabled}}checked{{end}}> 启用</label></div>
+    <button class="w-full bg-brand-600 text-white py-2 rounded-lg text-sm">保存</button>
+  </form>
+</div>{{end}}</div>
+<div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 sm:p-6">
+  <h3 class="font-bold mb-4">新增规则</h3>
+  <form method="post" action="/admin/rules{{if .Token}}?token={{.Token}}{{end}}" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+    <input name="name" placeholder="名称" required class="border rounded-xl px-3 py-2 text-sm">
+    <select name="type" class="border rounded-xl px-3 py-2 text-sm">
+      <option value="whitelist">白名单</option>
+      <option value="blacklist">黑名单</option>
+      <option value="ai_natural">AI 自然语言</option>
+    </select>
+    <input name="value" placeholder="值（同条逗号为或）" required class="border rounded-xl px-3 py-2 text-sm sm:col-span-2">
+    <input type="number" name="priority" value="10" class="border rounded-xl px-3 py-2 text-sm">
+    <button class="sm:col-span-3 bg-brand-600 text-white py-2 rounded-xl font-medium">新增</button>
+  </form>
+</div>
 {{end}}

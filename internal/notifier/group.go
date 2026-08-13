@@ -38,11 +38,17 @@ func sortByPriority(items []NotifyItem) []NotifyItem {
 	return sorted
 }
 
-// BuildFeedbackURL 生成卡片内嵌反馈链接（规格 7.1）：
-// /f?post=<id>&action=<useful|useless>&exp=<ts>&sig=<hmac>
+// BuildFeedbackURL 生成卡片内嵌动作链接（规格 7.1 / Spec 09 §3.4）：
+// 反馈：/f?post=<id>&action=<useful|useless>&exp=<ts>&sig=<hmac>
+// 已处理：/h?post=<id>&exp=<ts>&sig=<hmac>（签名载荷仍为 post|handled|exp）
 // secret 取 admin token；secret 空 = 不签名（鉴权关闭全开放场景）
 func BuildFeedbackURL(postID int64, action, secret string) string {
-	base := fmt.Sprintf("/f?post=%d&action=%s", postID, action)
+	var base string
+	if action == "handled" {
+		base = fmt.Sprintf("/h?post=%d", postID)
+	} else {
+		base = fmt.Sprintf("/f?post=%d&action=%s", postID, action)
+	}
 	if secret == "" {
 		return base
 	}

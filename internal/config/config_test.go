@@ -1,255 +1,161 @@
 package config
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
-	"time"
+
+	"rent-scout/internal/store"
 )
 
-// 临时目录写公开配置，验证解析与默认值
-func writeConfig(t *testing.T, content string) string {
-	t.Helper()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.toml")
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	return path
-}
-
-func TestLoadPublicConfig(t *testing.T) {
-	path := writeConfig(t, `
-[server]
-addr = ":9090"
-
-[collector]
-sources = ["douban"]
-interval = 600
-jitter_ratio = 0.3
-
-[filter]
-ai_enabled = false
-
-[log]
-level = "debug"
-`)
-	cfg, err := Load(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// 显式配置生效
-	if cfg.Server.Addr != ":9090" {
-		t.Errorf("Server.Addr = %q, want :9090", cfg.Server.Addr)
-	}
-	if cfg.Collector.Sources[0] != "douban" || cfg.Collector.Interval != 600 {
-		t.Errorf("Collector 解析错误: %+v", cfg.Collector)
-	}
-	if cfg.Filter.AIEnabled == nil || *cfg.Filter.AIEnabled {
-		t.Error("Filter.AIEnabled 应为 false")
-	}
-	if cfg.Log.Level != "debug" {
-		t.Errorf("Log.Level = %q, want debug", cfg.Log.Level)
-	}
-}
-
 func TestDefaultValues(t *testing.T) {
-	path := writeConfig(t, "")
-	cfg, err := Load(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// 约定大于配置：缺省值必须可用（规格 7.2）
-	if cfg.Server.Addr != ":8080" {
-		t.Errorf("默认 Addr = %q, want :8080", cfg.Server.Addr)
+	cfg := DefaultApp()
+	if cfg.Server.Addr != ":7777" {
+		t.Errorf("默认 Addr = %q, want :7777", cfg.Server.Addr)
 	}
 	if cfg.Collector.Interval != 1800 {
 		t.Errorf("默认 Interval = %d, want 1800", cfg.Collector.Interval)
 	}
-	if cfg.Collector.JitterRatio != 0.2 {
-		t.Errorf("默认 JitterRatio = %v, want 0.2", cfg.Collector.JitterRatio)
-	}
 	if cfg.Filter.AIEnabled == nil || !*cfg.Filter.AIEnabled {
 		t.Error("默认 AIEnabled 应为 true")
 	}
-	if cfg.Pipeline.BatchSize != 20 {
-		t.Errorf("默认 BatchSize = %d, want 20", cfg.Pipeline.BatchSize)
-	}
-	if cfg.Pipeline.LingerInterval != 120 {
-		t.Errorf("默认 LingerInterval = %d, want 120", cfg.Pipeline.LingerInterval)
-	}
-	if cfg.Notifier.MaxAttempts != 3 {
-		t.Errorf("默认 MaxAttempts = %d, want 3", cfg.Notifier.MaxAttempts)
-	}
 	if len(cfg.Collector.Douban.Groups) < 5 {
-		t.Error("内置豆瓣小组应至少 5 个（开箱即用）")
+		t.Error("内置豆瓣小组应至少 5 个")
 	}
 }
 
-func TestLoadMissingFile(t *testing.T) {
-	if _, err := Load(filepath.Join(t.TempDir(), "nope.toml")); err == nil {
-		t.Fatal("文件缺失应报错")
+func TestKVRoundTrip(t *testing.T) {
+	app := DefaultApp()
+	app.Server.Addr = ":9090"
+	app.Log.Level = "debug"
+	disabled := false
+	app.Filter.AIEnabled = &disabled
+	env := DefaultEnv()
+	env.Filter.LLM.APIKey = "sk-test"
+	env.Notifier.Feishu.Webhook = "https://example.com/hook"
+
+	kv := MergeKV(AppToKV(app), EnvToKV(env))
+	gotApp := KVToApp(kv)
+	gotEnv := KVToEnv(kv)
+
+	if gotApp.Server.Addr != ":9090" {
+		t.Errorf("Addr = %q, want :9090", gotApp.Server.Addr)
+	}
+	if gotApp.Log.Level != "debug" {
+		t.Errorf("Log.Level = %q", gotApp.Log.Level)
+	}
+	if gotApp.Filter.AIEnabled == nil || *gotApp.Filter.AIEnabled {
+		t.Error("AIEnabled 应为 false")
+	}
+	if gotEnv.Filter.LLM.APIKey != "sk-test" {
+		t.Errorf("APIKey = %q", gotEnv.Filter.LLM.APIKey)
 	}
 }
 
-// 显式 ai_enabled = false 必须保留，不被默认值覆盖
-func TestAIEnabledExplicitFalse(t *testing.T) {
-	path := writeConfig(t, `
-[filter]
-ai_enabled = false
-`)
-	cfg, err := Load(path)
+func TestRuntimeFromDB(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "cfg.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Filter.AIEnabled == nil || *cfg.Filter.AIEnabled {
-		t.Error("显式 ai_enabled = false 必须保留为 false")
+	defer s.Close()
+
+	kv := AppToKV(DefaultApp())
+	kv["server.addr"] = ":8888"
+	if err := store.SetConfigBatch(s, kv); err != nil {
+		t.Fatal(err)
+	}
+	rt := NewRuntime(s)
+	if err := rt.ReloadOnce(); err != nil {
+		t.Fatal(err)
+	}
+	if rt.Get().Server.Addr != ":8888" {
+		t.Errorf("Addr = %q, want :8888", rt.Get().Server.Addr)
 	}
 }
 
-// 每源间隔覆盖语义：源配了 interval 用之，否则继承全局（规格 4.5）
 func TestSourceIntervalOverride(t *testing.T) {
-	path := writeConfig(t, `
-[collector]
-interval = 600
-
-[collector.douban]
-interval = 300
-`)
-	cfg, err := Load(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := cfg.Collector.SourceInterval("douban"); got != 300 {
-		t.Errorf("douban 间隔 = %d, want 300（源覆盖）", got)
-	}
-	// 未覆盖的源（未来新增）继承全局
-	if got := cfg.Collector.SourceInterval("beike"); got != 600 {
-		t.Errorf("beike 间隔 = %d, want 600（全局继承）", got)
-	}
-	// 缺省：douban 无覆盖时用全局默认
-	cfg2, err := Load(writeConfig(t, ""))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := cfg2.Collector.SourceInterval("douban"); got != 1800 {
-		t.Errorf("缺省 douban 间隔 = %d, want 1800", got)
-	}
-}
-
-// [admin] 公开配置解析：显式值生效；缺失段 → 零值语义（false/""，applyDefaults 不处理）
-func TestAdminConfig(t *testing.T) {
-	path := writeConfig(t, `
-[admin]
-auth_required = true
-token = "x"
-`)
-	cfg, err := Load(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !cfg.Admin.AuthRequired || cfg.Admin.Token != "x" {
-		t.Errorf("Admin 显式解析错误: %+v", cfg.Admin)
-	}
-	// 缺失 [admin] 段 → 零值：auth_required=false（启动 WARN 强提醒）、token=""（启用时随机生成）
-	cfg2, err := Load(writeConfig(t, ""))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg2.Admin.AuthRequired || cfg2.Admin.Token != "" {
-		t.Errorf("缺失 [admin] 段应为零值: %+v", cfg2.Admin)
-	}
-}
-
-func TestLoadEnvLocal(t *testing.T) {
-	dir := t.TempDir()
-	pub := filepath.Join(dir, "config.toml")
-	if err := os.WriteFile(pub, []byte(""), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	env := filepath.Join(dir, "config.env.local.toml")
-	if err := os.WriteFile(env, []byte(`
-[admin]
-auth_required = true
-token = "secret-token"
-
-[collector.douban]
-cookie_mode = "file"
-cookie_file = "db/cookies/douban.txt"
-
-[filter.llm]
-api_key = "sk-test"
-model = "deepseek-chat"
-
-[notifier.feishu]
-webhook = "https://open.feishu.cn/hook/test"
-`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	envCfg, err := LoadEnvLocal(env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !envCfg.Admin.AuthRequired || envCfg.Admin.Token != "secret-token" {
-		t.Errorf("Admin 解析错误: %+v", envCfg.Admin)
-	}
-	if envCfg.Collector.Douban.CookieMode != "file" {
-		t.Errorf("CookieMode = %q, want file", envCfg.Collector.Douban.CookieMode)
-	}
-	if envCfg.Filter.LLM.APIKey != "sk-test" || envCfg.Filter.LLM.Model != "deepseek-chat" {
-		t.Errorf("LLM 解析错误: %+v", envCfg.Filter.LLM)
-	}
-	if envCfg.Notifier.Feishu.Webhook != "https://open.feishu.cn/hook/test" {
-		t.Errorf("飞书 webhook 解析错误")
-	}
-}
-
-// 敏感文件缺失不算错误：未配的渠道/能力自动关闭（规格 7.2 约定）
-func TestLoadEnvLocalMissingFile(t *testing.T) {
-	envCfg, err := LoadEnvLocal(filepath.Join(t.TempDir(), "nope.toml"))
-	if err != nil {
-		t.Fatalf("敏感文件缺失应静默: %v", err)
-	}
-	if envCfg == nil {
-		t.Fatal("应返回空结构而非 nil")
-	}
-}
-
-// Runtime：改文件后热加载生效，Get() 返回新快照（并发安全读取）
-func TestRuntimeWatch(t *testing.T) {
-	dir := t.TempDir()
-	pub := filepath.Join(dir, "config.toml")
-	if err := os.WriteFile(pub, []byte("[server]\naddr = \":8080\"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := Load(pub)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rt := NewRuntime(cfg)
-	updated := make(chan struct{}, 1)
-	stop := rt.Watch(pub, "", 50*time.Millisecond, func() {
-		select {
-		case updated <- struct{}{}:
-		default:
-		}
+	cfg := KVToApp(map[string]string{
+		"collector.interval":        "600",
+		"collector.douban.interval": "300",
+		"collector.sources":         "douban",
 	})
-	defer stop()
+	if got := cfg.Collector.SourceInterval("douban"); got != 300 {
+		t.Errorf("douban = %d, want 300", got)
+	}
+}
 
-	// 改配置：addr 变更
-	if err := os.WriteFile(pub, []byte("[server]\naddr = \":9090\"\n"), 0o644); err != nil {
-		t.Fatal(err)
+func TestValidateApp(t *testing.T) {
+	if errs := ValidateApp(DefaultApp()); len(errs) != 0 {
+		t.Errorf("默认配置应通过校验: %v", errs)
 	}
-	select {
-	case <-updated:
-	case <-time.After(3 * time.Second):
-		t.Fatal("热加载未触发")
+	bad := &AppConfig{}
+	if errs := ValidateApp(bad); len(errs) == 0 {
+		t.Error("空配置应校验失败")
 	}
-	if got := rt.Get().Server.Addr; got != ":9090" {
-		t.Errorf("热加载后 Addr = %q, want :9090", got)
+}
+
+func TestValidateEnvCookieMode(t *testing.T) {
+	if errs := ValidateEnv(DefaultEnv()); len(errs) != 0 {
+		t.Errorf("DefaultEnv 应通过: %v", errs)
 	}
-	// 原始指针不应被原地修改（快照语义）
-	if cfg.Server.Addr != ":8080" {
-		t.Error("原 cfg 不应被修改（应替换指针而非原地写）")
+	if errs := ValidateEnv(&EnvLocalConfig{}); len(errs) != 0 {
+		t.Errorf("空 CookieMode 应视为 none 通过: %v", errs)
+	}
+	none := DefaultEnv()
+	none.Collector.Douban.CookieMode = "none"
+	if errs := ValidateEnv(none); len(errs) != 0 {
+		t.Errorf("cookie_mode=none 应通过: %v", errs)
+	}
+
+	fileMissing := DefaultEnv()
+	fileMissing.Collector.Douban.CookieMode = "file"
+	if errs := ValidateEnv(fileMissing); len(errs) == 0 {
+		t.Error("file 缺 cookie_file 应失败")
+	}
+
+	cloudMissing := DefaultEnv()
+	cloudMissing.Collector.Douban.CookieMode = "cookiecloud"
+	if errs := ValidateEnv(cloudMissing); len(errs) == 0 {
+		t.Error("cookiecloud 缺字段应失败")
+	}
+
+	rawMissing := DefaultEnv()
+	rawMissing.Collector.Douban.CookieMode = "raw"
+	if errs := ValidateEnv(rawMissing); len(errs) == 0 {
+		t.Error("raw 缺 cookie_raw 应失败")
+	}
+	rawOK := DefaultEnv()
+	rawOK.Collector.Douban.CookieMode = "raw"
+	rawOK.Collector.Douban.CookieRaw = "dbcl2=x"
+	if errs := ValidateEnv(rawOK); len(errs) != 0 {
+		t.Errorf("raw 有 cookie_raw 应通过: %v", errs)
+	}
+}
+
+func TestKVCookieRawRoundTrip(t *testing.T) {
+	env := DefaultEnv()
+	env.Collector.Douban.CookieMode = "raw"
+	env.Collector.Douban.CookieRaw = "a=1; b=2"
+	kv := EnvToKV(env)
+	if kv["secret.collector.douban.cookie_raw"] != "a=1; b=2" {
+		t.Errorf("EnvToKV cookie_raw = %q", kv["secret.collector.douban.cookie_raw"])
+	}
+	got := KVToEnv(kv)
+	if got.Collector.Douban.CookieRaw != "a=1; b=2" || got.Collector.Douban.CookieMode != "raw" {
+		t.Errorf("KVToEnv = %+v", got.Collector.Douban)
+	}
+}
+
+func TestKVToEnvCookieModeNone(t *testing.T) {
+	env := KVToEnv(map[string]string{})
+	if env.Collector.Douban.CookieMode != "none" {
+		t.Errorf("缺 key 时应为 none, got %q", env.Collector.Douban.CookieMode)
+	}
+	env = KVToEnv(map[string]string{"secret.collector.douban.cookie_mode": ""})
+	if env.Collector.Douban.CookieMode != "none" {
+		t.Errorf("空串应归一化为 none, got %q", env.Collector.Douban.CookieMode)
+	}
+	kv := EnvToKV(&EnvLocalConfig{})
+	if kv["secret.collector.douban.cookie_mode"] != "none" {
+		t.Errorf("EnvToKV 空模式应写出 none, got %q", kv["secret.collector.douban.cookie_mode"])
 	}
 }

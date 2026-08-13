@@ -14,9 +14,12 @@ func TestRentPostDedupKey(t *testing.T) {
 	}
 }
 
-// 状态常量与状态机流转方向一致（规格 2.4）
+// 帖子主状态仅四态（Spec 09 §1）
 func TestStatusConstants(t *testing.T) {
-	flow := []string{PostStatusCollected, PostStatusPending, PostStatusPassed, PostStatusRejected, PostStatusSent, PostStatusAcked}
+	flow := []string{PostStatusCollected, PostStatusPending, PostStatusPassed, PostStatusRejected}
+	if len(flow) != 4 {
+		t.Fatalf("主状态数 = %d, want 4", len(flow))
+	}
 	for i, s := range flow {
 		if s == "" {
 			t.Fatalf("status[%d] 为空", i)

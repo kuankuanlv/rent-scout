@@ -36,30 +36,35 @@ func main() {
 
 	db, err := store.Open(dbPath)
 	if err != nil {
-		boot.Error("[boot_db_failed] 打开数据库失败", "err", err)
+		boot.Error("打开数据库失败", "err", err)
 		os.Exit(1)
 	}
 	defer db.Close()
 
 	cnt, err := store.ConfigCount(db)
 	if err != nil {
-		boot.Error("[boot_config_count_failed] 读取配置条数失败", "err", err)
+		boot.Error("读取配置条数失败", "err", err)
 		os.Exit(1)
 	}
 	if cnt == 0 {
-		boot.Warn("[boot_config_empty] 配置为空，请完成引导", "hint", "visit /admin/setup")
+		boot.Warn("配置为空，请完成引导", "hint", "visit /admin/setup")
 	}
 
 	rt := config.NewHotConfig(db)
+	rt.SetAfterReload(func(app *config.AppConfig) {
+		if app != nil {
+			pkglog.SetHubCap(app.Log.MemoryLines)
+		}
+	})
 	if err := rt.ReloadOnce(); err != nil {
-		boot.Error("[boot_config_load_failed] 首次加载配置失败", "err", err)
+		boot.Error("首次加载配置失败", "err", err)
 		os.Exit(1)
 	}
 	cfg := rt.Get()
 
-	logger := pkglog.New(cfg.Log)
-	boot = logger.With("component", pkglog.Main)
-	boot.Info("[boot_start] 服务启动",
+	_ = pkglog.New(cfg.Log)
+	boot = pkglog.Component(pkglog.Main)
+	boot.Info("服务启动",
 		"addr", cfg.Server.Addr,
 		"sources", cfg.Collector.Sources,
 		"config_keys", cnt,
@@ -71,12 +76,12 @@ func main() {
 	if cfg.Admin.AuthRequired && adminToken == "" {
 		adminToken = randomHex(16)
 		// 禁止日志打完整 token；仅记长度
-		boot.Warn("[boot_admin_token_generated] 已生成管理员 Token", "token_len", len(adminToken))
+		boot.Warn("已生成管理员 Token", "token_len", len(adminToken))
 		_ = store.SetConfig(db, "admin.token", adminToken)
 		_ = rt.ReloadOnce()
 	}
 	if !cfg.Admin.AuthRequired {
-		boot.Warn("[boot_auth_disabled] 鉴权已关闭")
+		boot.Warn("鉴权已关闭")
 	}
 
 	stopReload := rt.WatchDB(10 * time.Second)
@@ -92,20 +97,35 @@ func main() {
 	if runner != nil {
 		go runner.Run(ctx)
 	}
+	go cookie.NewSyncer(rt, db, cookie.DefaultSyncInterval).Run(ctx)
 
-	fc := newFilterConsumer(rt, db, notifyTrigger)
-	if fc != nil {
+	aiTrigger := make(chan struct{}, 64)
+	filterPipe, aiPipe := newFilterPipelines(rt, db, notifyTrigger, aiTrigger)
+	if filterPipe != nil {
 		go func() {
 			for {
 				select {
 				case <-ctx.Done():
 					return
 				case <-trigger:
-					fc.Signal()
+					filterPipe.Signal()
 				}
 			}
 		}()
-		go fc.Run(ctx)
+		go filterPipe.Run(ctx)
+	}
+	if aiPipe != nil {
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-aiTrigger:
+					aiPipe.Signal()
+				}
+			}
+		}()
+		go aiPipe.Run(ctx)
 	}
 
 	if nc := newNotifierConsumer(rt, db, notifyTrigger); nc != nil {
@@ -125,18 +145,18 @@ func main() {
 	srv := admin.NewServer(db, rt, runner)
 	httpSrv := &http.Server{Addr: cfg.Server.Addr, Handler: srv.Handler()}
 	go func() {
-		boot.Info("[boot_http_listen] HTTP 开始监听", "addr", cfg.Server.Addr)
+		boot.Info("HTTP 开始监听", "addr", cfg.Server.Addr)
 		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			boot.Error("[boot_http_failed] HTTP 服务失败", "err", err)
+			boot.Error("HTTP 服务失败", "err", err)
 		}
 	}()
 
 	<-ctx.Done()
-	boot.Info("[boot_shutdown] 正在关闭")
+	boot.Info("正在关闭")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
-		boot.Warn("[boot_shutdown_timeout] 关闭超时", "err", err)
+		boot.Warn("关闭超时", "err", err)
 	}
 }
 
@@ -146,31 +166,38 @@ func newCollectorRunner(rt *config.HotConfig, db *store.Store, trigger chan<- st
 	cfg := rt.Get()
 	var sources []collector.Source
 	for _, name := range cfg.Collector.Sources {
-		switch name {
-		case "douban":
-			// Cookie 每次 Get 从 HotConfig 读最新配置，改 KV 后无需重启
+		src, ok := models.ParseSource(name)
+		if !ok {
+			log.Warn("未知采集源", "source", name)
+			continue
+		}
+		switch src {
+		case models.SourceDouban:
+			// Cookie 每次 Get 只读本地 cookie_raw，不打 CookieCloud
 			cp := cookie.NewHotConfigProvider(rt)
 			d, err := douban.NewDouban(douban.DoubanOptions{
 				GroupURLs: cfg.Collector.Douban.Groups,
 				Cookie:    cp,
 			})
 			if err != nil {
-				log.Error("[boot_source_init_failed] 源初始化失败", "source", name, "err", err)
+				log.Error("源初始化失败", "source", name, "err", err)
 				continue
 			}
 			sources = append(sources, d)
 		default:
-			log.Warn("[boot_source_unknown] 未知采集源", "source", name)
+			log.Warn("未知采集源", "source", name)
 		}
 	}
 	if len(sources) == 0 {
-		log.Warn("[boot_collector_skipped] 采集未启动")
+		log.Warn("采集未启动")
 		return nil
 	}
 	return collector.NewRunner(rt, db, sources, trigger)
 }
 
-func newFilterConsumer(rt *config.HotConfig, db *store.Store, notifyTrigger chan<- struct{}) *pipeline.Consumer[models.RentPost] {
+func newFilterPipelines(rt *config.HotConfig, db *store.Store, notifyTrigger, aiTrigger chan<- struct{}) (
+	*pipeline.Consumer[models.RentPost], *pipeline.Consumer[models.RentPost],
+) {
 	log := pkglog.Component(pkglog.Main)
 	cfg := rt.Get()
 	env := rt.Secrets()
@@ -190,22 +217,33 @@ func newFilterConsumer(rt *config.HotConfig, db *store.Store, notifyTrigger chan
 		}
 		pool := llm.NewPool(opts, llm.PoolOptions{})
 		ai = filter.NewAIBatchEvaluator(pool, nil)
-		log.Info("[boot_filter_ai_enabled] 筛选 AI 已启用", "model", model)
+		log.Info("筛选 AI 已启用", "model", model)
 	} else {
-		log.Warn("[boot_filter_ai_disabled] 筛选 AI 已关闭")
+		log.Warn("筛选 AI 已关闭")
 	}
 	chain := filter.NewRuleChain(ai)
 	fc := filter.NewConsumerWithOptions(chain, db, notifyTrigger, filter.DefaultTrimLimit,
-		filter.ConsumerOptions{AIBatchSize: cfg.Filter.AIBatchSize})
-	return pipeline.New(
-		fc.FetchBatch,
-		func(ctx context.Context, batch []models.RentPost) error { return fc.ProcessBatch(ctx, batch) },
+		filter.ConsumerOptions{AIBatchSize: cfg.Filter.AIBatchSize, AITrigger: aiTrigger})
+	filterPipe := pipeline.New(
+		fc.FetchCollected,
+		fc.ProcessHard,
 		pipeline.Options{
 			BatchSize: cfg.Filter.BatchSize,
 			Linger:    pipeline.DefaultLinger,
 			Component: pkglog.Filter,
 		},
 	)
+	aiPipe := pipeline.New(
+		fc.FetchPending,
+		fc.ProcessAI,
+		pipeline.Options{
+			BatchSize: cfg.Filter.AIBatchSize,
+			Linger:    pipeline.DefaultLinger,
+			Component: pkglog.AIReview,
+			WaitFull:  true,
+		},
+	)
+	return filterPipe, aiPipe
 }
 
 func newNotifierConsumer(rt *config.HotConfig, db *store.Store, notifyTrigger <-chan struct{}) *pipeline.Consumer[models.RentPost] {
@@ -246,7 +284,7 @@ func newNotifierConsumer(rt *config.HotConfig, db *store.Store, notifyTrigger <-
 		}
 	}
 	if len(chs) == 0 {
-		log.Warn("[boot_notifier_skipped] 通知未启动")
+		log.Warn("通知未启动")
 		return nil
 	}
 	// 反馈签名密钥每次从 HotConfig 读，不在此钉死

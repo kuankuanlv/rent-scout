@@ -190,7 +190,7 @@ func (s *Store) migrateRuleTypes() error {
 
 // migrateCookieModeFile 旧 file 模式改为 none；幂等
 func (s *Store) migrateCookieModeFile() error {
-	res, err := s.db.Exec(`UPDATE kv_config SET value='none' WHERE key='secret.collector.douban.cookie_mode' AND lower(value)='file'`)
+		res, err := s.db.Exec(`UPDATE kv_config SET value='none' WHERE key='secret.collector.douban.cookie_mode' AND lower(value)='file'`)
 	if err != nil {
 		return fmt.Errorf("迁移 cookie_mode=file→none: %w", err)
 	}

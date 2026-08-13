@@ -2,6 +2,8 @@ package collector
 
 import (
 	"context"
+	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -19,23 +21,35 @@ type fakeSource struct {
 	details     map[string]models.RentPost
 	detailCalls int
 	listCalls   atomic.Int32 // 循环测试用：每轮至少调一次 List（并发安全）
+	cursors     []string
 }
 
 func (f *fakeSource) Name() string { return f.name }
 func (f *fakeSource) List(ctx context.Context, cursor string) ([]ListItem, string, error) {
 	f.listCalls.Add(1)
-	idx := 0
-	if cursor == "1" {
-		idx = 1
-	}
+	f.cursors = append(f.cursors, cursor)
+	idx := fakePageIndex(cursor)
 	if idx >= len(f.pages) {
-		return nil, f.next, nil
+		return nil, "", nil
 	}
-	return f.pages[idx], f.next, nil
+	next := f.next
+	if next == "" && idx+1 < len(f.pages) {
+		next = strconv.Itoa(idx+1) + ":0"
+	}
+	return f.pages[idx], next, nil
 }
 func (f *fakeSource) Detail(ctx context.Context, item ListItem) (models.RentPost, error) {
 	f.detailCalls++
 	return f.details[item.ExternalID], nil
+}
+
+func fakePageIndex(cursor string) int {
+	cursor = strings.TrimSpace(cursor)
+	if cursor == "" {
+		return 0
+	}
+	n, _ := strconv.Atoi(strings.SplitN(cursor, ":", 2)[0])
+	return n
 }
 
 func testRunner(t *testing.T) (*Runner, *store.Store) {
@@ -72,7 +86,7 @@ func TestRunnerCollectsNewPosts(t *testing.T) {
 	r, st := testRunner(t)
 	defer st.Close()
 
-	if err := r.runSourceOnce(context.Background(), src, trigger); err != nil {
+	if _, err := r.runSourceOnce(context.Background(), src, trigger); err != nil {
 		t.Fatal(err)
 	}
 	// 入库 1 条（超窗的 b 跳过）；trigger 收到 1 个信号
@@ -91,9 +105,12 @@ func TestRunnerCollectsNewPosts(t *testing.T) {
 	default:
 		t.Error("应发送 trigger 信号")
 	}
-	// 游标已保存
-	if _, ok, err := st.GetCursor("fake"); err != nil || !ok {
-		t.Errorf("游标未保存: ok=%v err=%v", ok, err)
+	prog, ok, err := st.GetProgress("fake")
+	if err != nil || !ok {
+		t.Errorf("进度未保存: ok=%v err=%v", ok, err)
+	}
+	if prog.Phase != store.ProgressIncremental || prog.Watermark == "" {
+		t.Errorf("进度 = %+v, want incremental 且带 watermark", prog)
 	}
 }
 
@@ -110,11 +127,11 @@ func TestRunnerSkipsExisting(t *testing.T) {
 	r, st := testRunner(t)
 	defer st.Close()
 
-	if err := r.runSourceOnce(context.Background(), src, make(chan struct{}, 10)); err != nil {
+	if _, err := r.runSourceOnce(context.Background(), src, make(chan struct{}, 10)); err != nil {
 		t.Fatal(err)
 	}
 	// 第二轮：a 已在库 → 不再调 Detail
-	if err := r.runSourceOnce(context.Background(), src, make(chan struct{}, 10)); err != nil {
+	if _, err := r.runSourceOnce(context.Background(), src, make(chan struct{}, 10)); err != nil {
 		t.Fatal(err)
 	}
 	if src.detailCalls != 1 {
@@ -136,16 +153,15 @@ func TestRunnerAdvancesPastEmptyPage(t *testing.T) {
 	r, st := testRunner(t)
 	defer st.Close()
 
-	if err := r.runSourceOnce(context.Background(), src, make(chan struct{}, 10)); err != nil {
+	if _, err := r.runSourceOnce(context.Background(), src, make(chan struct{}, 10)); err != nil {
 		t.Fatal(err)
 	}
-	// 游标推进到 "1:0"（跟随源协议）
-	cursor, ok, err := st.GetCursor("fake")
+	prog, ok, err := st.GetProgress("fake")
 	if err != nil || !ok {
-		t.Fatalf("游标未保存: ok=%v err=%v", ok, err)
+		t.Fatalf("进度未保存: ok=%v err=%v", ok, err)
 	}
-	if cursor != "1:0" {
-		t.Errorf("游标 = %q, want 1:0", cursor)
+	if prog.Page != "1:0" || prog.Phase != store.ProgressBackfill {
+		t.Errorf("进度 = %+v, want backfill page=1:0", prog)
 	}
 	// 空页无新帖 → 不调 Detail
 	if src.detailCalls != 0 {
@@ -259,4 +275,72 @@ func TestSourceEnabledLoop(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, 5*time.Second, func() bool { return src.listCalls.Load() >= base+1 }, "重新启用后应自然恢复轮次")
+}
+
+// 回填走完后进入 incremental：第二轮只打列表头，不再翻旧页
+func TestRunnerIncrementalSkipsOldPages(t *testing.T) {
+	now := time.Now()
+	src := &fakeSource{
+		name: "fake",
+		pages: [][]ListItem{
+			{{ExternalID: "new", URL: "u/new", Title: "新", PublishedAt: now.Add(-time.Hour)}},
+			{{ExternalID: "old", URL: "u/old", Title: "旧", PublishedAt: now.Add(-2 * 24 * time.Hour)}},
+		},
+		details: map[string]models.RentPost{
+			"new": {Source: "fake", ExternalID: "new", Title: "新", CollectedAt: now, Status: models.PostStatusCollected},
+			"old": {Source: "fake", ExternalID: "old", Title: "旧", CollectedAt: now, Status: models.PostStatusCollected},
+		},
+	}
+	r, st := testRunner(t)
+	defer st.Close()
+	trig := make(chan struct{}, 10)
+	if _, err := r.runSourceOnce(context.Background(), src, trig); err != nil {
+		t.Fatal(err)
+	}
+	if src.listCalls.Load() != 2 {
+		t.Fatalf("回填 List = %d, want 2 页", src.listCalls.Load())
+	}
+	prog, ok, err := st.GetProgress("fake")
+	if err != nil || !ok || prog.Phase != store.ProgressIncremental {
+		t.Fatalf("回填后进度 = %+v ok=%v err=%v, want incremental", prog, ok, err)
+	}
+
+	src.cursors = nil
+	if _, err := r.runSourceOnce(context.Background(), src, trig); err != nil {
+		t.Fatal(err)
+	}
+	if src.listCalls.Load() != 3 {
+		t.Errorf("增量后总 List = %d, want 3（第二轮只打首页）", src.listCalls.Load())
+	}
+	if len(src.cursors) != 1 || src.cursors[0] != "" {
+		t.Errorf("增量 cursors = %v, want 仅空串（列表头）", src.cursors)
+	}
+	if src.detailCalls != 2 {
+		t.Errorf("Detail = %d, want 2（增量不再抓旧帖）", src.detailCalls)
+	}
+}
+
+// 时间窗/源配置变了：旧 page 作废，从列表头重新回填
+func TestRunnerResetsWhenRangeChanges(t *testing.T) {
+	now := time.Now()
+	src := &fakeSource{
+		name:  "fake",
+		pages: [][]ListItem{{{ExternalID: "a", URL: "u/a", Title: "t", PublishedAt: now}}},
+		details: map[string]models.RentPost{
+			"a": {Source: "fake", ExternalID: "a", Title: "t", CollectedAt: now, Status: models.PostStatusCollected},
+		},
+	}
+	r, st := testRunner(t)
+	defer st.Close()
+	if err := st.SetProgress("fake", store.SourceProgress{
+		Phase: store.ProgressBackfill, Page: "1:0", RangeKey: "old-range",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.runSourceOnce(context.Background(), src, make(chan struct{}, 4)); err != nil {
+		t.Fatal(err)
+	}
+	if len(src.cursors) == 0 || src.cursors[0] != "" {
+		t.Errorf("重置后首个 cursor = %v, want 空串", src.cursors)
+	}
 }

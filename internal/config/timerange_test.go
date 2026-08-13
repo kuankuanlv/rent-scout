@@ -8,8 +8,8 @@ import (
 func TestResolveTimeRange(t *testing.T) {
 	now := time.Date(2026, 8, 13, 15, 0, 0, 0, time.Local)
 
-	t.Run("now 与 -10d", func(t *testing.T) {
-		start, end, err := ResolveTimeRange("-10d", "now", now)
+	t.Run("now 与 -10", func(t *testing.T) {
+		start, end, err := ResolveTimeRange("-10", "now", now)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -22,27 +22,64 @@ func TestResolveTimeRange(t *testing.T) {
 		}
 	})
 
-	t.Run("空 to 视为 now；空 from 默认 -10d", func(t *testing.T) {
+	t.Run("兼容旧 -10d", func(t *testing.T) {
+		start, end, err := ResolveTimeRange("-10d", "now", now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !start.Equal(now.Add(-10*24*time.Hour)) || !end.Equal(now) {
+			t.Errorf("got [%v, %v]", start, end)
+		}
+	})
+
+	t.Run("空 to 视为 now；空 from 默认 -10", func(t *testing.T) {
 		start, end, err := ResolveTimeRange("", "", now)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !start.Equal(now.Add(-10 * 24 * time.Hour)) || !end.Equal(now) {
+		if !start.Equal(now.Add(-10*24*time.Hour)) || !end.Equal(now) {
 			t.Errorf("got [%v, %v]", start, end)
 		}
 	})
 
-	t.Run("纯数字天数相对 now", func(t *testing.T) {
-		start, end, err := ResolveTimeRange("7", "now", now)
+	t.Run("小数天", func(t *testing.T) {
+		start, end, err := ResolveTimeRange("-1.5", "0.5", now)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !start.Equal(now.Add(-7 * 24 * time.Hour)) || !end.Equal(now) {
+		wantStart := now.Add(-time.Duration(1.5 * float64(24*time.Hour)))
+		wantEnd := now.Add(time.Duration(0.5 * float64(24*time.Hour)))
+		if !start.Equal(wantStart) || !end.Equal(wantEnd) {
+			t.Errorf("got [%v, %v], want [%v, %v]", start, end, wantStart, wantEnd)
+		}
+	})
+
+	t.Run("至为负", func(t *testing.T) {
+		start, end, err := ResolveTimeRange("-10", "-1", now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !start.Equal(now.Add(-10*24*time.Hour)) || !end.Equal(now.Add(-24*time.Hour)) {
 			t.Errorf("got [%v, %v]", start, end)
 		}
 	})
 
-	t.Run("绝对日期", func(t *testing.T) {
+	t.Run("从必须为负", func(t *testing.T) {
+		if _, _, err := ResolveTimeRange("2", "now", now); err == nil {
+			t.Fatal("期望报错")
+		}
+		if _, _, err := ResolveTimeRange("0", "1", now); err == nil {
+			t.Fatal("从=0 应报错")
+		}
+	})
+
+	t.Run("从必须小于至", func(t *testing.T) {
+		if _, _, err := ResolveTimeRange("-1", "-2", now); err == nil {
+			t.Fatal("期望报错")
+		}
+	})
+
+	t.Run("绝对日期仍可用", func(t *testing.T) {
 		start, end, err := ResolveTimeRange("2026-08-01", "2026-08-10 12:00", now)
 		if err != nil {
 			t.Fatal(err)
@@ -53,24 +90,16 @@ func TestResolveTimeRange(t *testing.T) {
 			t.Errorf("got [%v, %v], want [%v, %v]", start, end, wantStart, wantEnd)
 		}
 	})
+}
 
-	t.Run("RFC3339", func(t *testing.T) {
-		from := "2026-08-01T00:00:00Z"
-		to := "2026-08-05T12:00:00Z"
-		start, end, err := ResolveTimeRange(from, to, now)
-		if err != nil {
-			t.Fatal(err)
-		}
-		wantStart, _ := time.Parse(time.RFC3339, from)
-		wantEnd, _ := time.Parse(time.RFC3339, to)
-		if !start.Equal(wantStart) || !end.Equal(wantEnd) {
-			t.Errorf("got [%v, %v]", start, end)
-		}
-	})
-
-	t.Run("from 晚于 to 报错", func(t *testing.T) {
-		if _, _, err := ResolveTimeRange("now", "-1d", now); err == nil {
-			t.Fatal("期望报错")
-		}
-	})
+func TestCanonicalDayOffset(t *testing.T) {
+	if got := CanonicalDayOffset("-10d"); got != "-10" {
+		t.Errorf("got %q", got)
+	}
+	if got := CanonicalDayOffset("now"); got != "now" {
+		t.Errorf("got %q", got)
+	}
+	if got := CanonicalDayOffset("-10.50"); got != "-10.5" {
+		t.Errorf("got %q", got)
+	}
 }

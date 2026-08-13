@@ -1,0 +1,128 @@
+{{define "logs"}}
+<!DOCTYPE html>
+<html lang="zh">
+<head><title>系统日志 - rent-scout</title>{{template "head" .}}</head>
+<body class="bg-gradient-to-br from-slate-50 via-white to-brand-50 min-h-screen text-gray-800">
+{{template "nav" .}}
+<main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
+<div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+  <div class="px-4 sm:px-6 py-4 border-b border-gray-100 flex flex-col gap-3">
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+      <h1 class="text-xl sm:text-2xl font-bold text-gray-900">📜 系统日志</h1>
+      <div class="flex flex-wrap items-center gap-2 text-xs sm:text-sm">
+        <span id="log-conn" class="px-2 py-1 rounded-full bg-gray-100 text-gray-600">连接中…</span>
+        <select id="log-duty" class="border rounded-lg px-2 py-1.5">
+          <option value="">全部职责</option>
+        </select>
+        <select id="log-level" class="border rounded-lg px-2 py-1.5">
+          <option value="">全部级别</option>
+          <option value="debug">debug</option>
+          <option value="info">info</option>
+          <option value="warn">warn</option>
+          <option value="error">error</option>
+        </select>
+        <button type="button" id="log-pause" class="px-3 py-1.5 rounded-lg border border-gray-200">暂停滚动</button>
+        <button type="button" id="log-clear" class="px-3 py-1.5 rounded-lg border border-gray-200">清屏</button>
+      </div>
+    </div>
+    <p class="text-xs text-gray-500">内存 ring（当前保留 {{.MemoryLines}} 条，可在 配置 → 常规 调整）。条数越大越占内存；探测 raw 单条可到数 KB。密钥类字段已脱敏。</p>
+  </div>
+  <pre id="log-view" class="log-view px-4 sm:px-6 py-4 text-xs sm:text-sm font-mono leading-relaxed bg-slate-950 text-slate-100 overflow-auto h-[70vh] whitespace-pre-wrap break-all"></pre>
+</div>
+</main>
+<footer class="text-center text-xs text-gray-400 py-6">rent-scout · 租房信息 Scout</footer>
+<script>
+(function(){
+  var view = document.getElementById('log-view');
+  var conn = document.getElementById('log-conn');
+  var dutySel = document.getElementById('log-duty');
+  var levelSel = document.getElementById('log-level');
+  var pauseBtn = document.getElementById('log-pause');
+  var clearBtn = document.getElementById('log-clear');
+  var paused = false;
+  var lines = [];
+  var duties = {};
+  var maxDom = 1000;
+  function setConn(ok, text){
+    conn.textContent = text;
+    conn.className = 'px-2 py-1 rounded-full ' + (ok ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800');
+  }
+  function fmtTime(t){
+    try {
+      var d = new Date(t);
+      return d.toTimeString().slice(0,8);
+    } catch(e){ return ''; }
+  }
+  function levelClass(lv){
+    if (lv === 'error') return 'text-red-400';
+    if (lv === 'warn' || lv === 'warning') return 'text-amber-300';
+    if (lv === 'debug') return 'text-slate-500';
+    return 'text-slate-200';
+  }
+  function visible(line){
+    var duty = dutySel.value;
+    var lv = levelSel.value;
+    if (duty && line.duty !== duty) return false;
+    if (lv && line.level !== lv) return false;
+    return true;
+  }
+  function render(){
+    var html = [];
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+      if (!visible(line)) continue;
+      var duty = line.duty ? '[' + line.duty + '] ' : '';
+      var attrs = line.attrs ? '  ' + line.attrs : '';
+      html.push('<span class="'+levelClass(line.level)+'">' +
+        escapeHtml(fmtTime(line.time) + ' ' + (line.level||'info') + ' ' + duty + (line.msg||'') + attrs) +
+        '</span>');
+    }
+    view.innerHTML = html.join('\n');
+    if (!paused) view.scrollTop = view.scrollHeight;
+  }
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"']/g, function(c){
+      return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c];
+    });
+  }
+  function rememberDuty(duty){
+    if (!duty || duties[duty]) return;
+    duties[duty] = true;
+    var opt = document.createElement('option');
+    opt.value = duty; opt.textContent = duty;
+    dutySel.appendChild(opt);
+  }
+  function push(line){
+    if (!line) return;
+    rememberDuty(line.duty);
+    lines.push(line);
+    if (lines.length > maxDom) lines = lines.slice(lines.length - maxDom);
+    render();
+  }
+  dutySel.addEventListener('change', render);
+  levelSel.addEventListener('change', render);
+  pauseBtn.addEventListener('click', function(){
+    paused = !paused;
+    pauseBtn.textContent = paused ? '继续滚动' : '暂停滚动';
+    if (!paused) view.scrollTop = view.scrollHeight;
+  });
+  clearBtn.addEventListener('click', function(){ lines = []; render(); });
+  view.addEventListener('scroll', function(){
+    var atBottom = view.scrollHeight - view.scrollTop - view.clientHeight < 24;
+    if (!atBottom && !paused) {
+      paused = true;
+      pauseBtn.textContent = '继续滚动';
+    }
+  });
+  var url = '/admin/logs/stream{{if .Token}}?token={{.Token}}{{end}}';
+  var es = new EventSource(url);
+  es.onopen = function(){ setConn(true, '已连接'); };
+  es.onerror = function(){ setConn(false, '重连中…'); };
+  es.onmessage = function(ev){
+    try { push(JSON.parse(ev.data)); } catch(e) {}
+  };
+})();
+</script>
+</body>
+</html>
+{{end}}

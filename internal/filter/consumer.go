@@ -8,141 +8,147 @@ import (
 	"rent-scout/internal/store"
 )
 
-// Consumer filter 消费器（规格 2.3）：由 pipeline.Consumer 驱动。
-// 编排（规格 5.3 + 调整 C）：逐帖硬编码链（EvaluateHard）→ 未定案聚合为 AI 批一次调用
-// （EvaluateAIBatch）→ 状态流转 + 写结果 + passed 触发 notify。
+// Consumer 筛选/AI 审核共用存储与规则链。
+// 筛选：channel 有帖立刻硬规则判定，通过/拒绝/pending 当场落库，不调 LLM。
+// AI 审核：从库读 pending 凑批，满批或 linger 才 EvaluateAIBatch。
 // AI 不可用/未定案 → 默认放行（宽松模式，宁可多通知不少通知）
 type Consumer struct {
 	chain       *RuleChain
 	store       *store.Store
-	notify      chan<- struct{} // passed 帖子信号（计划 4 notifier 消费）
+	notify      chan<- struct{} // passed 帖子信号（notifier 消费）
+	ai          chan<- struct{} // pending 帖子信号（ai_review 消费）
 	trimLen     int             // 保留参数（旧签名兼容）；截断已下沉到 AIBatchEvaluator 按源处理
-	aiBatchSize int             // AI 子批上限（ai_batch_size）：未定案帖数超过时拆分多次 EvaluateAIBatch
+	aiBatchSize int             // AI 一次判定上限；pipeline 凑批也用这个数
 }
 
 // ConsumerOptions 消费器选项（选项模式；零值 = 与旧版 NewConsumer 行为一致）
 type ConsumerOptions struct {
-	// AIBatchSize AI 子批上限：batch 内未定案帖数 > 该值时拆分为多次 EvaluateAIBatch
-	// 调用（每次 ≤ 该值，规格 7.2 ai_batch_size）。≤0 = 不拆分（整批一次调用，向后兼容）
+	// AIBatchSize AI 凑批/子批上限（规格 7.2 ai_batch_size）。≤0 = 不拆分
 	AIBatchSize int
+	// AITrigger 硬规则未定案写成 pending 后通知 AI 审核协程；nil = 不发
+	AITrigger chan<- struct{}
 }
 
-// NewConsumer 创建 filter 消费器（旧签名兼容：AI 未定案整批一次调用）
+// NewConsumer 创建 filter 消费器（旧签名兼容：无 AI 触发通道）
 func NewConsumer(chain *RuleChain, st *store.Store, notify chan<- struct{}, trimLen int) *Consumer {
 	return NewConsumerWithOptions(chain, st, notify, trimLen, ConsumerOptions{})
 }
 
-// NewConsumerWithOptions 创建 filter 消费器（main 传入 ai_batch_size 等选项）
+// NewConsumerWithOptions 创建消费器（main 传入 ai_batch_size、AI 触发通道）
 func NewConsumerWithOptions(chain *RuleChain, st *store.Store, notify chan<- struct{}, trimLen int, opts ConsumerOptions) *Consumer {
-	return &Consumer{chain: chain, store: st, notify: notify, trimLen: trimLen, aiBatchSize: opts.AIBatchSize}
+	return &Consumer{chain: chain, store: st, notify: notify, ai: opts.AITrigger, trimLen: trimLen, aiBatchSize: opts.AIBatchSize}
 }
 
-// FetchBatch 拉批：collected（待首次判定）+ pending（瞬时失败待重试），按 id 升序限量
-func (c *Consumer) FetchBatch(ctx context.Context, limit int) ([]models.RentPost, error) {
-	return c.store.FetchPendingByStatuses([]string{models.PostStatusCollected, models.PostStatusPending}, limit)
+// FetchCollected 筛选拉帖：只取刚入库、还没走硬规则的
+func (c *Consumer) FetchCollected(ctx context.Context, limit int) ([]models.RentPost, error) {
+	return c.store.FetchPendingByStatus(models.PostStatusCollected, limit)
 }
 
-// ProcessBatch 导出包装（pipeline 回调用）
-func (c *Consumer) ProcessBatch(ctx context.Context, batch []models.RentPost) error {
-	return c.processBatch(ctx, batch)
+// FetchPending AI 审核拉帖：只取硬规则未定案、等凑批的
+func (c *Consumer) FetchPending(ctx context.Context, limit int) ([]models.RentPost, error) {
+	return c.store.FetchPendingByStatus(models.PostStatusPending, limit)
 }
 
-// processBatch 批处理（测试可见）：硬编码逐帖定案 → AI 批聚合 → 状态流转。
-// 返回 error 仅记录；单帖失败不影响批内其余
-func (c *Consumer) processBatch(ctx context.Context, batch []models.RentPost) error {
+// ProcessHard 导出包装（pipeline 筛选回调用）
+func (c *Consumer) ProcessHard(ctx context.Context, batch []models.RentPost) error {
+	return c.processHard(ctx, batch)
+}
+
+// ProcessAI 导出包装（pipeline AI 审核回调用）
+func (c *Consumer) ProcessAI(ctx context.Context, batch []models.RentPost) error {
+	return c.processAI(ctx, batch)
+}
+
+// processHard 逐帖硬规则：定案立刻写库；未定案且 AI 可用 → pending 并通知 AI；否则默认通过。
+func (c *Consumer) processHard(ctx context.Context, batch []models.RentPost) error {
 	if len(batch) == 0 {
 		return nil
 	}
 	log := pkglog.Component(pkglog.Filter)
-	log.Info("[batch_start] 开始筛选批次", "count", len(batch))
 	rules, err := c.rules()
 	if err != nil {
-		// 规则读取失败（DB 层故障）：整批保持待判定下轮重试——不流转、不写 filter_results、不发 notify。
+		// 规则读取失败（DB 层故障）：保持 collected 下轮重试——不流转、不写 filter_results、不发 notify。
 		// 规格 5.6 仅授权"AI 链不可用/无启用规则"时默认放行；DB 故障不得静默放行（审查 K1）
-		log.Error("[rules_load_failed] 规则读取失败", "count", len(batch), "err", err)
+		log.Error("规则读取失败", "count", len(batch), "err", err)
 		return nil
 	}
-	var passedIDs, rejectedIDs, pendingIDs []int64
-	var aiPending []models.RentPost
+	hasAI := c.chain.HasAI() && len(enabledAIRules(rules)) > 0
 
-	// ① 硬编码链逐帖定案（白名单短路/黑名单/关键词）
 	for i := range batch {
 		post := batch[i]
 		res, tags, decided, err := c.chain.EvaluateHard(ctx, post, rules)
 		if err != nil {
-			log.Error("[hard_eval_failed] 硬链评估失败", "post_id", post.ID, "err", err)
-			pendingIDs = append(pendingIDs, post.ID)
+			log.Error("硬链评估失败", "post_id", post.ID, "err", err)
 			continue
 		}
 		if !decided {
-			aiPending = append(aiPending, post) // 未定案：进 AI 批
+			if hasAI {
+				if err := c.store.MarkStatus([]int64{post.ID}, models.PostStatusPending); err != nil {
+					return err
+				}
+				log.Info("未定案，交 AI 审核", "post_id", post.ID)
+				c.signal(c.ai)
+				continue
+			}
+			log.Info("AI 关闭，未定案帖默认通过", "post_id", post.ID)
+			if err := c.commitStatus(post.ID, models.PostStatusPassed); err != nil {
+				return err
+			}
 			continue
 		}
-		// 定案：白名单 tags 写库（调整规格 A 2.3）
 		if len(tags) > 0 {
 			if err := c.store.UpdatePostAddressTags(post.ID, tags); err != nil {
-				log.Error("[address_tags_failed] 地点标签写回失败", "post_id", post.ID, "err", err)
+				log.Error("地点标签写回失败", "post_id", post.ID, "err", err)
 			}
 		}
-		c.recordDecision(res, &passedIDs, &rejectedIDs)
-	}
-
-	// ② AI 批：未定案帖子按 ai_batch_size 拆子批调用 LLM（规格 5.4 批量语义 + 7.2 ai_batch_size）。
-	// 子批相互独立：某子批瞬时失败仅该子批保持 pending 下轮重试，不误标记、不影响其余子批（规格 5.6）
-	if len(aiPending) > 0 {
-		if c.chain.HasAI() && len(enabledAIRules(rules)) > 0 {
-			for _, sub := range splitBatches(aiPending, c.aiBatchSize) {
-				results, err := c.chain.EvaluateAIBatch(ctx, sub, rules)
-				if err != nil {
-					// 瞬时失败（429/5xx/解析）：该子批保持 pending 下轮重试，不误标记（规格 5.6）
-					log.Warn("[llm_batch_failed] AI 批处理失败", "count", len(sub), "err", err)
-					for _, post := range sub {
-						pendingIDs = append(pendingIDs, post.ID)
-					}
-					continue
-				}
-				for _, post := range sub {
-					res := results[post.ID]
-					c.recordDecision(res, &passedIDs, &rejectedIDs)
-				}
-				log.Info("[llm_batch_done] AI 批处理完成", "count", len(sub))
-			}
-		} else {
-			// 无 AI（未配 key/已关闭）：默认放行（宽松模式）
-			log.Info("[ai_disabled_pass] AI 关闭，未定案帖默认通过", "count", len(aiPending))
-			for _, post := range aiPending {
-				passedIDs = append(passedIDs, post.ID)
-			}
-		}
-	}
-
-	// ③ 批量状态流转：passed/rejected/pending 三次独立 UPDATE（非原子，状态机见规格 2.4）。
-	// SQLite 单写者 + 批处理单 goroutine 下可接受；若需整批原子需改事务变体（不建议，失败态可重试收敛）
-	if len(passedIDs) > 0 {
-		if err := c.store.MarkStatus(passedIDs, models.PostStatusPassed); err != nil {
-			return err
-		}
-		if c.notify != nil {
-			select {
-			case c.notify <- struct{}{}:
-			default: // 满则丢：下游 linger 兜底（规格 2.3）
-			}
-		}
-	}
-	if len(rejectedIDs) > 0 {
-		if err := c.store.MarkStatus(rejectedIDs, models.PostStatusRejected); err != nil {
-			return err
-		}
-	}
-	if len(pendingIDs) > 0 {
-		if err := c.store.MarkStatus(pendingIDs, models.PostStatusPending); err != nil {
+		if err := c.commitDecision(res); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// splitBatches 按 size 切分子批；size<=0 或不足一批时整批一次（向后兼容，不改变旧行为）
+// processAI 从库汇总的 pending 凑批后调 LLM；失败保持 pending 下轮重试。
+func (c *Consumer) processAI(ctx context.Context, batch []models.RentPost) error {
+	if len(batch) == 0 {
+		return nil
+	}
+	log := pkglog.Component(pkglog.AIReview)
+	rules, err := c.rules()
+	if err != nil {
+		log.Error("规则读取失败", "count", len(batch), "err", err)
+		return nil
+	}
+	if !c.chain.HasAI() || len(enabledAIRules(rules)) == 0 {
+		log.Info("AI 关闭，未审核帖默认通过", "count", len(batch))
+		ids := make([]int64, len(batch))
+		for i, p := range batch {
+			ids[i] = p.ID
+		}
+		if err := c.store.MarkStatus(ids, models.PostStatusPassed); err != nil {
+			return err
+		}
+		c.signal(c.notify)
+		return nil
+	}
+
+	for _, sub := range splitBatches(batch, c.aiBatchSize) {
+		results, err := c.chain.EvaluateAIBatch(ctx, sub, rules)
+		if err != nil {
+			log.Warn("AI 批处理失败", "count", len(sub), "err", err)
+			continue
+		}
+		for _, post := range sub {
+			if err := c.commitDecision(results[post.ID]); err != nil {
+				return err
+			}
+		}
+		log.Info("AI 批处理完成", "count", len(sub))
+	}
+	return nil
+}
+
+// splitBatches 按 size 切分子批；size<=0 或不足一批时整批一次
 func splitBatches(posts []models.RentPost, size int) [][]models.RentPost {
 	if size <= 0 || len(posts) <= size {
 		return [][]models.RentPost{posts}
@@ -158,24 +164,45 @@ func splitBatches(posts []models.RentPost, size int) [][]models.RentPost {
 	return out
 }
 
-// recordDecision 记录单帖判定：写筛选结果（有内容时）+ 收集状态 ID + 日志（规格 8.3）
-func (c *Consumer) recordDecision(res models.FilterResult, passedIDs, rejectedIDs *[]int64) {
+// commitDecision 单帖定案立刻写结果+主状态；passed 通知 notifier
+func (c *Consumer) commitDecision(res models.FilterResult) error {
+	duty := pkglog.Filter
+	if res.Stage == models.StageAIRule {
+		duty = pkglog.AIReview
+	}
 	if len(res.HardRules) > 0 || res.AI != nil || res.Status == models.PostStatusRejected {
 		if err := c.store.SaveFilterResult(res); err != nil {
-			pkglog.Component(pkglog.Filter).Error("[filter_result_save_failed] 筛选结果写库失败", "post_id", res.PostID, "err", err)
+			pkglog.Component(duty).Error("筛选结果写库失败", "post_id", res.PostID, "err", err)
 		}
 	}
-	if res.Status == models.PostStatusPassed {
-		*passedIDs = append(*passedIDs, res.PostID)
-	} else {
-		*rejectedIDs = append(*rejectedIDs, res.PostID)
+	if err := c.commitStatus(res.PostID, res.Status); err != nil {
+		return err
 	}
-	// 日志规范 8.3：逐帖判定结果
-	pkglog.Component(pkglog.Filter).Info("[post_decided] 帖子已定案", "post_id", res.PostID, "stage", res.Stage, "result", res.Status,
+	pkglog.Component(duty).Info("帖子已定案", "post_id", res.PostID, "stage", res.Stage, "result", res.Status,
 		"reason", res.RejectedBy, "ai_reason", aiReason(res.AI))
+	return nil
 }
 
-// aiReason AI 推荐/拒绝理由（日志展示）
+func (c *Consumer) commitStatus(postID int64, status string) error {
+	if err := c.store.MarkStatus([]int64{postID}, status); err != nil {
+		return err
+	}
+	if status == models.PostStatusPassed {
+		c.signal(c.notify)
+	}
+	return nil
+}
+
+func (c *Consumer) signal(ch chan<- struct{}) {
+	if ch == nil {
+		return
+	}
+	select {
+	case ch <- struct{}{}:
+	default:
+	}
+}
+
 func aiReason(ai *models.AIResult) string {
 	if ai == nil {
 		return ""
@@ -183,8 +210,8 @@ func aiReason(ai *models.AIResult) string {
 	return ai.Reason
 }
 
-// rules 拉取启用规则（每次批处理读取——规则可在 /admin 热变更，规格 3.3）。
-// 返回 error = 规则读取失败（DB 层故障），调用方须整批保持待判定，不得默认放行
+// rules 拉取启用规则（每次处理读取——规则可在 /admin 热变更，规格 3.3）。
+// 返回 error = 规则读取失败（DB 层故障），调用方须保持待判定，不得默认放行
 func (c *Consumer) rules() ([]models.Rule, error) {
 	rules, err := c.store.ListRules(true)
 	if err != nil {

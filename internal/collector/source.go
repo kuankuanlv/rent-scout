@@ -27,3 +27,15 @@ type Source interface {
 	// Detail 抓取单条详情页并归一化为 RentPost（只对未存在的新帖调用）
 	Detail(ctx context.Context, item ListItem) (models.RentPost, error)
 }
+
+// GroupSkipper 多组源可选：本组已撞水位/时间窗时跳到下一组开头，少打无效页
+type GroupSkipper interface {
+	SkipGroup(cursor string) string
+}
+
+func skipGroup(src Source, cursor string) string {
+	if g, ok := src.(GroupSkipper); ok {
+		return g.SkipGroup(cursor)
+	}
+	return ""
+}

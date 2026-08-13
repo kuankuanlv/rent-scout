@@ -2,12 +2,17 @@ package collector
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
+	"rent-scout/internal/collector/cookie"
 	"rent-scout/internal/config"
+	"rent-scout/internal/models"
 	"rent-scout/internal/pkglog"
 	"rent-scout/internal/store"
 )
@@ -65,7 +70,7 @@ func (r *Runner) SetEnabled(name string, on bool) error {
 	r.mu.Lock()
 	r.enabled[name] = on
 	r.mu.Unlock()
-	pkglog.Component(pkglog.Collector).Info("[source_toggle] 源启停切换", "source", name, "enabled", on)
+	pkglog.Component(pkglog.SourceCollector(name)).Info("源启停切换", "source", name, "enabled", on)
 	return nil
 }
 
@@ -103,7 +108,7 @@ func (r *Runner) hasSource(name string) bool {
 // 停用态不跑轮次，仅响应手动触发（规格 7.1 手动触发抓取）与 ctx 取消；
 // 周期轮询恢复判定——enable 后无需额外信号，循环自然恢复
 func (r *Runner) runSource(ctx context.Context, src Source) {
-	log := pkglog.Component(pkglog.Collector)
+	log := pkglog.Component(pkglog.SourceCollector(src.Name()))
 	failStreak := 0
 	prevEnabled := true
 	for {
@@ -113,7 +118,7 @@ func (r *Runner) runSource(ctx context.Context, src Source) {
 		if !r.SourceEnabled(src.Name()) {
 			// 仅状态迁移时打一次日志，避免 1s 轮询刷屏
 			if prevEnabled {
-				log.Info("[source_paused] 源已暂停", "source", src.Name())
+				log.Info("源已暂停", "source", src.Name())
 			}
 			prevEnabled = false
 			select {
@@ -121,8 +126,8 @@ func (r *Runner) runSource(ctx context.Context, src Source) {
 				return
 			case <-r.manual[src.Name()]:
 				// 手动触发：即使停用也跑一轮（规格 7.1 手动触发抓取）
-				if err := r.runSourceOnce(ctx, src, r.trigger); err != nil {
-					log.Warn("[manual_trigger_failed] 手动触发失败", "source", src.Name(), "err", err)
+				if _, err := r.runSourceOnce(ctx, src, r.trigger); err != nil {
+					log.Warn("手动触发失败", "err", err)
 				} else {
 					failStreak = 0
 				}
@@ -132,61 +137,134 @@ func (r *Runner) runSource(ctx context.Context, src Source) {
 			continue
 		}
 		prevEnabled = true
-		// 等待时长：失败指数退避优先，成功间隔 ±jitter 抖动（保持原退避语义）
-		wait := jittered(interval, jitter)
-		if failStreak > 0 {
-			wait = time.Duration(1<<min(failStreak-1, 5)) * time.Minute
+		t0 := time.Now()
+		res, err := r.runSourceOnce(ctx, src, r.trigger)
+		if err != nil {
+			failStreak++
+			wait := time.Duration(1<<min(failStreak-1, 5)) * time.Minute
+			log.Warn("本轮失败，等待下一轮", "err", err, "耗时", time.Since(t0).Round(time.Millisecond).String(),
+				"wait_s", int(wait.Seconds()), "attempt", failStreak)
+			if !waitRound(ctx, r.manual[src.Name()], wait) {
+				return
+			}
+			continue
 		}
-		// 在等待前打日志，wait_s 即下一轮实际等待时长（退避/抖动均准确）
-		log.Info("[wait_next_round] 等待下一轮采集", "source", src.Name(), "wait_s", int(wait.Seconds()))
-		select {
-		case <-ctx.Done():
+		failStreak = 0
+		wait := jittered(interval, jitter)
+		log.Info("本轮结束，等待下一轮",
+			"耗时", time.Since(t0).Round(time.Millisecond).String(),
+			"新帖", res.NewPosts,
+			"phase", res.Phase,
+			"offset", emptyDash(res.Offset),
+			"watermark", formatWatermark(res.Watermark),
+			"wait_s", int(wait.Seconds()),
+		)
+		if !waitRound(ctx, r.manual[src.Name()], wait) {
 			return
-		case <-r.manual[src.Name()]:
-			// 手动触发：立即跑一轮，随后正常计时；成功重置退避
-			failStreak = 0
-			if err := r.runSourceOnce(ctx, src, r.trigger); err != nil {
-				log.Warn("[manual_trigger_failed] 手动触发失败", "source", src.Name(), "err", err)
-			}
-		case <-time.After(wait):
-			// 定时轮次：失败指数退避后重试（封禁/限流时自动拉开频率）
-			err := r.runSourceOnce(ctx, src, r.trigger)
-			if err != nil {
-				failStreak++
-				backoff := time.Duration(1<<min(failStreak-1, 5)) * time.Minute
-				log.Warn("[round_failed_backoff] 本轮失败进入退避", "source", src.Name(), "err", err, "backoff_s", int(backoff.Seconds()), "attempt", failStreak)
-				continue // 下一轮循环：failStreak>0 → wait=backoff
-			}
-			failStreak = 0
 		}
 	}
 }
 
+func waitRound(ctx context.Context, manual <-chan struct{}, wait time.Duration) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case <-manual:
+		return true
+	case <-time.After(wait):
+		return true
+	}
+}
+
+type roundResult struct {
+	NewPosts  int
+	Phase     string
+	Offset    string
+	Watermark string
+}
+
+// RunOnce 跑一轮采集（测试与手动触发共用）
+func (r *Runner) RunOnce(ctx context.Context, src Source, trigger chan<- struct{}) error {
+	_, err := r.runSourceOnce(ctx, src, trigger)
+	return err
+}
+
 // runSourceOnce 单轮采集（可测：测试直接调用它）
-func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- struct{}) error {
-	log := pkglog.Component(pkglog.Collector)
+func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- struct{}) (roundResult, error) {
+	log := pkglog.Component(pkglog.SourceCollector(src.Name()))
 	cfg := r.rt.Get()
 	now := time.Now()
 	start, end, err := sourceTimeWindow(src.Name(), cfg, now)
 	if err != nil {
-		return err
+		return roundResult{}, err
 	}
 
-	// 游标断点续传（规格 3.5）：上次位置继续
-	cursorVal, _, _ := r.store.GetCursor(src.Name())
-	log.Info("[round_start] 开始本轮采集", "source", src.Name(), "cursor", cursorVal,
-		"range_from", start.Format(time.RFC3339), "range_to", end.Format(time.RFC3339))
+	// 源维度进度：backfill 跟 Page 翻页；incremental 跟 Watermark，每轮从列表头抓新帖
+	prog, _, err := r.store.GetProgress(src.Name())
+	if err != nil {
+		return roundResult{}, err
+	}
+	rangeKey := sourceRangeKey(src.Name(), cfg)
+	if prog.RangeKey != "" && prog.RangeKey != rangeKey {
+		log.Info("源配置或时间窗变了，重置 offset", "source", src.Name(), "old", prog.RangeKey, "new", rangeKey)
+		prog = store.SourceProgress{Phase: store.ProgressBackfill}
+	}
+	prog.RangeKey = rangeKey
+	if prog.Phase == "" {
+		prog.Phase = store.ProgressBackfill
+	}
 
+	listCursor := ""
+	if prog.Phase == store.ProgressBackfill {
+		listCursor = prog.Page
+	}
+	log.Info("开始本轮采集",
+		"phase", prog.Phase,
+		"offset", emptyDash(listCursor),
+		"watermark", formatWatermark(prog.Watermark),
+		"窗从", start.Format("01-02 15:04"),
+		"窗至", end.Format("01-02 15:04"),
+	)
+
+	var wm time.Time
+	if prog.Watermark != "" {
+		wm = parseWatermark(prog.Watermark)
+	}
+	persist := func() error {
+		return r.store.SetProgress(src.Name(), prog)
+	}
 	newPosts := 0
+	firstHTTP := true
+	pace := func() {
+		if firstHTTP {
+			firstHTTP = false
+			return
+		}
+		if gap := r.requestGap(src); gap > 0 {
+			select {
+			case <-ctx.Done():
+			case <-time.After(gap):
+			}
+		}
+	}
 	for {
-		items, next, err := src.List(ctx, cursorVal)
+		pace()
+		items, next, err := src.List(ctx, listCursor)
 		if err != nil {
-			return fmt.Errorf("列表页: %w", err)
+			if cookieDead(err) {
+				log.Error("cookie 失效，本轮结束", "err", err)
+				return roundResult{NewPosts: newPosts, Phase: prog.Phase, Offset: listCursor, Watermark: prog.Watermark}, nil
+			}
+			return roundResult{}, fmt.Errorf("列表页: %w", err)
 		}
 		// 时间窗过滤：早于 from 或晚于 to 丢弃；倒序超 from 可停翻页
 		var fresh []ListItem
 		stop := false
 		for _, it := range items {
+			if prog.Phase == store.ProgressIncremental && !wm.IsZero() && !it.PublishedAt.After(wm) {
+				stop = true
+				break
+			}
 			if it.PublishedAt.Before(start) {
 				stop = true
 				break
@@ -195,17 +273,50 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 				continue
 			}
 			fresh = append(fresh, it)
+			if it.PublishedAt.After(wm) {
+				wm = it.PublishedAt
+			}
 		}
 		if len(fresh) == 0 {
 			// 空页/超窗页：本页无新帖。跟随源协议推进游标（douban 空组 next 指向下一组），
 			// 避免多组配置下卡死在空组（P2-9 审查发现）；next=="" 表示已到末尾
-			if next != "" {
-				cursorVal = next
-				if err := r.store.SetCursor(src.Name(), cursorVal); err != nil {
-					return err
+			if stop {
+				if ng := skipGroup(src, listCursor); ng != "" {
+					if prog.Phase == store.ProgressBackfill {
+						prog.Page = ng
+						if err := persist(); err != nil {
+							return roundResult{}, err
+						}
+						break
+					}
+					listCursor = ng
+					if err := persist(); err != nil {
+						return roundResult{}, err
+					}
+					continue
 				}
+				prog = sealProgress(prog, wm, end)
+				if err := persist(); err != nil {
+					return roundResult{}, err
+				}
+				break
 			}
-			break
+			if next == "" {
+				prog = sealProgress(prog, wm, end)
+				if err := persist(); err != nil {
+					return roundResult{}, err
+				}
+				break
+			}
+			if prog.Phase == store.ProgressBackfill {
+				prog.Page = next
+				if err := persist(); err != nil {
+					return roundResult{}, err
+				}
+				break
+			}
+			listCursor = next
+			continue
 		}
 		// 列表页先行批量查重：已存在的零详情页请求（调整规格 E）
 		ids := make([]string, 0, len(fresh))
@@ -214,15 +325,20 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 		}
 		existing, err := r.store.ExistsByExternalIDs(src.Name(), ids)
 		if err != nil {
-			return err
+			return roundResult{}, err
 		}
 		for _, it := range fresh {
 			if existing[it.ExternalID] {
 				continue // 已抓过：跳过详情页
 			}
+			pace()
 			post, err := src.Detail(ctx, it)
 			if err != nil {
-				log.Warn("[detail_skip] 详情拉取失败已跳过", "source", src.Name(), "id", it.ExternalID, "err", err)
+				if cookieDead(err) {
+					log.Error("cookie 失效，本轮结束", "id", it.ExternalID, "err", err)
+					return roundResult{NewPosts: newPosts, Phase: prog.Phase, Offset: listCursor, Watermark: prog.Watermark}, nil
+				}
+				log.Warn("详情拉取失败已跳过", "id", it.ExternalID, "err", err)
 				continue
 			}
 			// P2-7 审查：douban Detail 未设 CollectedAt，而 posts 表 collected_at NOT NULL
@@ -231,35 +347,94 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 			}
 			added, err := r.store.InsertPost(post)
 			if err != nil {
-				return fmt.Errorf("入库: %w", err)
+				return roundResult{}, fmt.Errorf("入库: %w", err)
 			}
 			if added {
 				newPosts++
 			}
 		}
-		cursorVal = next
-		if err := r.store.SetCursor(src.Name(), cursorVal); err != nil {
-			return err
+		if !wm.IsZero() {
+			prog.Watermark = wm.Format(time.RFC3339Nano)
 		}
-		if next == "" || stop {
+
+		if stop {
+			if ng := skipGroup(src, listCursor); ng != "" {
+				if prog.Phase == store.ProgressBackfill {
+					prog.Page = ng
+					if err := persist(); err != nil {
+						return roundResult{}, err
+					}
+					break
+				}
+				listCursor = ng
+				if err := persist(); err != nil {
+					return roundResult{}, err
+				}
+				continue
+			}
+			prog = sealProgress(prog, wm, end)
+			if err := persist(); err != nil {
+				return roundResult{}, err
+			}
 			break
+		}
+		if next == "" {
+			prog = sealProgress(prog, wm, end)
+			if err := persist(); err != nil {
+				return roundResult{}, err
+			}
+			break
+		}
+		listCursor = next
+		if prog.Phase == store.ProgressBackfill {
+			prog.Page = next
+		}
+		if err := persist(); err != nil {
+			return roundResult{}, err
 		}
 	}
 	// 新帖触发下游（filter）信号；空批不发（规格 2.3 协议）
 	if newPosts > 0 && trigger != nil {
 		select {
 		case trigger <- struct{}{}:
-			log.Info("[trigger_sent] 已发送筛选触发", "source", src.Name(), "new_posts", newPosts)
 		default:
 		}
 	}
-	log.Info("[round_done] 本轮采集结束", "source", src.Name(), "new_posts", newPosts)
-	return nil
+	return roundResult{NewPosts: newPosts, Phase: prog.Phase, Offset: prog.Page, Watermark: prog.Watermark}, nil
+}
+
+func sealProgress(p store.SourceProgress, wm, end time.Time) store.SourceProgress {
+	p.Phase = store.ProgressIncremental
+	p.Page = ""
+	if !wm.IsZero() {
+		p.Watermark = wm.Format(time.RFC3339Nano)
+	} else if p.Watermark == "" {
+		p.Watermark = end.Format(time.RFC3339Nano)
+	}
+	return p
+}
+
+func parseWatermark(s string) time.Time {
+	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
+		return t
+	}
+	t, _ := time.Parse(time.RFC3339, s)
+	return t
+}
+
+func sourceRangeKey(name string, cfg *config.AppConfig) string {
+	if cfg == nil {
+		return name
+	}
+	if name == models.SourceDouban.String() {
+		return cfg.Collector.Douban.RangeFrom + "|" + cfg.Collector.Douban.RangeTo + "|" + strings.Join(cfg.Collector.Douban.Groups, ",")
+	}
+	return name + "|max_age=" + strconv.Itoa(cfg.Collector.MaxAgeDays)
 }
 
 // sourceTimeWindow 豆瓣用 range_from/to；其它源仍用 MaxAgeDays → [now-N天, now]
 func sourceTimeWindow(name string, cfg *config.AppConfig, now time.Time) (time.Time, time.Time, error) {
-	if name == "douban" {
+	if name == models.SourceDouban.String() {
 		start, end, err := config.ResolveTimeRange(cfg.Collector.Douban.RangeFrom, cfg.Collector.Douban.RangeTo, now)
 		if err != nil {
 			return time.Time{}, time.Time{}, fmt.Errorf("豆瓣拉取范围: %w", err)
@@ -287,4 +462,34 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func cookieDead(err error) bool {
+	return errors.Is(err, cookie.ErrCookieInvalid) || errors.Is(err, cookie.ErrCookieMissing)
+}
+
+func (r *Runner) requestGap(src Source) time.Duration {
+	if src.Name() != models.SourceDouban.String() {
+		return 0
+	}
+	n := r.rt.Get().Collector.Douban.Interval
+	if n <= 0 {
+		return 0
+	}
+	return time.Duration(n) * time.Second
+}
+
+func formatWatermark(s string) string {
+	t := parseWatermark(s)
+	if t.IsZero() {
+		return emptyDash(s)
+	}
+	return t.Format("01-02 15:04")
+}
+
+func emptyDash(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return "-"
+	}
+	return s
 }

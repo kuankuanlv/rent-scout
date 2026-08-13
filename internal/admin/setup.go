@@ -169,7 +169,7 @@ func (s *Server) setupGate(next http.Handler) http.Handler {
 			return
 		}
 		path := r.URL.Path
-		if path == "/admin/setup" || path == "/admin/config/save" || path == CookieTestPath || path == "/healthz" || path == "/metrics" || path == "/f" || path == "/h" {
+		if path == "/admin/setup" || path == "/admin/config/save" || path == CookieTestPath || path == CookieCloudTestPath || path == "/healthz" || path == "/metrics" || path == "/f" || path == "/h" {
 			next.ServeHTTP(w, r)
 			return
 		}

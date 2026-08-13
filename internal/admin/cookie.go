@@ -11,21 +11,58 @@ import (
 	"rent-scout/internal/pkglog"
 )
 
-type cookieParsePart struct {
-	OK            bool   `json:"ok"`
-	CookieLen     int    `json:"cookie_len"`
-	PreviewMasked string `json:"preview_masked"`
-	Status        string `json:"status,omitempty"`
-	Detail        string `json:"detail,omitempty"`
+// handleCookieCloudTest POST /admin/config/cookiecloud/test：只测连通和解密，不打豆瓣
+func (s *Server) handleCookieCloudTest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "解析表单失败", http.StatusBadRequest)
+		return
+	}
+	draft := s.draftCookieConfig(r)
+	if strings.ToLower(draft.CookieMode) != "cookiecloud" {
+		draft.CookieMode = "cookiecloud"
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+	defer cancel()
+	ins, err := cookie.InspectCookieCloud(ctx, draft)
+	resp := map[string]any{
+		"ok":      err == nil && ins.Cookie != "",
+		"http":    ins.HTTPStatus,
+		"algo":    ins.Algo,
+		"field":   ins.CipherField,
+		"domains": ins.Domains,
+		"cookies": ins.Previews,
+	}
+	if len(ins.Names) > 0 {
+		resp["cookie_names"] = ins.Names
+	}
+	if err != nil {
+		resp["ok"] = false
+		resp["summary"] = "失败：" + err.Error()
+		pkglog.Component(pkglog.Admin).Info("CookieCloud 检测",
+			"stage", "fail",
+			"http", ins.HTTPStatus,
+			"algo", ins.Algo,
+			"err", err,
+		)
+		writeJSON(w, resp)
+		return
+	}
+	resp["summary"] = "通过"
+	pkglog.Component(pkglog.Admin).Info("CookieCloud 检测",
+		"stage", "ok",
+		"http", ins.HTTPStatus,
+		"algo", ins.Algo,
+		"cookies", ins.Names,
+		"domains", ins.Domains,
+	)
+	writeJSON(w, resp)
 }
 
-type cookieOnlinePart struct {
-	OK     bool   `json:"ok"`
-	Status string `json:"status"`
-	Detail string `json:"detail"`
-}
-
-// handleCookieTest POST /admin/config/cookie/test：草稿探测，不写库（规格 §5.3）
+// handleCookieTest POST /admin/config/cookie/test：用当前 Cookie 打豆瓣；通过或 HTTP+摘要
 func (s *Server) handleCookieTest(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -41,10 +78,51 @@ func (s *Server) handleCookieTest(w http.ResponseWriter, r *http.Request) {
 		r.PostFormValue("secret.collector.douban.cookie_mode"),
 	)))
 	if mode == "" {
-		mode = "none"
+		mode = config.CookieModeNone.String()
+	}
+	if mode == "file" {
+		writeJSON(w, map[string]any{"ok": false, "http": 0, "snippet": "cookie_mode=file 已移除，请改用 none/raw/cookiecloud"})
+		return
 	}
 
+	draft := s.draftCookieConfig(r)
+	draft.CookieMode = mode
+	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+	defer cancel()
+
+	rawCookie, err := fetchDraftCookie(ctx, mode, draft)
+	if err != nil {
+		pkglog.Component(pkglog.Admin).Info("豆瓣检测", "stage", "fetch_cookie", "mode", mode, "err", err)
+		writeJSON(w, map[string]any{"ok": false, "http": 0, "snippet": err.Error()})
+		return
+	}
+
+	probeURL := cookieProbeURL(r, s.rt)
+	page := cookie.ProbePage(ctx, probeURL, rawCookie, nil)
+	resp := map[string]any{"ok": page.OK, "http": page.HTTP}
+	if !page.OK && page.Snippet != "" {
+		resp["snippet"] = page.Snippet
+	}
+	pkglog.Component(pkglog.Admin).Info("豆瓣检测",
+		"stage", "page",
+		"mode", mode,
+		"ok", page.OK,
+		"http", page.HTTP,
+		"url", probeURL,
+	)
+	writeJSON(w, resp)
+}
+
+func (s *Server) draftCookieConfig(r *http.Request) config.DoubanCookieConfig {
 	stored := s.rt.Secrets().Collector.Douban
+	mode := strings.ToLower(strings.TrimSpace(firstNonEmpty(
+		r.PostFormValue("cookie_mode"),
+		r.PostFormValue("secret.collector.douban.cookie_mode"),
+		stored.CookieMode,
+	)))
+	if mode == "" {
+		mode = "none"
+	}
 	draft := config.DoubanCookieConfig{
 		CookieMode: mode,
 		CookieRaw: firstNonEmpty(
@@ -64,7 +142,6 @@ func (s *Server) handleCookieTest(w http.ResponseWriter, r *http.Request) {
 			r.PostFormValue("secret.collector.douban.cookiecloud_password"),
 		),
 	}
-	// raw / cookiecloud 密码：草稿空则沿用已存
 	if draft.CookieRaw == "" {
 		draft.CookieRaw = stored.CookieRaw
 	}
@@ -77,120 +154,49 @@ func (s *Server) handleCookieTest(w http.ResponseWriter, r *http.Request) {
 	if draft.CookiecloudPass == "" {
 		draft.CookiecloudPass = stored.CookiecloudPass
 	}
-
-	resp := map[string]any{}
-	var parse cookieParsePart
-	var online cookieOnlinePart
-	var ccNames []string
-
-	if mode == "none" {
-		parse = cookieParsePart{OK: true, Status: "skipped", Detail: "匿名模式"}
-		online = cookieOnlinePart{OK: true, Status: "skipped", Detail: "匿名模式，跳过在线探测"}
-		resp["ok"] = true
-		resp["parse"] = parse
-		resp["online"] = online
-		resp["summary"] = "✅ 成功（匿名/跳过在线探测）"
-		pkglog.Component(pkglog.Admin).Info("[cookie_test] Cookie 探测", "cookie_len", 0, "status", "skipped")
-		writeJSON(w, resp)
-		return
-	}
-
-	if mode == "file" {
-		parse = cookieParsePart{OK: false, Detail: "cookie_mode=file 已移除，请改用 none/raw/cookiecloud"}
-		online = cookieOnlinePart{OK: false, Status: "skipped", Detail: "不支持 file 草稿"}
-		resp["ok"] = false
-		resp["parse"] = parse
-		resp["online"] = online
-		resp["summary"] = "❌ 失败：cookie_mode=file 已移除"
-		pkglog.Component(pkglog.Admin).Info("[cookie_test] Cookie 探测", "cookie_len", 0, "status", "error")
-		writeJSON(w, resp)
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
-	defer cancel()
-
-	var rawCookie string
-	var err error
-	if mode == "cookiecloud" {
-		rawCookie, ccNames, err = cookie.InspectCookieCloud(ctx, draft)
-	} else {
-		provider, perr := cookie.New(mode, draft)
-		if perr != nil {
-			err = perr
-		} else {
-			rawCookie, err = provider.Get(ctx, "douban")
-			ccNames = cookie.CookieHeaderNames(rawCookie)
-		}
-	}
-	if err != nil {
-		parse = cookieParsePart{OK: false, Detail: err.Error()}
-		online = cookieOnlinePart{OK: false, Status: "skipped", Detail: "获取 cookie 失败"}
-		resp["ok"] = false
-		resp["parse"] = parse
-		resp["online"] = online
-		if len(ccNames) > 0 {
-			resp["cookiecloud_cookies"] = ccNames
-		}
-		resp["summary"] = "❌ 失败：" + err.Error()
-		pkglog.Component(pkglog.Admin).Info("[cookie_test] Cookie 探测", "cookie_len", 0, "status", "error")
-		writeJSON(w, resp)
-		return
-	}
-
-	okParse, cookieLen, masked := cookie.ParseCookieRough(rawCookie)
-	parse = cookieParsePart{OK: okParse, CookieLen: cookieLen, PreviewMasked: masked}
-	if len(ccNames) == 0 {
-		ccNames = cookie.CookieHeaderNames(rawCookie)
-	}
-	if len(ccNames) > 0 {
-		resp["cookiecloud_cookies"] = ccNames
-	}
-	if !okParse {
-		parse.Detail = "cookie 为空或不含 ="
-		online = cookieOnlinePart{OK: false, Status: "skipped", Detail: "解析未通过，跳过在线"}
-		resp["ok"] = false
-		resp["parse"] = parse
-		resp["online"] = online
-		resp["summary"] = "❌ 失败：Cookie 解析失败" + cookieNamesHint(ccNames)
-		pkglog.Component(pkglog.Admin).Info("[cookie_test] Cookie 探测", "cookie_len", cookieLen, "status", "parse_fail")
-		writeJSON(w, resp)
-		return
-	}
-
-	onlineOK, onlineStatus, onlineDetail := cookie.OnlineProbe(ctx, rawCookie, nil)
-	online = cookieOnlinePart{OK: onlineOK, Status: onlineStatus, Detail: onlineDetail}
-	resp["ok"] = onlineOK
-	resp["parse"] = parse
-	resp["online"] = online
-	resp["summary"] = cookieTestSummary(onlineOK, onlineStatus, onlineDetail, parse, ccNames)
-	pkglog.Component(pkglog.Admin).Info("[cookie_test] Cookie 探测", "cookie_len", cookieLen, "status", onlineStatus, "cookie_names", len(ccNames))
-	writeJSON(w, resp)
+	return draft
 }
 
-func cookieNamesHint(names []string) string {
-	if len(names) == 0 {
-		return ""
+func fetchDraftCookie(ctx context.Context, mode string, draft config.DoubanCookieConfig) (string, error) {
+	m := config.ParseCookieMode(mode)
+	if m == config.CookieModeNone {
+		return "", nil
 	}
-	if len(names) > 8 {
-		names = names[:8]
+	// 豆瓣检测只读本地 cookie，不打 CookieCloud
+	ck := strings.TrimSpace(draft.CookieRaw)
+	if ck == "" {
+		return "", cookie.ErrCookieMissing
 	}
-	return "（命中：" + strings.Join(names, ", ") + "）"
+	return ck, nil
 }
 
-func cookieTestSummary(ok bool, status, detail string, parse cookieParsePart, names []string) string {
-	hint := cookieNamesHint(names)
-	if ok && (status == "skipped" || status == "ok") {
-		if status == "skipped" {
-			return "✅ 成功（匿名/跳过在线探测）" + hint
+// cookieProbeURL 优先草稿/已存第一组小组 URL，否则豆瓣首页
+func cookieProbeURL(r *http.Request, rt *config.HotConfig) string {
+	raw := firstNonEmpty(
+		r.PostFormValue("collector.douban.groups"),
+		r.PostFormValue("groups"),
+	)
+	if line := firstGroupLine(raw); line != "" {
+		return line
+	}
+	if rt != nil {
+		if app := rt.Get(); app != nil {
+			if groups := app.Collector.Douban.Groups; len(groups) > 0 {
+				if g := strings.TrimSpace(groups[0]); g != "" {
+					return g
+				}
+			}
 		}
-		return "✅ 成功：Cookie 可用" + hint
 	}
-	if status == "risk" || status == "captcha" || strings.Contains(detail, "风控") {
-		return "⚠️ 风控：" + detail + hint
+	return "https://www.douban.com/"
+}
+
+func firstGroupLine(raw string) string {
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			return line
+		}
 	}
-	if !parse.OK {
-		return "❌ 失败：" + firstNonEmpty(parse.Detail, "Cookie 解析失败") + hint
-	}
-	return "❌ 失败：" + firstNonEmpty(detail, status, "探测未通过") + hint
+	return ""
 }

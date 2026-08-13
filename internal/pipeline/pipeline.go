@@ -13,15 +13,16 @@ type FetchFunc[T any] func(ctx context.Context, limit int) ([]T, error)
 // BatchFunc 批处理函数：处理一批项
 type BatchFunc[T any] func(ctx context.Context, batch []T) error
 
-	// Options Consumer 参数（规格 2.3 协议语义）
-	type Options struct {
-		BatchSize int           // 组批大小：积压达到即处理
-		Linger    time.Duration // 兜底等待：积压不足时最长等多久处理一次
-		Component string        // 日志 component：filter / notifier（调用方传入）
-	}
+// Options Consumer 参数（规格 2.3 协议语义）
+type Options struct {
+	BatchSize int           // 组批大小：WaitFull 时凑满才处理；否则只是一次拉取上限
+	Linger    time.Duration // 兜底等待：积压不足时最长等多久处理一次
+	Component string        // 日志职责名：filter / ai_review / notifier
+	WaitFull  bool          // true=凑满 BatchSize 或 linger 才处理；false=有信号立刻处理并可抽干
+}
 
-	// DefaultLinger 公开配置已移除 linger 字段；代码侧固定兜底间隔
-	const DefaultLinger = 120 * time.Second
+// DefaultLinger 公开配置已移除 linger 字段；代码侧固定兜底间隔
+const DefaultLinger = 120 * time.Second
 
 // Consumer 通用组批触发协议：trigger 主动触发（加速器，丢信号不致命）
 // + linger 定时兜底（数据在库里，兜底必捞回，at-least-once）+ 批处理。
@@ -59,11 +60,11 @@ func (c *Consumer[T]) Signal() {
 // Run 阻塞消费循环：trigger / linger 触发 → 拉批 → 处理 → 循环。
 // ctx 取消或 Stop 调用后退出
 func (c *Consumer[T]) Run(ctx context.Context) {
-		// 防御：Linger<=0 时 time.NewTicker 会 panic；兜底用 DefaultLinger
-		linger := c.opts.Linger
-		if linger <= 0 {
-			linger = DefaultLinger
-		}
+	// 防御：Linger<=0 时 time.NewTicker 会 panic；兜底用 DefaultLinger
+	linger := c.opts.Linger
+	if linger <= 0 {
+		linger = DefaultLinger
+	}
 	ticker := time.NewTicker(linger)
 	defer ticker.Stop()
 	for {
@@ -73,20 +74,35 @@ func (c *Consumer[T]) Run(ctx context.Context) {
 		case <-c.stop:
 			return
 		case <-c.trigger:
+			c.step(ctx, false)
 		case <-ticker.C:
+			c.step(ctx, true)
 		}
-		// 拉批处理：空批跳过，错误记日志下轮再试（不误标记，状态机兜底）
-		log := pkglog.Component(c.opts.Component)
+	}
+}
+
+// step 拉一批处理。WaitFull 且非 linger 时不足批就等；否则立刻处理。
+// 不等批时满批再抽一轮，把积压抽干。
+func (c *Consumer[T]) step(ctx context.Context, linger bool) {
+	log := pkglog.Component(c.opts.Component)
+	for {
 		batch, err := c.fetch(ctx, c.opts.BatchSize)
 		if err != nil {
-			log.Error("[fetch_batch_failed] 拉批失败", "err", err)
-			continue
+			log.Error("拉批失败", "err", err)
+			return
 		}
 		if len(batch) == 0 {
-			continue
+			return
+		}
+		if c.opts.WaitFull && !linger && len(batch) < c.opts.BatchSize {
+			return
 		}
 		if err := c.process(ctx, batch); err != nil {
-			log.Error("[batch_process_failed] 批处理失败", "err", err, "count", len(batch))
+			log.Error("批处理失败", "err", err, "count", len(batch))
+			return
+		}
+		if c.opts.WaitFull || len(batch) < c.opts.BatchSize {
+			return
 		}
 	}
 }

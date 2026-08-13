@@ -1,11 +1,11 @@
 package admin
 
 import (
-	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
 
+	"rent-scout/internal/pkglog"
 	"rent-scout/internal/store"
 )
 
@@ -20,25 +20,25 @@ type channelRow struct {
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	today, err := s.db.TodayStats()
 	if err != nil {
-		slog.Error("今日统计失败", "err", err)
+		pkglog.Component(pkglog.Admin).Error("今日统计失败", "err", err)
 		http.Error(w, "查询失败", http.StatusInternalServerError)
 		return
 	}
 	channels, err := s.db.ChannelStats()
 	if err != nil {
-		slog.Error("渠道统计失败", "err", err)
+		pkglog.Component(pkglog.Admin).Error("渠道统计失败", "err", err)
 		http.Error(w, "查询失败", http.StatusInternalServerError)
 		return
 	}
 	ruleStats, err := s.db.RuleHitStats()
 	if err != nil {
-		slog.Error("规则命中统计失败", "err", err)
+		pkglog.Component(pkglog.Admin).Error("规则命中统计失败", "err", err)
 		http.Error(w, "查询失败", http.StatusInternalServerError)
 		return
 	}
 	dead, err := s.db.FetchDeadNotifications(100)
 	if err != nil {
-		slog.Error("死信列表失败", "err", err)
+		pkglog.Component(pkglog.Admin).Error("死信列表失败", "err", err)
 		http.Error(w, "查询失败", http.StatusInternalServerError)
 		return
 	}
@@ -49,7 +49,7 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	if err := s.tmpl.ExecuteTemplate(w, "stats", mergePageCtx(pageCtx(r, "stats"), map[string]any{
 		"Today": today, "Channels": rows, "RuleStats": ruleStats, "Dead": dead, "Msg": r.URL.Query().Get("msg"),
 	})); err != nil {
-		slog.Error("模板渲染失败", "err", err)
+		pkglog.Component(pkglog.Admin).Error("模板渲染失败", "err", err)
 	}
 }
 
@@ -73,13 +73,13 @@ func (s *Server) handleDeadReset(w http.ResponseWriter, r *http.Request) {
 	}
 	reset, err := s.db.ResetNotification(postID, channel)
 	if err != nil {
-		slog.Error("死信重发失败", "post_id", postID, "channel", channel, "err", err)
+		pkglog.Component(pkglog.Admin).Error("死信重发失败", "post_id", postID, "channel", channel, "err", err)
 		http.Error(w, "写入失败", http.StatusInternalServerError)
 		return
 	}
 	if !reset {
 		// 非 dead 状态（幂等保护）：提示后仍回统计页
-		slog.Info("[dead_reset_skipped] 死信重发跳过", "post_id", postID, "channel", channel)
+		pkglog.Component(pkglog.Admin).Info("死信重发跳过", "post_id", postID, "channel", channel)
 		q := url.Values{}
 		if tok := r.URL.Query().Get("token"); tok != "" {
 			q.Set("token", tok)
@@ -88,7 +88,7 @@ func (s *Server) handleDeadReset(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/admin/stats?"+q.Encode(), http.StatusSeeOther)
 		return
 	}
-	slog.Info("[dead_reset] 死信已重置", "post_id", postID, "channel", channel)
+	pkglog.Component(pkglog.Admin).Info("死信已重置", "post_id", postID, "channel", channel)
 	// PRG：防重复提交；鉴权开启时把 token 带回重定向目标，避免跳回后 401
 	redirectTo := "/admin/stats"
 	if tok := r.URL.Query().Get("token"); tok != "" {

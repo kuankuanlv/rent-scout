@@ -57,17 +57,17 @@ func (s *Server) handleRules(w http.ResponseWriter, r *http.Request) {
 func loadRuleRows(db *store.Store) ([]Row, error) {
 	log := pkglog.Component(pkglog.Admin)
 	if err := db.EnsureDefaultRule(); err != nil {
-		log.Error("[rule_seed_failed] 默认规则播种失败", "err", err)
+		log.Error("默认规则播种失败", "err", err)
 		return nil, err
 	}
 	list, err := db.ListRules(false)
 	if err != nil {
-		log.Error("[rule_list_failed] 规则列表失败", "err", err)
+		log.Error("规则列表失败", "err", err)
 		return nil, err
 	}
 	statsMap := map[int64]store.RuleStat{}
 	if stats, err := db.RuleHitStats(); err != nil {
-		log.Error("[rule_stats_failed] 规则统计失败", "err", err)
+		log.Error("规则统计失败", "err", err)
 	} else {
 		for _, st := range stats {
 			statsMap[st.RuleID] = st
@@ -102,11 +102,11 @@ func (s *Server) createRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := s.db.CreateRule(models.Rule{Name: name, Type: rtype, Mode: mode, Value: value, Enabled: true, Priority: priority}); err != nil {
-		pkglog.Component(pkglog.Admin).Error("[rule_create_failed] 规则创建失败", "name", name, "err", err)
+		pkglog.Component(pkglog.Admin).Error("规则创建失败", "name", name, "err", err)
 		http.Error(w, "写入失败", http.StatusInternalServerError)
 		return
 	}
-	pkglog.Component(pkglog.Admin).Info("[rule_created] 规则已创建", "name", name, "type", rtype, "priority", priority)
+	pkglog.Component(pkglog.Admin).Info("规则已创建", "name", name, "type", rtype, "priority", priority)
 	s.redirectRules(w, r)
 }
 
@@ -138,7 +138,7 @@ func (s *Server) handleRulesID(w http.ResponseWriter, r *http.Request) {
 // name/type 随行内 hidden 回传（本页不支持改名/改型）；mode 废弃可忽略；enabled 由 checkbox 存在性决定
 func (s *Server) updateRule(w http.ResponseWriter, r *http.Request, id int64) {
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "bad form", http.StatusBadRequest)
+		s.replyRule(w, r, http.StatusBadRequest, "bad form")
 		return
 	}
 	rtype := r.PostFormValue("type")
@@ -148,20 +148,36 @@ func (s *Server) updateRule(w http.ResponseWriter, r *http.Request, id int64) {
 	priority, err := strconv.Atoi(r.PostFormValue("priority"))
 	enabled := r.PostFormValue("enabled") != ""
 	if err != nil || name == "" || !ruleTypes[rtype] || value == "" {
-		http.Error(w, "参数无效", http.StatusBadRequest)
+		s.replyRule(w, r, http.StatusBadRequest, "参数无效")
 		return
 	}
 	if err := s.db.UpdateRule(models.Rule{ID: id, Name: name, Type: rtype, Mode: mode, Value: value, Enabled: enabled, Priority: priority}); err != nil {
 		if errors.Is(err, store.ErrLastEnabledRule) {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			s.replyRule(w, r, http.StatusBadRequest, err.Error())
 			return
 		}
-		pkglog.Component(pkglog.Admin).Error("[rule_update_failed] 规则更新失败", "id", id, "err", err)
-		http.Error(w, "写入失败", http.StatusInternalServerError)
+		pkglog.Component(pkglog.Admin).Error("规则更新失败", "id", id, "err", err)
+		s.replyRule(w, r, http.StatusInternalServerError, "写入失败")
 		return
 	}
-	pkglog.Component(pkglog.Admin).Info("[rule_updated] 规则已更新", "id", id, "value", value, "priority", priority, "enabled", enabled)
+	pkglog.Component(pkglog.Admin).Info("规则已更新", "id", id, "value", value, "priority", priority, "enabled", enabled)
+	s.replyRuleOK(w, r)
+}
+
+func (s *Server) replyRuleOK(w http.ResponseWriter, r *http.Request) {
+	if wantsJSON(r) {
+		writeJSON(w, map[string]any{"ok": true})
+		return
+	}
 	s.redirectRules(w, r)
+}
+
+func (s *Server) replyRule(w http.ResponseWriter, r *http.Request, code int, msg string) {
+	if wantsJSON(r) {
+		writeJSONStatus(w, code, map[string]any{"ok": false, "error": msg})
+		return
+	}
+	http.Error(w, msg, code)
 }
 
 // deleteRule 删除规则（POST /admin/rules/{id}/delete）
@@ -171,11 +187,11 @@ func (s *Server) deleteRule(w http.ResponseWriter, r *http.Request, id int64) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		pkglog.Component(pkglog.Admin).Error("[rule_delete_failed] 规则删除失败", "id", id, "err", err)
+		pkglog.Component(pkglog.Admin).Error("规则删除失败", "id", id, "err", err)
 		http.Error(w, "写入失败", http.StatusInternalServerError)
 		return
 	}
-	pkglog.Component(pkglog.Admin).Info("[rule_deleted] 规则已删除", "id", id)
+	pkglog.Component(pkglog.Admin).Info("规则已删除", "id", id)
 	s.redirectRules(w, r)
 }
 

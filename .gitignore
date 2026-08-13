@@ -1,6 +1,5 @@
-# 本地计划/规格草稿可不入库；架构说明入库
-docs/*
-!docs/ARCHITECTURE.md
+# 本地计划/规格/架构草稿（整目录不入库）
+docs/
 
 # SQLite 数据文件目录与文件
 db/
@@ -21,3 +20,4 @@ logs/
 
 # 子代理开发临时文件（进度账本/任务简报/审查包）
 .superpowers/
+.codegraph/

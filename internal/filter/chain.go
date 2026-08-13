@@ -16,7 +16,7 @@ type AIEvaluator interface {
 }
 
 // RuleChain 规则链执行器（规格 5.3）：硬编码链 → AI 链。
-// 编排在 Consumer（任务 8）：逐帖 EvaluateHard，未定案的聚合为 AI 批一次调用（调整规格 C）
+// 编排：filter 协程逐帖 EvaluateHard；未定案交 ai_review 从库凑批 EvaluateAIBatch
 type RuleChain struct {
 	ai AIEvaluator // nil = AI 未启用
 }

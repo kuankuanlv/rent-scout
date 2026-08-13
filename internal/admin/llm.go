@@ -25,25 +25,58 @@ func (s *Server) handleLLMTest(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	// 轻量探测：优先 GET /models；失败再极短 chat
-	c := llm.NewClient(llm.ClientOptions{BaseURL: draft.baseURL, APIKey: draft.apiKey, Model: draft.model})
+	pkglog.Component(pkglog.Admin).Info("LLM 连通检测开始",
+		"stage", "start",
+		"base_url", draft.baseURL,
+		"model", draft.model,
+		"api_style", draft.apiStyle,
+	)
+	c := llm.NewClient(llm.ClientOptions{BaseURL: draft.baseURL, APIKey: draft.apiKey, Model: draft.model, DumpHTTP: true})
 	models, listErr := c.ListModels(ctx)
 	if listErr == nil {
-		pkglog.Component(pkglog.Admin).Info("[llm_test] LLM 连通检测", "ok", true, "via", "models", "count", len(models))
-		writeJSON(w, map[string]any{"ok": true, "detail": "models 接口可达", "via": "models"})
+		preview := models
+		if len(preview) > 8 {
+			preview = preview[:8]
+		}
+		pkglog.Component(pkglog.Admin).Info("LLM 连通检测",
+			"stage", "models",
+			"ok", true,
+			"base_url", draft.baseURL,
+			"count", len(models),
+			"preview", preview,
+		)
+		writeJSON(w, map[string]any{"ok": true, "detail": "models 接口可达", "via": "models", "count": len(models)})
 		return
 	}
+	pkglog.Component(pkglog.Admin).Info("LLM 连通检测",
+		"stage", "models",
+		"ok", false,
+		"base_url", draft.baseURL,
+		"err", listErr,
+	)
 	if draft.model == "" {
-		pkglog.Component(pkglog.Admin).Info("[llm_test] LLM 连通检测", "ok", false, "via", "models")
 		writeJSON(w, map[string]any{"ok": false, "detail": "models 失败且未填模型: " + listErr.Error(), "error": listErr.Error()})
 		return
 	}
-	_, chatErr := c.Chat(ctx, "ping", "回复 ok")
+	reply, chatErr := c.Chat(ctx, "ping", "回复 ok")
 	if chatErr != nil {
-		pkglog.Component(pkglog.Admin).Info("[llm_test] LLM 连通检测", "ok", false, "via", "chat")
-		writeJSON(w, map[string]any{"ok": false, "detail": chatErr.Error(), "error": chatErr.Error()})
+		pkglog.Component(pkglog.Admin).Info("LLM 连通检测",
+			"stage", "chat",
+			"ok", false,
+			"base_url", draft.baseURL,
+			"model", draft.model,
+			"err", chatErr,
+		)
+		writeJSON(w, map[string]any{"ok": false, "detail": chatErr.Error(), "error": chatErr.Error(), "via": "chat"})
 		return
 	}
-	pkglog.Component(pkglog.Admin).Info("[llm_test] LLM 连通检测", "ok", true, "via", "chat")
+	pkglog.Component(pkglog.Admin).Info("LLM 连通检测",
+		"stage", "chat",
+		"ok", true,
+		"base_url", draft.baseURL,
+		"model", draft.model,
+		"reply", clipLog(reply, 200),
+	)
 	writeJSON(w, map[string]any{"ok": true, "detail": "chat 通路正常", "via": "chat"})
 }
 
@@ -60,15 +93,29 @@ func (s *Server) handleLLMModels(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
 	defer cancel()
-	c := llm.NewClient(llm.ClientOptions{BaseURL: draft.baseURL, APIKey: draft.apiKey, Model: draft.model})
+	pkglog.Component(pkglog.Admin).Info("拉取模型开始", "stage", "start", "base_url", draft.baseURL)
+	c := llm.NewClient(llm.ClientOptions{BaseURL: draft.baseURL, APIKey: draft.apiKey, Model: draft.model, DumpHTTP: true})
 	models, err := c.ListModels(ctx)
 	if err != nil {
-		pkglog.Component(pkglog.Admin).Info("[llm_models] 拉取模型失败", "err", err)
+		pkglog.Component(pkglog.Admin).Info("拉取模型失败", "stage", "models", "base_url", draft.baseURL, "err", err)
 		writeJSON(w, map[string]any{"ok": false, "detail": err.Error(), "error": err.Error()})
 		return
 	}
-	pkglog.Component(pkglog.Admin).Info("[llm_models] 拉取模型成功", "count", len(models))
+	preview := models
+	if len(preview) > 8 {
+		preview = preview[:8]
+	}
+	pkglog.Component(pkglog.Admin).Info("拉取模型成功", "stage", "models", "base_url", draft.baseURL, "count", len(models), "preview", preview)
 	writeJSON(w, map[string]any{"ok": true, "models": models})
+}
+
+func clipLog(s string, n int) string {
+	s = strings.TrimSpace(s)
+	r := []rune(s)
+	if len(r) > n {
+		return string(r[:n]) + "..."
+	}
+	return s
 }
 
 type llmDraft struct {

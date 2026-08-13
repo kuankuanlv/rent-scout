@@ -12,9 +12,27 @@ import (
 
 // HotConfig 并发安全的热配置容器：独立 goroutine 轮询 DB，COW 替换快照；业务只读 Get/Secrets
 type HotConfig struct {
-	appPtr     atomic.Pointer[AppConfig]
-	secretsPtr atomic.Pointer[Secrets]
-	db         *store.Store
+	appPtr      atomic.Pointer[AppConfig]
+	secretsPtr  atomic.Pointer[Secrets]
+	db          *store.Store
+	mu          sync.Mutex
+	afterReload func(*AppConfig)
+}
+
+// SetAfterReload 重载成功后回调（如同步日志 ring 容量）；须在 WatchDB 前登记
+func (h *HotConfig) SetAfterReload(fn func(*AppConfig)) {
+	h.mu.Lock()
+	h.afterReload = fn
+	h.mu.Unlock()
+}
+
+func (h *HotConfig) fireAfterReload(app *AppConfig) {
+	h.mu.Lock()
+	fn := h.afterReload
+	h.mu.Unlock()
+	if fn != nil && app != nil {
+		fn(app)
+	}
 }
 
 // NewHotConfig 创建热配置容器
@@ -60,24 +78,27 @@ func (h *HotConfig) FeedbackSecret() string {
 
 // ReloadOnce 从 SQLite 重载；COW 替换指针，读者无锁
 func (h *HotConfig) ReloadOnce() error {
-	// 不能 import pkglog（与 config 循环依赖），component 取值与 pkglog.HotConfig 一致
-	log := slog.With("component", "hot_config")
+	// 不能 import pkglog（循环依赖）；duty 与 pkglog.HotConfig 同为 hot_config_reload
+	log := slog.With("duty", "hot_config_reload")
 	kv, err := store.GetConfigMap(h.db)
 	if err != nil {
-		log.Warn("[hot_config_load_failed] 配置重载失败", "err", err)
+		log.Warn("配置重载失败", "err", err)
 		return err
 	}
 	if len(kv) == 0 {
-		h.appPtr.Store(DefaultApp())
+		app := DefaultApp()
+		h.appPtr.Store(app)
 		h.secretsPtr.Store(DefaultSecrets())
-		log.Info("[hot_config_load] 配置变更，开始 COW 更换快照", "source", "defaults", "keys", 0)
+		h.fireAfterReload(app)
+		log.Info("配置变更，开始 COW 更换快照", "source", "defaults", "keys", 0)
 		return nil
 	}
 	app := KVToApp(kv)
 	sec := KVToSecrets(kv)
 	h.appPtr.Store(app)
 	h.secretsPtr.Store(sec)
-	log.Info("[hot_config_load] 配置变更，开始 COW 更换快照", "source", "sqlite", "keys", len(kv), "addr", app.Server.Addr)
+	h.fireAfterReload(app)
+	log.Info("配置变更，开始 COW 更换快照", "source", "sqlite", "keys", len(kv), "addr", app.Server.Addr)
 	return nil
 }
 
@@ -85,7 +106,7 @@ func (h *HotConfig) ReloadOnce() error {
 func (h *HotConfig) WatchDB(interval time.Duration) func() {
 	stop := make(chan struct{})
 	var once sync.Once
-	log := slog.With("component", "hot_config")
+	log := slog.With("duty", "hot_config_reload")
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
@@ -101,7 +122,7 @@ func (h *HotConfig) WatchDB(interval time.Duration) func() {
 			case <-ticker.C:
 				kv, err := store.GetConfigMap(h.db)
 				if err != nil {
-					log.Warn("[hot_config_load_failed] 配置重载失败", "err", err)
+					log.Warn("配置重载失败", "err", err)
 					continue
 				}
 				hash := hashKV(kv)
@@ -112,7 +133,7 @@ func (h *HotConfig) WatchDB(interval time.Duration) func() {
 					}
 				} else {
 					// hash 未变跳过；Debug 避免 10s 刷屏
-					log.Debug("[hot_config_skip] 配置 hash 未变，跳过 COW")
+					log.Debug("配置 hash 未变，跳过 COW")
 				}
 			}
 		}

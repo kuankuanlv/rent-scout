@@ -117,6 +117,22 @@ func TestDoubanMultiGroupRotation(t *testing.T) {
 	}
 }
 
+func TestDoubanSkipGroup(t *testing.T) {
+	d, err := NewDouban(DoubanOptions{GroupURLs: []string{"http://g0/x", "http://g1/x"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := d.SkipGroup(""); got != "1:0" {
+		t.Errorf("SkipGroup(\"\") = %q, want 1:0", got)
+	}
+	if got := d.SkipGroup("0:50"); got != "1:0" {
+		t.Errorf("SkipGroup(0:50) = %q, want 1:0", got)
+	}
+	if got := d.SkipGroup("1:0"); got != "" {
+		t.Errorf("最后一组 SkipGroup = %q, want 空", got)
+	}
+}
+
 // 风控检测：响应含风控关键字 → 报错（参考仓库 detail.go 检测逻辑）
 func TestDoubanRiskDetection(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

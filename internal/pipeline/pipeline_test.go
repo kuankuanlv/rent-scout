@@ -109,6 +109,68 @@ func TestBatchSizeLimit(t *testing.T) {
 	}
 }
 
+// WaitFull：不足批时 Signal 不处理，等 linger 才处理
+func TestWaitFullSkipsPartialUntilLinger(t *testing.T) {
+	var processed atomic.Int32
+	done := make(chan struct{}, 1)
+	c := New(func(ctx context.Context, limit int) ([]int, error) {
+		return []int{1}, nil
+	}, func(ctx context.Context, batch []int) error {
+		processed.Add(int32(len(batch)))
+		select {
+		case done <- struct{}{}:
+		default:
+		}
+		return nil
+	}, Options{BatchSize: 3, Linger: 80 * time.Millisecond, WaitFull: true})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go c.Run(ctx)
+
+	c.Signal()
+	time.Sleep(30 * time.Millisecond)
+	if processed.Load() != 0 {
+		t.Fatalf("未凑满不应处理, got %d", processed.Load())
+	}
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("linger 未处理不足批")
+	}
+	if processed.Load() != 1 {
+		t.Errorf("processed = %d, want 1", processed.Load())
+	}
+}
+
+// WaitFull：库里已满批，Signal 立刻处理
+func TestWaitFullProcessesWhenFull(t *testing.T) {
+	var processed atomic.Int32
+	done := make(chan struct{}, 1)
+	c := New(func(ctx context.Context, limit int) ([]int, error) {
+		return []int{1, 2, 3}, nil
+	}, func(ctx context.Context, batch []int) error {
+		processed.Add(int32(len(batch)))
+		select {
+		case done <- struct{}{}:
+		default:
+		}
+		return nil
+	}, Options{BatchSize: 3, Linger: time.Hour, WaitFull: true})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go c.Run(ctx)
+
+	c.Signal()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("满批 Signal 后未立即处理")
+	}
+	if processed.Load() != 3 {
+		t.Errorf("processed = %d, want 3", processed.Load())
+	}
+}
+
 // 上下文取消：Run 退出，goroutine 不泄漏
 func TestRunStopsOnCancel(t *testing.T) {
 	c := New(func(ctx context.Context, limit int) ([]int, error) { return nil, nil },

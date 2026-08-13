@@ -76,6 +76,51 @@ func TestUnknownCookieMode(t *testing.T) {
 	}
 }
 
+func TestHotConfigCookieCloudReadsLocalOnly(t *testing.T) {
+	hit := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hit = true
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	env := &config.Secrets{
+		Collector: config.SecretsCollector{
+			Douban: config.DoubanCookieConfig{
+				CookieMode:      config.CookieModeCookieCloud.String(),
+				CookieRaw:       "dbcl2=local-only",
+				CookiecloudURL:  srv.URL,
+				CookiecloudKey:  "uuid",
+				CookiecloudPass: "pass",
+			},
+		},
+	}
+	p := NewHotConfigProvider(config.NewHotConfigWithSnapshot(nil, env))
+	got, err := p.Get(context.Background(), "douban")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "dbcl2=local-only" {
+		t.Errorf("应读本地 cookie, got %q", got)
+	}
+	if hit {
+		t.Fatal("采集 Get 禁止请求 CookieCloud")
+	}
+}
+
+func TestHotConfigCookieCloudEmptyIsError(t *testing.T) {
+	env := &config.Secrets{
+		Collector: config.SecretsCollector{
+			Douban: config.DoubanCookieConfig{CookieMode: config.CookieModeCookieCloud.String()},
+		},
+	}
+	p := NewHotConfigProvider(config.NewHotConfigWithSnapshot(nil, env))
+	_, err := p.Get(context.Background(), "douban")
+	if err != ErrCookieMissing {
+		t.Fatalf("空 cookie 应 ErrCookieMissing, got %v", err)
+	}
+}
+
 func TestParseCookieRoughAndMask(t *testing.T) {
 	ok, n, _ := ParseCookieRough("")
 	if ok || n != 0 {

@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"rent-scout/internal/collector/cookie"
 	"rent-scout/internal/config"
 	"rent-scout/internal/models"
 	"rent-scout/internal/store"
@@ -214,6 +216,12 @@ func TestSetupStep3RendersCookieModeAndHint(t *testing.T) {
 
 // TestSetupAllowsCookieTestDuringSetup setup 未完成时 POST cookie/test 不重定向
 func TestSetupAllowsCookieTestDuringSetup(t *testing.T) {
+	orig := cookie.ProbePage
+	cookie.ProbePage = func(ctx context.Context, rawURL, c string, client *http.Client) cookie.DoubanPageResult {
+		return cookie.DoubanPageResult{OK: false, HTTP: 200, Snippet: "有异常请求从你的 IP 发出，请 登录 使用豆瓣"}
+	}
+	defer func() { cookie.ProbePage = orig }()
+
 	s := newAdminTestStore(t)
 	defer s.Close()
 	srv := newSetupInProgressServer(t, s, nil)
@@ -233,7 +241,10 @@ func TestSetupAllowsCookieTestDuringSetup(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
-	if out["ok"] != true {
-		t.Errorf("ok = %v", out["ok"])
+	if out["ok"] != false {
+		t.Errorf("应返回探测 JSON: %v", out)
+	}
+	if out["http"] != float64(200) {
+		t.Errorf("http = %v, want 200", out["http"])
 	}
 }

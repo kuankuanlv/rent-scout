@@ -9,22 +9,26 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"rent-scout/internal/pkglog"
 )
 
 // ClientOptions OpenAI 兼容客户端参数
 type ClientOptions struct {
-	BaseURL string // 如 https://api.deepseek.com/v1（兼容 OpenAI 格式）
-	APIKey  string
-	Model   string
-	Client  *http.Client // 测试注入
+	BaseURL  string // 如 https://api.deepseek.com/v1（兼容 OpenAI 格式）
+	APIKey   string
+	Model    string
+	Client   *http.Client // 测试注入
+	DumpHTTP bool         // 管理台探测：打 raw 请求应答
 }
 
 // Client LLM 客户端（规格 5.4）：POST {baseURL}/chat/completions
 type Client struct {
-	baseURL string
-	apiKey  string
-	model   string
-	http    *http.Client
+	baseURL  string
+	apiKey   string
+	model    string
+	http     *http.Client
+	dumpHTTP bool
 }
 
 // NewClient 创建客户端
@@ -32,7 +36,13 @@ func NewClient(opts ClientOptions) *Client {
 	if opts.Client == nil {
 		opts.Client = &http.Client{Timeout: 60 * time.Second}
 	}
-	return &Client{baseURL: strings.TrimSuffix(opts.BaseURL, "/"), apiKey: opts.APIKey, model: opts.Model, http: opts.Client}
+	return &Client{
+		baseURL:  strings.TrimSuffix(opts.BaseURL, "/"),
+		apiKey:   opts.APIKey,
+		model:    opts.Model,
+		http:     opts.Client,
+		dumpHTTP: opts.DumpHTTP,
+	}
 }
 
 // Model 客户端模型名（pool fallback 记录用）
@@ -61,6 +71,7 @@ func (c *Client) Chat(ctx context.Context, system, user string) (string, error) 
 
 	resp, err := c.http.Do(req)
 	if err != nil {
+		c.dump("llm_chat", req, body, 0, nil, nil, err)
 		return "", fmt.Errorf("LLM 请求失败: %w", err)
 	}
 	defer resp.Body.Close()
@@ -68,6 +79,7 @@ func (c *Client) Chat(ctx context.Context, system, user string) (string, error) 
 	if err != nil {
 		return "", err
 	}
+	c.dump("llm_chat", req, body, resp.StatusCode, resp.Header, b, nil)
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("LLM HTTP %d: %s", resp.StatusCode, truncate(string(b), 200))
 	}
@@ -97,6 +109,7 @@ func (c *Client) ListModels(ctx context.Context) ([]string, error) {
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	resp, err := c.http.Do(req)
 	if err != nil {
+		c.dump("llm_models", req, nil, 0, nil, nil, err)
 		return nil, fmt.Errorf("LLM models 请求失败: %w", err)
 	}
 	defer resp.Body.Close()
@@ -104,6 +117,7 @@ func (c *Client) ListModels(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	c.dump("llm_models", req, nil, resp.StatusCode, resp.Header, b, nil)
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("LLM models HTTP %d: %s", resp.StatusCode, truncate(string(b), 200))
 	}
@@ -122,6 +136,17 @@ func (c *Client) ListModels(ctx context.Context) ([]string, error) {
 		}
 	}
 	return ids, nil
+}
+
+func (c *Client) dump(stage string, req *http.Request, reqBody []byte, status int, respHeader http.Header, respBody []byte, err error) {
+	if c == nil || !c.dumpHTTP || req == nil {
+		return
+	}
+	if err != nil {
+		pkglog.ProbeHTTPErr(pkglog.Admin, stage, req.Method, req.URL.String(), req.Header, err)
+		return
+	}
+	pkglog.ProbeHTTP(pkglog.Admin, stage, req.Method, req.URL.String(), req.Header, reqBody, status, respHeader, respBody)
 }
 
 // truncate 错误消息截断（防日志膨胀）

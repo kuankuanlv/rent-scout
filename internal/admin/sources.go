@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"rent-scout/internal/pkglog"
+	"rent-scout/internal/store"
 )
 
 // SourceController 采集源控制接口（main 注入 collector.Runner；admin 不依赖 collector 包）
@@ -29,14 +30,17 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) {
 	}
 	names := s.ctrl.Sources()
 	type item struct {
-		Name    string `json:"name"`
-		Enabled bool   `json:"enabled"`
-		Cursor  string `json:"cursor"`
+		Name      string `json:"name"`
+		Enabled   bool   `json:"enabled"`
+		Cursor    string `json:"cursor"`
+		Phase     string `json:"phase"`
+		Watermark string `json:"watermark"`
 	}
 	items := make([]item, 0, len(names))
 	for _, n := range names {
-		cursor, _, _ := s.db.GetCursor(n)
-		items = append(items, item{n, s.ctrl.SourceEnabled(n), cursor})
+		raw, _, _ := s.db.GetCursor(n)
+		p := store.ParseSourceProgress(raw)
+		items = append(items, item{n, s.ctrl.SourceEnabled(n), p.Page, p.Phase, p.Watermark})
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(map[string]any{"sources": items})
@@ -61,6 +65,21 @@ func (s *Server) handleSourceAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name, action := parts[0], parts[1]
+	if action == "reset" {
+		if !sourceKnown(s.ctrl, name) {
+			http.Error(w, "源不存在", http.StatusNotFound)
+			return
+		}
+		if err := s.db.ClearProgress(name); err != nil {
+			pkglog.Component(pkglog.Admin).Warn("重置源进度失败", "source", name, "err", err)
+			http.Error(w, "重置失败", http.StatusInternalServerError)
+			return
+		}
+		pkglog.Component(pkglog.Admin).Info("源操作", "source", name, "action", "reset")
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+		return
+	}
 	var err error
 	switch action {
 	case "trigger":
@@ -75,11 +94,20 @@ func (s *Server) handleSourceAction(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		// 控制器仅对未知源返回错误 → 404
-		pkglog.Component(pkglog.Admin).Warn("[source_action_failed] 源操作失败", "source", name, "action", action, "err", err)
+		pkglog.Component(pkglog.Admin).Warn("源操作失败", "source", name, "action", action, "err", err)
 		http.Error(w, "源不存在", http.StatusNotFound)
 		return
 	}
-	pkglog.Component(pkglog.Admin).Info("[source_action] 源操作", "source", name, "action", action)
+	pkglog.Component(pkglog.Admin).Info("源操作", "source", name, "action", action)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+}
+
+func sourceKnown(ctrl SourceController, name string) bool {
+	for _, n := range ctrl.Sources() {
+		if n == name {
+			return true
+		}
+	}
+	return false
 }

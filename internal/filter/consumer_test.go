@@ -38,7 +38,7 @@ func TestConsumerProcessBatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := c.processBatch(context.Background(), batch); err != nil {
+	if err := c.processHard(context.Background(), batch); err != nil {
 		t.Fatal(err)
 	}
 
@@ -85,7 +85,7 @@ func TestConsumerRejects(t *testing.T) {
 
 	c := NewConsumer(chain, st, nil, 500)
 	batch, _ := st.FetchPendingByStatus(models.PostStatusCollected, 10)
-	if err := c.processBatch(context.Background(), batch); err != nil {
+	if err := c.processHard(context.Background(), batch); err != nil {
 		t.Fatal(err)
 	}
 	// collected 清空
@@ -175,7 +175,17 @@ func TestConsumerAIBatch(t *testing.T) {
 			batch[1].ID: {Passed: false, Reason: "超出预算", Price: 9000},
 			batch[2].ID: {Passed: true, Reason: "通勤方便", Price: 4200},
 		}
-		if err := c.processBatch(context.Background(), batch); err != nil {
+		if err := c.processHard(context.Background(), batch); err != nil {
+			t.Fatal(err)
+		}
+		if fake.calls != 0 {
+			t.Errorf("硬规则阶段不应调 AI, calls=%d", fake.calls)
+		}
+		pending, _ := st.FetchPendingByStatus(models.PostStatusPending, 10)
+		if len(pending) != 3 {
+			t.Fatalf("pending 数 = %d, want 3（交 AI 审核）", len(pending))
+		}
+		if err := c.processAI(context.Background(), pending); err != nil {
 			t.Fatal(err)
 		}
 		// 核心：多帖未定案只触发 1 次 EvaluateBatch（非每帖一次 LLM 调用）
@@ -221,7 +231,11 @@ func TestConsumerAIBatch(t *testing.T) {
 	t.Run("失败整批保持 pending", func(t *testing.T) {
 		fake := &fakeAIEvaluator{err: context.DeadlineExceeded}
 		c, st, batch, notify := setupAIConsumer(t, fake, ConsumerOptions{})
-		if err := c.processBatch(context.Background(), batch); err != nil {
+		if err := c.processHard(context.Background(), batch); err != nil {
+			t.Fatal(err)
+		}
+		pendingHard, _ := st.FetchPendingByStatus(models.PostStatusPending, 10)
+		if err := c.processAI(context.Background(), pendingHard); err != nil {
 			t.Fatal(err)
 		}
 		if fake.calls != 1 {
@@ -256,7 +270,11 @@ func TestConsumerAISubBatchSplit(t *testing.T) {
 		for _, p := range batch {
 			fake.results[p.ID] = &models.AIResult{Passed: true, Reason: "ok", Price: 4000}
 		}
-		if err := c.processBatch(context.Background(), batch); err != nil {
+		if err := c.processHard(context.Background(), batch); err != nil {
+			t.Fatal(err)
+		}
+		pending, _ := st.FetchPendingByStatus(models.PostStatusPending, 10)
+		if err := c.processAI(context.Background(), pending); err != nil {
 			t.Fatal(err)
 		}
 		// 3 帖 / 上限 2 → 2 次调用（2+1），每次 ≤ 2
@@ -279,12 +297,16 @@ func TestConsumerAISubBatchSplit(t *testing.T) {
 	})
 	t.Run("未超上限整批一次调用", func(t *testing.T) {
 		fake := &fakeAIEvaluator{}
-		c, _, batch, _ := setupAIConsumer(t, fake, ConsumerOptions{AIBatchSize: 10})
+		c, st, batch, _ := setupAIConsumer(t, fake, ConsumerOptions{AIBatchSize: 10})
 		fake.results = map[int64]*models.AIResult{}
 		for _, p := range batch {
 			fake.results[p.ID] = &models.AIResult{Passed: true, Reason: "ok", Price: 4000}
 		}
-		if err := c.processBatch(context.Background(), batch); err != nil {
+		if err := c.processHard(context.Background(), batch); err != nil {
+			t.Fatal(err)
+		}
+		pending, _ := st.FetchPendingByStatus(models.PostStatusPending, 10)
+		if err := c.processAI(context.Background(), pending); err != nil {
 			t.Fatal(err)
 		}
 		if fake.calls != 1 {
@@ -298,7 +320,11 @@ func TestConsumerAISubBatchSplit(t *testing.T) {
 		for _, p := range batch {
 			fake.results[p.ID] = &models.AIResult{Passed: true, Reason: "ok", Price: 4000}
 		}
-		if err := c.processBatch(context.Background(), batch); err != nil {
+		if err := c.processHard(context.Background(), batch); err != nil {
+			t.Fatal(err)
+		}
+		pendingIn, _ := st.FetchPendingByStatus(models.PostStatusPending, 10)
+		if err := c.processAI(context.Background(), pendingIn); err != nil {
 			t.Fatal(err)
 		}
 		// 第一个子批（2 帖）失败 → 该子批 pending；第二个子批（1 帖）继续成功 → passed。
@@ -312,6 +338,32 @@ func TestConsumerAISubBatchSplit(t *testing.T) {
 			t.Errorf("pending=%d passed=%d, want pending=2 passed=1（仅失败子批待重试）", len(pending), len(passed))
 		}
 	})
+}
+
+func TestProcessHardSignalsAIWithoutCallingLLM(t *testing.T) {
+	fake := &fakeAIEvaluator{}
+	aiCh := make(chan struct{}, 10)
+	c, st, batch, notify := setupAIConsumer(t, fake, ConsumerOptions{AITrigger: aiCh})
+	if err := c.processHard(context.Background(), batch); err != nil {
+		t.Fatal(err)
+	}
+	if fake.calls != 0 {
+		t.Fatalf("筛选不应调 LLM, calls=%d", fake.calls)
+	}
+	pending, _ := st.FetchPendingByStatus(models.PostStatusPending, 10)
+	if len(pending) != 3 {
+		t.Fatalf("pending = %d, want 3", len(pending))
+	}
+	select {
+	case <-aiCh:
+	default:
+		t.Error("未定案应通知 AI 审核通道")
+	}
+	select {
+	case <-notify:
+		t.Error("未定案不应通知 notifier")
+	default:
+	}
 }
 
 func lens(batches [][]models.RentPost) []int {
@@ -352,8 +404,8 @@ func TestConsumerRulesReadErrorKeepsBatchPending(t *testing.T) {
 	// 注入规则读取故障：关闭 DB → c.rules()（ListRules）报错
 	st.Close()
 
-	if err := c.processBatch(context.Background(), batch); err != nil {
-		t.Fatalf("processBatch 应只记录告警不返回 error: %v", err)
+	if err := c.processHard(context.Background(), batch); err != nil {
+		t.Fatalf("processHard 应只记录告警不返回 error: %v", err)
 	}
 
 	// 用新连接验证（已关闭的 store 不能再查）：状态无变更、无 filter_results、无 notify

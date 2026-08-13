@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/url"
 
@@ -86,7 +87,7 @@ func (s *Server) handleConfigSectionSave(w http.ResponseWriter, r *http.Request)
 		http.Redirect(w, r, "/admin/config?"+q.Encode(), http.StatusSeeOther)
 		return
 	}
-	pkglog.Component(pkglog.Admin).Info("[config_saved] 配置已保存", "section", section, "keys", len(updates), "need_restart", needRestart)
+	pkglog.Component(pkglog.Admin).Info("配置已保存", "section", section, "keys", len(updates), "need_restart", needRestart)
 	q := url.Values{"tab": {tab}, "ok": {section}}
 	if needRestart {
 		q.Set("restart", "1")
@@ -95,4 +96,18 @@ func (s *Server) handleConfigSectionSave(w http.ResponseWriter, r *http.Request)
 		q.Set("token", tok)
 	}
 	http.Redirect(w, r, "/admin/config?"+q.Encode(), http.StatusSeeOther)
+}
+
+// handleConfigExport GET /admin/config/export：当前 KV 导出为 JSON（含敏感项，当备份用）
+func (s *Server) handleConfigExport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	kv := CurrentConfigKV(s.db)
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="rent-scout-config.json"`)
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(kv)
 }

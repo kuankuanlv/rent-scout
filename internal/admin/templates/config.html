@@ -10,11 +10,14 @@
   {{if .Error}}<div class="mb-4 rounded-xl bg-red-50 border border-red-200 text-red-800 px-4 py-3 text-sm">{{.Error}}</div>{{end}}
 
   <div class="mb-6 -mx-1 overflow-x-auto">
-    <div class="flex gap-1 min-w-max px-1 pb-1">
+    <div class="flex items-center gap-2 min-w-max px-1 pb-1">
+      <div class="flex gap-1 flex-1">
       {{range .Tabs}}
       <a href="/admin/config?tab={{.ID}}{{if $.Token}}&token={{$.Token}}{{end}}"
          class="shrink-0 px-3 py-2 rounded-lg text-sm {{if eq $.Tab .ID}}bg-brand-50 text-brand-700 font-semibold{{else}}text-gray-600 hover:bg-gray-50{{end}}">{{.Title}}</a>
       {{end}}
+      </div>
+      <a href="/admin/config/export{{if $.Token}}?token={{$.Token}}{{end}}" class="shrink-0 px-3 py-2 rounded-lg text-sm border border-gray-200 text-gray-600 hover:bg-gray-50">导出 JSON</a>
     </div>
   </div>
 
@@ -41,74 +44,65 @@
       </div>
       {{end}}
 
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {{range .Section.Items}}
-        <div class="{{if or (eq .Type "textarea") (eq .Type "select") (eq .Type "sources")}}md:col-span-2{{end}}"
-             {{if .ShowWhen}}data-show-when="{{.ShowWhen}}"{{end}}
-             {{if .Group}}{{if eq $.Tab "sources"}}data-source-group="{{.Group}}"{{else}}data-notify-group="{{.Group}}"{{end}}{{end}}>
-          <label class="block text-sm font-medium text-gray-700 mb-1">{{.Label}}</label>
-          {{if eq .Type "textarea"}}
-          <textarea name="{{.Key}}" rows="4" class="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm" {{if and .CanClear (eq .Value "")}}placeholder="留空不修改"{{end}} autocomplete="off">{{.Value}}</textarea>
-          {{if .CanClear}}<label class="inline-flex items-center gap-1 mt-1 text-xs text-gray-500"><input type="checkbox" name="clear_{{.Key}}" value="on"> 清空此项</label>{{end}}
-          {{else if eq .Type "checkbox"}}
-          <label class="inline-flex items-center gap-2 mt-1"><input type="checkbox" name="{{.Key}}" value="on" {{if or (eq .Value "true") (eq .Value "1") (eq .Value "on")}}checked{{end}}> 启用</label>
-          {{else if eq .Type "sources"}}
-          {{$srcKey := .Key}}{{$srcVal := .Value}}
-          <div class="flex flex-wrap gap-4 mt-1">
-            {{range .Options}}
-            <label class="inline-flex items-center gap-2 text-sm"><input type="checkbox" name="{{$srcKey}}" value="{{.}}" {{if csvHas $srcVal .}}checked{{end}}> {{.}}</label>
-            {{end}}
+      <div class="space-y-4">
+        {{range .Section.Blocks}}
+        {{if and (eq $.Tab "ai") (eq .Title "高级")}}
+        <details class="rounded-xl border border-dashed {{.Class}} px-4 py-3">
+          <summary class="cursor-pointer select-none text-sm text-gray-500 hover:text-gray-700">高级配置</summary>
+          <p class="text-xs text-gray-400 mt-1 mb-3">{{if .Hint}}{{.Hint}}{{else}}一般不用改，保持默认即可{{end}}</p>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {{range .Items}}{{template "config_field" .}}{{end}}
           </div>
-          {{else if eq .Type "select"}}
-          {{$selVal := .Value}}{{$labels := .OptionLabels}}
-          <select name="{{.Key}}" {{if eq .Key "secret.collector.douban.cookie_mode"}}id="cookie-mode-select"{{end}} {{if eq .Key "secret.filter.llm.api_style"}}id="llm-api-style"{{end}} class="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm">
-            {{range $i, $opt := .Options}}
-            <option value="{{$opt}}" {{if eq $selVal $opt}}selected{{end}}>{{if and $labels (lt $i (len $labels))}}{{index $labels $i}}{{else}}{{$opt}}{{end}}</option>
-            {{else}}
-            <option value="none" {{if or (eq $selVal "none") (eq $selVal "")}}selected{{end}}>none</option>
-            <option value="raw" {{if eq $selVal "raw"}}selected{{end}}>raw</option>
-            <option value="cookiecloud" {{if eq $selVal "cookiecloud"}}selected{{end}}>cookiecloud</option>
-            {{end}}
-          </select>
-          {{else if eq .Type "password"}}
-          <input type="password" name="{{.Key}}" value="{{.Value}}" {{if eq .Value ""}}placeholder="留空不修改"{{end}} autocomplete="off" class="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm">
-          {{if .CanClear}}<label class="inline-flex items-center gap-1 mt-1 text-xs text-gray-500"><input type="checkbox" name="clear_{{.Key}}" value="on"> 清空此项</label>{{end}}
-          {{else if eq .Type "number"}}
-          <input type="number" name="{{.Key}}" value="{{.Value}}" class="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm">
-          {{else}}
-          <input type="text" name="{{.Key}}" value="{{.Value}}" class="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm">
-          {{if .CanClear}}<label class="inline-flex items-center gap-1 mt-1 text-xs text-gray-500"><input type="checkbox" name="clear_{{.Key}}" value="on"> 清空此项</label>{{end}}
+        </details>
+        {{else}}
+        <div class="rounded-xl border p-4 {{.Class}}"
+             {{if .Group}}{{if eq $.Tab "sources"}}data-source-group="{{.Group}}"{{else}}data-notify-group="{{.Group}}"{{end}}{{end}}>
+          {{if .Title}}<h3 class="text-sm font-semibold text-gray-800">{{.Title}}</h3>{{end}}
+          {{if .Hint}}<p class="text-xs text-gray-500 mt-0.5 mb-3">{{.Hint}}</p>{{else}}<div class="mb-3"></div>{{end}}
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {{range .Items}}{{if not .Advanced}}{{template "config_field" .}}{{end}}{{end}}
+          </div>
+          {{if eq .Tools "cookie"}}
+          <div class="mt-3 space-y-2">
+            <div class="flex flex-wrap gap-2">
+              <button type="button" id="cookiecloud-test-btn" class="px-4 py-2 border border-amber-300 text-amber-900 hover:bg-amber-100 rounded-xl text-sm font-medium bg-white">检测 CookieCloud</button>
+              <button type="button" id="cookie-test-btn" class="px-4 py-2 border border-amber-300 text-amber-900 hover:bg-amber-100 rounded-xl text-sm font-medium bg-white">检测豆瓣 Cookie</button>
+            </div>
+            <div id="cookiecloud-test-result" class="rounded-lg border border-amber-100 bg-white/80 p-3 text-sm space-y-2">
+              <p id="cookiecloud-test-summary" class="font-medium text-gray-700">检测 CookieCloud：只测云端连通和解密，不访问豆瓣</p>
+              <ul id="cookiecloud-test-list" class="hidden text-xs text-gray-600 list-disc pl-5 space-y-0.5"></ul>
+            </div>
+            <div id="cookie-test-result" class="rounded-lg border border-amber-100 bg-white/80 p-3 text-sm space-y-2">
+              <p id="cookie-test-summary" class="font-medium text-gray-700">检测豆瓣 Cookie：用当前 cookie 打小组页，看登录态是否有效</p>
+              <p class="text-xs text-gray-400">详细请求见 <a href="/admin/logs{{if $.Token}}?token={{$.Token}}{{end}}" class="text-brand-600 hover:underline" target="_blank" rel="noopener">系统日志</a></p>
+              <pre id="cookie-test-snippet" class="hidden text-xs overflow-x-auto whitespace-pre-wrap text-gray-500"></pre>
+            </div>
+          </div>
           {{end}}
-          {{if .Hint}}<p class="text-xs text-gray-400 mt-1">{{.Hint}}</p>{{end}}
+          {{if eq .Tools "llm"}}
+          <div class="mt-3 space-y-2">
+            <div class="flex flex-wrap gap-2">
+              <button type="button" id="llm-models-btn" class="px-4 py-2 border border-violet-300 text-violet-800 hover:bg-violet-100 rounded-xl text-sm font-medium bg-white">拉取模型列表</button>
+              <button type="button" id="llm-test-btn" class="px-4 py-2 border border-violet-300 text-violet-800 hover:bg-violet-100 rounded-xl text-sm font-medium bg-white">连通检测</button>
+            </div>
+            <div id="llm-probe-result" class="rounded-lg border border-violet-100 bg-white/80 p-3 text-sm space-y-2">
+              <p id="llm-probe-summary" class="font-medium text-gray-700">可对草稿表单做连通检测 / 拉取模型（不写库）</p>
+              <p class="text-xs text-gray-400">请求应答原文见 <a href="/admin/logs{{if $.Token}}?token={{$.Token}}{{end}}" class="text-brand-600 hover:underline" target="_blank" rel="noopener">系统日志</a></p>
+              <pre id="llm-probe-json" class="hidden text-xs overflow-x-auto whitespace-pre-wrap text-gray-500"></pre>
+              <ul id="llm-models-list" class="hidden text-xs text-gray-600 list-disc pl-5 space-y-0.5"></ul>
+            </div>
+          </div>
+          {{end}}
         </div>
+        {{end}}
         {{end}}
       </div>
       {{if eq .Tab "sources"}}
       <div id="source-weibo-placeholder" class="hidden rounded-xl border border-dashed border-gray-200 bg-slate-50 px-4 py-8 text-center text-sm text-gray-500">暂未实现</div>
       {{end}}
-      <div class="flex flex-wrap justify-end gap-2 pt-2">
-        {{if eq .Tab "sources"}}
-        <button type="button" id="cookie-test-btn" class="w-full sm:w-auto px-6 py-2.5 border border-brand-200 text-brand-700 hover:bg-brand-50 rounded-xl text-sm font-medium">测试 Cookie</button>
-        {{end}}
-        {{if eq .Tab "ai"}}
-        <button type="button" id="llm-models-btn" class="w-full sm:w-auto px-6 py-2.5 border border-brand-200 text-brand-700 hover:bg-brand-50 rounded-xl text-sm font-medium">拉取模型列表</button>
-        <button type="button" id="llm-test-btn" class="w-full sm:w-auto px-6 py-2.5 border border-brand-200 text-brand-700 hover:bg-brand-50 rounded-xl text-sm font-medium">连通检测</button>
-        {{end}}
+      <div class="flex justify-end pt-4 border-t border-gray-100">
         <button type="submit" class="w-full sm:w-auto px-6 py-2.5 bg-brand-600 hover:bg-brand-700 text-white rounded-xl text-sm font-medium">保存「{{.Section.Title}}」</button>
       </div>
-      {{if eq .Tab "sources"}}
-      <div id="cookie-test-result" class="mt-3 rounded-xl border border-gray-100 bg-slate-50 p-3 text-sm space-y-2">
-        <p id="cookie-test-summary" class="font-medium text-gray-700">点「测试 Cookie」查看结果</p>
-        <pre id="cookie-test-json" class="hidden text-xs overflow-x-auto whitespace-pre-wrap text-gray-500"></pre>
-      </div>
-      {{end}}
-      {{if eq .Tab "ai"}}
-      <div id="llm-probe-result" class="mt-3 rounded-xl border border-gray-100 bg-slate-50 p-3 text-sm space-y-2">
-        <p id="llm-probe-summary" class="font-medium text-gray-700">可对草稿表单做连通检测 / 拉取模型（不写库）</p>
-        <pre id="llm-probe-json" class="hidden text-xs overflow-x-auto whitespace-pre-wrap text-gray-500"></pre>
-        <ul id="llm-models-list" class="hidden text-xs text-gray-600 list-disc pl-5 space-y-0.5"></ul>
-      </div>
-      {{end}}
     </form>
   </div>
   {{if eq .Tab "sources"}}
@@ -118,32 +112,40 @@
       if (!attr) return true;
       return attr.split(',').map(function(s){ return s.trim(); }).indexOf(mode) >= 0;
     }
+    var currentSource = 'douban';
     function syncCookiePanels(){
       var sel = document.getElementById('cookie-mode-select');
       if (!sel) return;
       var mode = sel.value || 'none';
       document.querySelectorAll('[data-show-when]').forEach(function(el){
-        if (!el.closest('[data-source-group="douban"]') && el.getAttribute('data-source-group') !== 'douban') {
-          // 采集页 cookie 面板都在 douban 组；仍按 ShowWhen 控
-        }
         var sw = el.getAttribute('data-show-when');
         if (!sw) return;
-        // cookie 模式字段：raw / cookiecloud（无逗号）
         if (sw.indexOf('openai') >= 0 || sw.indexOf('other') >= 0) return;
         el.style.display = matchShowWhen(sw, mode) ? '' : 'none';
       });
     }
+    function syncCookieTools(){
+      var mode = (document.getElementById('cookie-mode-select') || {}).value || 'none';
+      var on = currentSource === 'douban';
+      var hasCookie = on && (mode === 'raw' || mode === 'cookiecloud');
+      var cc = on && mode === 'cookiecloud';
+      var cookieBtn = document.getElementById('cookie-test-btn');
+      var cookieBox = document.getElementById('cookie-test-result');
+      var ccBtn = document.getElementById('cookiecloud-test-btn');
+      var ccBox = document.getElementById('cookiecloud-test-result');
+      if (cookieBtn) cookieBtn.style.display = hasCookie ? '' : 'none';
+      if (cookieBox) cookieBox.style.display = hasCookie ? '' : 'none';
+      if (ccBtn) ccBtn.style.display = cc ? '' : 'none';
+      if (ccBox) ccBox.style.display = cc ? '' : 'none';
+    }
     function showSourceGroup(name){
+      currentSource = name;
       document.querySelectorAll('[data-source-group]').forEach(function(el){
         var g = el.getAttribute('data-source-group');
         el.style.display = (g === 'common' || g === name) ? '' : 'none';
       });
       var ph = document.getElementById('source-weibo-placeholder');
       if (ph) ph.classList.toggle('hidden', name !== 'weibo');
-      var cookieBtn = document.getElementById('cookie-test-btn');
-      var cookieBox = document.getElementById('cookie-test-result');
-      if (cookieBtn) cookieBtn.style.display = name === 'douban' ? '' : 'none';
-      if (cookieBox) cookieBox.style.display = name === 'douban' ? '' : 'none';
       document.querySelectorAll('.source-tab').forEach(function(btn){
         var on = btn.getAttribute('data-source-tab') === name;
         btn.className = on
@@ -151,36 +153,49 @@
           : 'source-tab px-3 py-1.5 rounded-lg text-sm text-gray-600 hover:bg-gray-50';
       });
       if (name === 'douban') syncCookiePanels();
+      syncCookieTools();
     }
     document.querySelectorAll('.source-tab').forEach(function(btn){
       btn.addEventListener('click', function(){ showSourceGroup(btn.getAttribute('data-source-tab')); });
     });
     var sel = document.getElementById('cookie-mode-select');
-    if (sel) sel.addEventListener('change', syncCookiePanels);
+    if (sel) sel.addEventListener('change', function(){ syncCookiePanels(); syncCookieTools(); });
     showSourceGroup('douban');
 
-    var btn = document.getElementById('cookie-test-btn');
-    var box = document.getElementById('cookie-test-result');
-    var summary = document.getElementById('cookie-test-summary');
-    var jsonEl = document.getElementById('cookie-test-json');
-    if (!btn || !box || !summary) return;
-    function cookieSummary(j){
-      if (!j) return '无响应';
-      if (j.summary) return j.summary;
-      var online = j.online || {};
-      var parse = j.parse || {};
-      if (j.ok && (online.status === 'skipped' || online.status === 'ok')) {
-        if (online.status === 'skipped') return '✅ 成功（匿名/跳过在线探测）';
-        return '✅ 成功：Cookie 可用';
-      }
-      if (online.status === 'risk' || online.status === 'captcha' || (online.detail && /风控|验证码|captcha|risk|非|人类|异常/i.test(online.detail))) {
-        return '⚠️ 风控：' + (online.detail || online.status || '疑似风控');
-      }
-      if (!parse.ok) return '❌ 失败：' + (parse.detail || 'Cookie 解析失败');
-      return '❌ 失败：' + (online.detail || online.status || '探测未通过');
+    function pad(n){ return n < 10 ? '0'+n : ''+n; }
+    function fmtLocal(d){
+      return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+pad(d.getHours())+':'+pad(d.getMinutes());
     }
-    btn.addEventListener('click', function(){
-      var form = btn.closest('form');
+    function parseDays(raw){
+      raw = (raw || '').trim().toLowerCase();
+      if (!raw || raw === 'now') return 0;
+      if (raw.charAt(raw.length-1) === 'd') raw = raw.slice(0, -1);
+      var n = parseFloat(raw);
+      return isFinite(n) ? n : null;
+    }
+    function syncDayTips(){
+      document.querySelectorAll('[data-day-offset]').forEach(function(inp){
+        var key = inp.getAttribute('data-day-offset');
+        var tip = document.querySelector('[data-day-tip="'+key+'"]');
+        if (!tip) return;
+        var days = parseDays(inp.value);
+        if (days === null) { tip.textContent = ''; return; }
+        var t = new Date(Date.now() + days * 86400000);
+        if ((inp.value || '').trim().toLowerCase() === 'now' || days === 0) {
+          tip.textContent = '≈ ' + fmtLocal(new Date()) + '（现在）';
+        } else {
+          tip.textContent = '≈ ' + fmtLocal(t);
+        }
+      });
+    }
+    document.querySelectorAll('[data-day-offset]').forEach(function(inp){
+      inp.addEventListener('input', syncDayTips);
+      inp.addEventListener('change', syncDayTips);
+    });
+    syncDayTips();
+
+    var form = document.getElementById('config-section-form');
+    function cookieFD(){
       var fd = new FormData();
       function v(name){ var el = form.querySelector('[name="'+name+'"]'); return el ? el.value : ''; }
       fd.set('cookie_mode', v('secret.collector.douban.cookie_mode'));
@@ -188,31 +203,65 @@
       fd.set('cookiecloud_url', v('secret.collector.douban.cookiecloud_url'));
       fd.set('cookiecloud_key', v('secret.collector.douban.cookiecloud_key'));
       fd.set('cookiecloud_password', v('secret.collector.douban.cookiecloud_password'));
-      summary.textContent = '探测中…';
-      summary.className = 'font-medium text-gray-700';
-      jsonEl.classList.add('hidden');
-      var url = '/admin/config/cookie/test{{if $.Token}}?token={{$.Token}}{{end}}';
-      fetch(url, {method:'POST', body: fd, credentials:'same-origin'})
-        .then(function(r){
-          if (!r.ok) {
-            var ct = r.headers.get('content-type') || '';
-            throw new Error('HTTP ' + r.status + (ct.indexOf('json') < 0 ? '（可能未登录）' : ''));
-          }
-          return r.json();
-        })
-        .then(function(j){
-          var text = cookieSummary(j);
-          summary.textContent = text;
-          summary.className = 'font-medium ' + (j.ok ? 'text-green-700' : (text.indexOf('风控')>=0 ? 'text-amber-700' : 'text-red-700'));
-          jsonEl.textContent = JSON.stringify(j, null, 2);
-          jsonEl.classList.remove('hidden');
-        })
-        .catch(function(e){
-          summary.textContent = '❌ 请求失败: ' + e;
-          summary.className = 'font-medium text-red-700';
-          jsonEl.classList.add('hidden');
-        });
-    });
+      fd.set('collector.douban.groups', v('collector.douban.groups'));
+      return fd;
+    }
+    var ccBtn = document.getElementById('cookiecloud-test-btn');
+    var ccSummary = document.getElementById('cookiecloud-test-summary');
+    var ccList = document.getElementById('cookiecloud-test-list');
+    if (ccBtn && ccSummary) {
+      ccBtn.addEventListener('click', function(){
+        ccSummary.textContent = '检测中…';
+        ccSummary.className = 'font-medium text-gray-700';
+        if (ccList) { ccList.classList.add('hidden'); ccList.innerHTML = ''; }
+        fetch('/admin/config/cookiecloud/test{{if $.Token}}?token={{$.Token}}{{end}}', {method:'POST', body: cookieFD(), credentials:'same-origin'})
+          .then(function(r){ return r.json().then(function(j){ return {ok:r.ok, j:j}; }); })
+          .then(function(x){
+            var j = x.j || {};
+            ccSummary.textContent = j.summary || (j.ok ? '通过' : '失败');
+            ccSummary.className = 'font-medium ' + (j.ok ? 'text-green-700' : 'text-red-700');
+            var items = j.cookies || j.cookie_names || [];
+            if (ccList && items.length) {
+              ccList.innerHTML = '';
+              items.forEach(function(item){
+                var li = document.createElement('li');
+                li.textContent = item;
+                ccList.appendChild(li);
+              });
+              ccList.classList.remove('hidden');
+            }
+          })
+          .catch(function(e){
+            ccSummary.textContent = '请求失败: ' + e;
+            ccSummary.className = 'font-medium text-red-700';
+          });
+      });
+    }
+    var btn = document.getElementById('cookie-test-btn');
+    var summary = document.getElementById('cookie-test-summary');
+    var snipEl = document.getElementById('cookie-test-snippet');
+    if (btn && summary) {
+      btn.addEventListener('click', function(){
+        summary.textContent = '检测中…';
+        summary.className = 'font-medium text-gray-700';
+        if (snipEl) { snipEl.classList.add('hidden'); snipEl.textContent = ''; }
+        fetch('/admin/config/cookie/test{{if $.Token}}?token={{$.Token}}{{end}}', {method:'POST', body: cookieFD(), credentials:'same-origin'})
+          .then(function(r){ return r.json().then(function(j){ return {ok:r.ok, j:j}; }); })
+          .then(function(x){
+            var j = x.j || {};
+            summary.textContent = j.ok ? '通过' : ('HTTP ' + (j.http || (x.ok ? '?' : '请求失败')));
+            summary.className = 'font-medium ' + (j.ok ? 'text-green-700' : 'text-red-700');
+            if (snipEl && j.snippet) {
+              snipEl.textContent = j.snippet;
+              snipEl.classList.remove('hidden');
+            }
+          })
+          .catch(function(e){
+            summary.textContent = '请求失败: ' + e;
+            summary.className = 'font-medium text-red-700';
+          });
+      });
+    }
   })();
   </script>
   {{end}}
@@ -345,3 +394,46 @@
 <footer class="text-center text-xs text-gray-400 py-6">rent-scout</footer>
 </body></html>
 {{end}}
+
+{{define "config_field"}}
+        <div class="{{if or (eq .Type "textarea") (eq .Type "select") (eq .Type "sources") .Wide}}md:col-span-2{{end}}"
+             {{if .ShowWhen}}data-show-when="{{.ShowWhen}}"{{end}}
+             {{if .Group}}data-source-group="{{.Group}}" data-notify-group="{{.Group}}"{{end}}>
+          <label class="block text-sm font-medium text-gray-700 mb-1">{{.Label}}</label>
+          {{if eq .Type "textarea"}}
+          <textarea name="{{.Key}}" rows="4" class="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white" {{if and .CanClear (eq .Value "")}}placeholder="留空不修改"{{end}} autocomplete="off">{{.Value}}</textarea>
+          {{if .CanClear}}<label class="inline-flex items-center gap-1 mt-1 text-xs text-gray-500"><input type="checkbox" name="clear_{{.Key}}" value="on"> 清空此项</label>{{end}}
+          {{else if eq .Type "checkbox"}}
+          <label class="inline-flex items-center gap-2 mt-1"><input type="checkbox" name="{{.Key}}" value="on" {{if or (eq .Value "true") (eq .Value "1") (eq .Value "on")}}checked{{end}}> 启用</label>
+          {{else if eq .Type "sources"}}
+          {{$srcKey := .Key}}{{$srcVal := .Value}}
+          <div class="flex flex-wrap gap-4 mt-1">
+            {{range .Options}}
+            <label class="inline-flex items-center gap-2 text-sm"><input type="checkbox" name="{{$srcKey}}" value="{{.}}" {{if csvHas $srcVal .}}checked{{end}}> {{.}}</label>
+            {{end}}
+          </div>
+          {{else if eq .Type "select"}}
+          {{$selVal := .Value}}{{$labels := .OptionLabels}}
+          <select name="{{.Key}}" {{if eq .Key "secret.collector.douban.cookie_mode"}}id="cookie-mode-select"{{end}} {{if eq .Key "secret.filter.llm.api_style"}}id="llm-api-style"{{end}} class="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white">
+            {{range $i, $opt := .Options}}
+            <option value="{{$opt}}" {{if eq $selVal $opt}}selected{{end}}>{{if and $labels (lt $i (len $labels))}}{{index $labels $i}}{{else}}{{$opt}}{{end}}</option>
+            {{else}}
+            <option value="none" {{if or (eq $selVal "none") (eq $selVal "")}}selected{{end}}>none</option>
+            <option value="raw" {{if eq $selVal "raw"}}selected{{end}}>raw</option>
+            <option value="cookiecloud" {{if eq $selVal "cookiecloud"}}selected{{end}}>cookiecloud</option>
+            {{end}}
+          </select>
+          {{else if eq .Type "password"}}
+          <input type="password" name="{{.Key}}" value="{{.Value}}" {{if eq .Value ""}}placeholder="留空不修改"{{end}} autocomplete="off" class="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white">
+          {{if .CanClear}}<label class="inline-flex items-center gap-1 mt-1 text-xs text-gray-500"><input type="checkbox" name="clear_{{.Key}}" value="on"> 清空此项</label>{{end}}
+          {{else if eq .Type "number"}}
+          <input type="number" name="{{.Key}}" value="{{.Value}}" class="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white">
+          {{else}}
+          <input type="text" name="{{.Key}}" value="{{.Value}}" class="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white" {{if .DayOffset}}data-day-offset="{{.Key}}"{{end}}>
+          {{if .CanClear}}<label class="inline-flex items-center gap-1 mt-1 text-xs text-gray-500"><input type="checkbox" name="clear_{{.Key}}" value="on"> 清空此项</label>{{end}}
+          {{end}}
+          {{if .DayOffset}}<p class="text-xs text-gray-400 mt-1" data-day-tip="{{.Key}}"></p>{{end}}
+          {{if .Hint}}<p class="text-xs text-gray-400 mt-1">{{.Hint}}</p>{{end}}
+        </div>
+{{end}}
+

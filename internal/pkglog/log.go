@@ -8,9 +8,15 @@ import (
 	"strings"
 
 	"gopkg.in/natefinch/lumberjack.v2"
-
-	"rent-scout/internal/config"
 )
+
+// Options 日志初始化参数；由 bootstrap 从配置映射过来，本包不依赖 config
+type Options struct {
+	Level       string
+	Format      string
+	Path        string
+	MemoryLines int
+}
 
 // 协程职责名：方括号只包这个，不进消息正文
 const (
@@ -43,7 +49,7 @@ func Component(name string) *slog.Logger {
 
 // New 按配置初始化全局 logger 并返回（规格 8.1）：
 // format=json → JSONHandler；path 非空 → 文件轮转输出（50MB×5），空 → stdout
-func New(cfg config.LogConfig) *slog.Logger {
+func New(cfg Options) *slog.Logger {
 	level := parseLevel(cfg.Level)
 	var out io.Writer = os.Stdout
 	if cfg.Path != "" {

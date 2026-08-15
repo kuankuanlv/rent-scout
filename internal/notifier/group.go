@@ -8,12 +8,13 @@ import (
 	"sort"
 	"time"
 
+	"rent-scout/internal/actionref"
 	"rent-scout/internal/models"
 )
 
 // GroupByAddressTag 按分组主键（AddressTags[0]，无 tag → 未分组）分组（调整规格 B 3.1）。
 // 返回 map[group][]post，组内顺序保持传入顺序（排序由调用方按 NotifyItem 执行）
-func GroupByAddressTag(posts []models.RentPost) map[string][]models.RentPost {
+func groupByAddressTag(posts []models.RentPost) map[string][]models.RentPost {
 	out := make(map[string][]models.RentPost)
 	for _, p := range posts {
 		tag := GroupUnknown
@@ -43,7 +44,7 @@ func sortByPriority(items []NotifyItem) []NotifyItem {
 // 已处理：/h?post=<id>&exp=<ts>&sig=<hmac>（签名载荷仍为 post|handled|exp）
 // secret 取 admin token；secret 空 = 不签名（鉴权关闭全开放场景）
 func BuildFeedbackURL(postID int64, action, secret string) string {
-	ref := SealPostRef(postID, secret)
+	ref := actionref.Seal(postID, secret)
 	var base string
 	if action == "handled" {
 		base = fmt.Sprintf("/h?p=%s", ref)

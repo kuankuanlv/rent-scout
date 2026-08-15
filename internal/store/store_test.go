@@ -311,28 +311,6 @@ func TestPostStatusRejectSentAcked(t *testing.T) {
 	}
 }
 
-// 多状态拉批：collected+pending 混合
-func TestFetchPendingByStatuses(t *testing.T) {
-	s := newTestStore(t)
-	defer s.Close()
-	for i := 0; i < 3; i++ {
-		p := models.RentPost{Source: "douban", ExternalID: fmt.Sprintf("s%d", i), Title: "t",
-			CollectedAt: time.Now(), Status: models.PostStatusCollected}
-		s.InsertPost(p)
-	}
-	q := models.RentPost{Source: "douban", ExternalID: "passed-1", Title: "t",
-		CollectedAt: time.Now(), Status: models.PostStatusPassed}
-	s.InsertPost(q)
-
-	batch, err := s.FetchPendingByStatuses([]string{models.PostStatusCollected, models.PostStatusRejected}, 10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(batch) != 3 {
-		t.Errorf("批数 = %d, want 3", len(batch))
-	}
-}
-
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
 	s, err := Open(filepath.Join(t.TempDir(), "test.db"))

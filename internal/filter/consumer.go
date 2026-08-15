@@ -19,10 +19,6 @@ type ConsumerOptions struct {
 	AIBatchSize int
 }
 
-func NewConsumer(chain *RuleChain, st *store.Store) *Consumer {
-	return NewConsumerWithOptions(chain, st, ConsumerOptions{})
-}
-
 func NewConsumerWithOptions(chain *RuleChain, st *store.Store, opts ConsumerOptions) *Consumer {
 	return &Consumer{chain: chain, store: st, aiBatchSize: opts.AIBatchSize}
 }

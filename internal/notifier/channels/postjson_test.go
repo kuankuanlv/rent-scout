@@ -1,4 +1,4 @@
-package notifier
+package channels
 
 import (
 	"context"
@@ -8,7 +8,6 @@ import (
 	"testing"
 )
 
-// 成功：2xx + 响应体返回
 func TestPostJSONOK(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -22,7 +21,7 @@ func TestPostJSONOK(t *testing.T) {
 	}))
 	defer srv.Close()
 	body := []byte(`{"text":"hi"}`)
-	resp, err := PostJSON(context.Background(), srv.URL, body, 5)
+	resp, err := postJSON(context.Background(), srv.URL, body, 5)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,14 +30,13 @@ func TestPostJSONOK(t *testing.T) {
 	}
 }
 
-// 非 2xx：返回错误（含状态码与截断响应体）
 func TestPostJSONNonOK(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(403)
 		w.Write([]byte("forbidden"))
 	}))
 	defer srv.Close()
-	_, err := PostJSON(context.Background(), srv.URL, []byte(`{}`), 5)
+	_, err := postJSON(context.Background(), srv.URL, []byte(`{}`), 5)
 	if err == nil {
 		t.Fatal("403 应报错")
 	}
@@ -47,9 +45,8 @@ func TestPostJSONNonOK(t *testing.T) {
 	}
 }
 
-// 网络错误：返回错误
 func TestPostJSONNetworkErr(t *testing.T) {
-	_, err := PostJSON(context.Background(), "http://127.0.0.1:1", []byte(`{}`), 1)
+	_, err := postJSON(context.Background(), "http://127.0.0.1:1", []byte(`{}`), 1)
 	if err == nil {
 		t.Fatal("网络错误应报错")
 	}

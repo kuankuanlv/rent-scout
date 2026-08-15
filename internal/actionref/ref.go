@@ -1,4 +1,4 @@
-package notifier
+package actionref
 
 import (
 	"crypto/aes"
@@ -20,8 +20,8 @@ func refKey(secret string) []byte {
 	return sum[:]
 }
 
-// SealPostRef 把帖子 id 封成链接里的随机串，不出现数字 id
-func SealPostRef(id int64, secret string) string {
+// Seal 把帖子 id 封成链接里的随机串，不出现数字 id
+func Seal(id int64, secret string) string {
 	key := refKey(secret)
 	block, err := aes.NewCipher(key[:16])
 	if err != nil {
@@ -40,8 +40,8 @@ func SealPostRef(id int64, secret string) string {
 	return base64.RawURLEncoding.EncodeToString(out)
 }
 
-// OpenPostRef 解开链接里的随机串；对不上就当无效
-func OpenPostRef(token, secret string) (int64, error) {
+// Open 解开链接里的随机串；对不上就当无效
+func Open(token, secret string) (int64, error) {
 	raw, err := base64.RawURLEncoding.DecodeString(token)
 	if err != nil {
 		return 0, fmt.Errorf("引用无效")

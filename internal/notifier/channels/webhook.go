@@ -33,7 +33,7 @@ func (c *webhookChannel) Send(ctx context.Context, items []notifier.NotifyItem) 
 			return nil, nil, fmt.Errorf("%s 签名: %w", c.name, err)
 		}
 	}
-	if _, err := notifier.PostJSON(ctx, target, body, 10); err != nil {
+	if _, err := postJSON(ctx, target, body, 10); err != nil {
 		sent := []int64{}
 		failed := make([]error, len(items))
 		for i, it := range items {

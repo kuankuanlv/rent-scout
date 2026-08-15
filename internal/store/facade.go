@@ -31,10 +31,6 @@ func (s *Store) MarkStatus(ids []int64, status string) error {
 	return s.posts.MarkStatus(ids, status)
 }
 
-func (s *Store) FetchPendingByStatuses(statuses []string, limit int) ([]models.RentPost, error) {
-	return s.posts.FetchPendingByStatuses(statuses, limit)
-}
-
 func (s *Store) ListPosts(f PostListFilter, limit, offset int) ([]models.RentPost, error) {
 	return s.posts.ListPosts(f, limit, offset)
 }

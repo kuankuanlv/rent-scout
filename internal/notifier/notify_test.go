@@ -33,14 +33,6 @@ func TestNotifyItem(t *testing.T) {
 	}
 }
 
-// NotifyBatch 具名类型：组装层用 Batch 再取 Items
-func TestNotifyBatch(t *testing.T) {
-	b := NotifyBatch{GroupKey: "望京", Items: []NotifyItem{{PostID: 1}}}
-	if b.GroupKey != "望京" || len(b.Items) != 1 {
-		t.Errorf("NotifyBatch: %+v", b)
-	}
-}
-
 // Channel 接口签名：Name + Send（编译期断言）
 func TestChannelInterface(t *testing.T) {
 	var _ Channel = &fakeChannel{}

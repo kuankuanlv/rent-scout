@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"rent-scout/internal/collector/cookie"
 	"rent-scout/internal/config"
 	"rent-scout/internal/pkglog"
 )
@@ -28,7 +27,11 @@ func (s *Server) handleCookieCloudTest(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
-	ins, err := cookie.InspectCookieCloud(ctx, draft)
+	if s.cookieProbe == nil {
+		writeJSON(w, map[string]any{"ok": false, "summary": "失败：探测未配置"})
+		return
+	}
+	ins, err := s.cookieProbe.InspectCookieCloud(ctx, draft)
 	resp := map[string]any{
 		"ok":      err == nil && ins.Cookie != "",
 		"http":    ins.HTTPStatus,
@@ -91,15 +94,19 @@ func (s *Server) handleCookieTest(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
 
-	rawCookie, err := fetchDraftCookie(ctx, mode, draft)
+	rawCookie, err := s.fetchDraftCookie(ctx, mode, draft)
 	if err != nil {
 		pkglog.Component(pkglog.Admin).Info("豆瓣检测", "stage", "fetch_cookie", "mode", mode, "err", err)
 		writeJSON(w, map[string]any{"ok": false, "http": 0, "summary": "失败：" + err.Error(), "snippet": err.Error()})
 		return
 	}
 
+	if s.cookieProbe == nil {
+		writeJSON(w, map[string]any{"ok": false, "http": 0, "summary": "失败：探测未配置"})
+		return
+	}
 	probeURL := cookieProbeURL(r, s.rt)
-	page := cookie.ProbePage(ctx, probeURL, rawCookie, nil)
+	page := s.cookieProbe.ProbePage(ctx, probeURL, rawCookie)
 	resp := map[string]any{"ok": page.OK, "http": page.HTTP}
 	if page.OK {
 		resp["summary"] = "通过"
@@ -155,25 +162,25 @@ func (s *Server) draftCookieConfig(r *http.Request) config.DoubanCookieConfig {
 	return draft
 }
 
-func fetchDraftCookie(ctx context.Context, mode string, draft config.DoubanCookieConfig) (string, error) {
+func (s *Server) fetchDraftCookie(ctx context.Context, mode string, draft config.DoubanCookieConfig) (string, error) {
 	m := config.ParseCookieMode(mode)
 	if m == config.CookieModeNone {
 		return "", nil
 	}
 	if m == config.CookieModeCookieCloud {
-		ins, err := cookie.InspectCookieCloud(ctx, draft)
+		ins, err := s.cookieProbe.InspectCookieCloud(ctx, draft)
 		if err != nil {
 			return "", err
 		}
 		ck := strings.TrimSpace(ins.Cookie)
 		if ck == "" {
-			return "", cookie.ErrCookieMissing
+			return "", errCookieMissing
 		}
 		return ck, nil
 	}
 	ck := strings.TrimSpace(draft.CookieRaw)
 	if ck == "" {
-		return "", cookie.ErrCookieMissing
+		return "", errCookieMissing
 	}
 	return ck, nil
 }
@@ -208,3 +215,9 @@ func firstGroupLine(raw string) string {
 	}
 	return ""
 }
+
+const errCookieMissing = cookieMissingError("本地 cookie 为空")
+
+type cookieMissingError string
+
+func (e cookieMissingError) Error() string { return string(e) }

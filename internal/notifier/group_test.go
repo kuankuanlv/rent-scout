@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"rent-scout/internal/actionref"
 	"rent-scout/internal/models"
 )
 
@@ -15,7 +16,7 @@ func TestGroupByAddressTag(t *testing.T) {
 		{ID: 3, AddressTags: []string{"望京", "soho"}},
 		{ID: 4, AddressTags: nil},
 	}
-	groups := GroupByAddressTag(posts)
+	groups := groupByAddressTag(posts)
 	if len(groups) != 3 {
 		t.Fatalf("组数: %d, want 3 (望京/回龙观/未分组)", len(groups))
 	}
@@ -29,7 +30,6 @@ func TestGroupByAddressTag(t *testing.T) {
 
 // 组内排序：AI 推荐理由充分的（Reason 非空）优先，然后按 ID
 func TestGroupSorting(t *testing.T) {
-	// 组装 NotifyItem 时 reason 来自 filter_results；此处验证排序函数
 	items := []NotifyItem{
 		{PostID: 1, Reason: "近地铁"},
 		{PostID: 2},
@@ -49,7 +49,7 @@ func TestBuildFeedbackURL(t *testing.T) {
 	if !strings.Contains(u, "/f?p=") || !strings.Contains(u, "action=useful") || !strings.Contains(u, "sig=") {
 		t.Errorf("链接缺字段: %s", u)
 	}
-	id, err := OpenPostRef(strings.Split(strings.TrimPrefix(u, "/f?p="), "&")[0], "mysecret")
+	id, err := actionref.Open(strings.Split(strings.TrimPrefix(u, "/f?p="), "&")[0], "mysecret")
 	if err != nil || id != 123 {
 		t.Errorf("解开引用: id=%d err=%v", id, err)
 	}
@@ -57,7 +57,11 @@ func TestBuildFeedbackURL(t *testing.T) {
 
 func TestBuildHandledURL(t *testing.T) {
 	u := BuildFeedbackURL(123, "handled", "mysecret")
-	if !strings.HasPrefix(u, "/h?p=") || strings.Contains(u, "123") {
+	if !strings.HasPrefix(u, "/h?p=") {
+		t.Errorf("已处理链接: %s", u)
+	}
+	token := strings.Split(strings.TrimPrefix(u, "/h?p="), "&")[0]
+	if strings.Contains(token, "123") || strings.Contains(u, "post=") {
 		t.Errorf("已处理链接: %s", u)
 	}
 	if strings.Contains(u, "action=") {

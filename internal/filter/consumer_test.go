@@ -27,7 +27,7 @@ func TestConsumerProcessHard(t *testing.T) {
 	st.InsertPost(p1)
 	st.InsertPost(p2)
 
-	c := NewConsumer(NewRuleChain(nil), st)
+	c := NewConsumerWithOptions(NewRuleChain(nil), st, ConsumerOptions{})
 	batch, err := st.FetchPendingByStatus(models.PostStatusCollected, 10)
 	if err != nil {
 		t.Fatal(err)
@@ -65,7 +65,7 @@ func TestConsumerRejects(t *testing.T) {
 	p := models.RentPost{Source: "douban", ExternalID: "c", Title: "中介勿扰", Content: "中介勿扰，代理绕行",
 		CollectedAt: time.Now(), Status: models.PostStatusCollected}
 	st.InsertPost(p)
-	c := NewConsumer(NewRuleChain(nil), st)
+	c := NewConsumerWithOptions(NewRuleChain(nil), st, ConsumerOptions{})
 	batch, _ := st.FetchPendingByStatus(models.PostStatusCollected, 10)
 	if err := c.processHard(context.Background(), batch); err != nil {
 		t.Fatal(err)
@@ -223,7 +223,7 @@ func TestFetchAwaitingAIEmptyWhenOff(t *testing.T) {
 	}
 	st.InsertPost(models.RentPost{Source: "douban", ExternalID: "a", Title: "望京整租", Content: "x",
 		CollectedAt: time.Now(), Status: models.PostStatusCollected})
-	c := NewConsumer(NewRuleChain(nil), st)
+	c := NewConsumerWithOptions(NewRuleChain(nil), st, ConsumerOptions{})
 	batch, _ := st.FetchPendingByStatus(models.PostStatusCollected, 10)
 	_ = c.processHard(context.Background(), batch)
 	got, err := c.FetchAwaitingAI(context.Background(), 10)
@@ -252,7 +252,7 @@ func TestConsumerRulesReadErrorKeepsBatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := NewConsumer(NewRuleChain(nil), st)
+	c := NewConsumerWithOptions(NewRuleChain(nil), st, ConsumerOptions{})
 	st.Close()
 	if err := c.processHard(context.Background(), batch); err != nil {
 		t.Fatalf("processHard 应只记录告警不返回 error: %v", err)

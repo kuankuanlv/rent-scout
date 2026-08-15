@@ -163,51 +163,13 @@ func (r *Repo) MarkStatus(ids []int64, status string) error {
 // validatePostStatusWrite 拒写 sent/acked 及非四态（Spec 09 §1）；notifications.status=sent 不受影响。
 func validatePostStatusWrite(status string) error {
 	switch status {
-		case models.PostStatusCollected, models.PostStatusPassed, models.PostStatusRejected:
-			return nil
-		case "sent", "acked", "pending":
-			return fmt.Errorf("禁止写入已废弃帖子状态 %s", status)
-		default:
-			return fmt.Errorf("非法帖子状态 %s，仅允许 collected|passed|rejected", status)
-		}
-}
-
-// FetchPendingByStatuses 拉取多个主状态的一批帖子（filter 消费：collected+pending），按 id 升序限量
-func (r *Repo) FetchPendingByStatuses(statuses []string, limit int) ([]models.RentPost, error) {
-	// 防御：空 statuses 会生成无效的 IN () 查询，直接返回空结果不查库
-	if len(statuses) == 0 {
-		return nil, nil
+	case models.PostStatusCollected, models.PostStatusPassed, models.PostStatusRejected:
+		return nil
+	case "sent", "acked", "pending":
+		return fmt.Errorf("禁止写入已废弃帖子状态 %s", status)
+	default:
+		return fmt.Errorf("非法帖子状态 %s，仅允许 collected|passed|rejected", status)
 	}
-	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(statuses)), ",")
-	args := make([]any, 0, len(statuses))
-	for _, st := range statuses {
-		args = append(args, st)
-	}
-	rows, err := r.DB.Query(`SELECT id, source, external_id, url, title, content, author, author_url,
-	    published_at, collected_at, status, address_tags, raw FROM posts
-	    WHERE status IN (`+placeholders+`) ORDER BY id LIMIT ?`, append(args, limit)...)
-	if err != nil {
-		return nil, fmt.Errorf("拉取 %v 批: %w", statuses, err)
-	}
-	defer rows.Close()
-	var posts []models.RentPost
-	for rows.Next() {
-		var p models.RentPost
-		var published sql.NullTime
-		var tagsJSON string
-		if err := rows.Scan(&p.ID, &p.Source, &p.ExternalID, &p.URL, &p.Title, &p.Content,
-			&p.Author, &p.AuthorURL, &published, &p.CollectedAt, &p.Status, &tagsJSON, &p.Raw); err != nil {
-			return nil, err
-		}
-		if published.Valid {
-			p.PublishedAt = published.Time
-		}
-		if err := json.Unmarshal([]byte(tagsJSON), &p.AddressTags); err != nil {
-			return nil, fmt.Errorf("解析地址标签: %w", err)
-		}
-		posts = append(posts, p)
-	}
-	return posts, rows.Err()
 }
 
 // nullableTime time.Time 零值写 NULL（published_at 可空）

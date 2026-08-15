@@ -9,9 +9,6 @@ import (
 // DefaultTrimLimit 正文截断默认上限（rune）。BuildLLMView 在 limit<=0 时内部回退到此值。
 const DefaultTrimLimit = 500
 
-// defaultTrimLimit 兼容旧名
-const defaultTrimLimit = DefaultTrimLimit
-
 // LLMView LLM 输入精简视图（规格 5.2 + 调整 C）：标题 + 关键字段 + 正文截断。
 // 去 HTML 标签/图片链接省 token；正文按 limit（rune）截断，避免切碎中文字符。
 type LLMView struct {
@@ -22,11 +19,11 @@ type LLMView struct {
 }
 
 // BuildLLMView 构建 LLM 输入精简视图。
-// limit<=0 时内部按 defaultTrimLimit（500）截断（非调用方职责）。
+// limit<=0 时内部按 DefaultTrimLimit（500）截断（非调用方职责）。
 // 截断按 rune 计数，中文字符不会被切碎。
 func BuildLLMView(post models.RentPost, limit int) LLMView {
 	if limit <= 0 {
-		limit = defaultTrimLimit
+		limit = DefaultTrimLimit
 	}
 	return LLMView{
 		Source:  post.Source,

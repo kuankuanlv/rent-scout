@@ -106,7 +106,6 @@ func (h *HotConfig) ReloadOnce() error {
 func (h *HotConfig) WatchDB(interval time.Duration) func() {
 	stop := make(chan struct{})
 	var once sync.Once
-	log := slog.With("duty", "hot_config_reload")
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
@@ -120,25 +119,30 @@ func (h *HotConfig) WatchDB(interval time.Duration) func() {
 			case <-stop:
 				return
 			case <-ticker.C:
-				kv, err := store.GetConfigMap(h.db)
-				if err != nil {
-					log.Warn("配置重载失败", "err", err)
-					continue
-				}
-				hash := hashKV(kv)
-				if hash != lastHash {
-					// 失败不推进 lastHash，下次还能重试
-					if err := h.ReloadOnce(); err == nil {
-						lastHash = hash
-					}
-				} else {
-					// hash 未变跳过；Debug 避免 10s 刷屏
-					log.Debug("配置 hash 未变，跳过 COW")
-				}
+				lastHash = h.pollTick(lastHash)
 			}
 		}
 	}()
 	return func() { once.Do(func() { close(stop) }) }
+}
+
+// pollTick 一轮轮询：hash 未变跳过；ReloadOnce 失败不推进 lastHash
+func (h *HotConfig) pollTick(lastHash uint64) uint64 {
+	log := slog.With("duty", "hot_config_reload")
+	kv, err := store.GetConfigMap(h.db)
+	if err != nil {
+		log.Warn("配置重载失败", "err", err)
+		return lastHash
+	}
+	hash := hashKV(kv)
+	if hash != lastHash {
+		if err := h.ReloadOnce(); err == nil {
+			return hash
+		}
+		return lastHash
+	}
+	log.Debug("配置 hash 未变，跳过 COW")
+	return lastHash
 }
 
 func hashKV(kv map[string]string) uint64 {

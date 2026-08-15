@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -9,7 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"rent-scout/internal/collector/cookie"
 	"rent-scout/internal/config"
+	"rent-scout/internal/filter/llm"
 	"rent-scout/internal/models"
 	"rent-scout/internal/store"
 )
@@ -45,6 +48,31 @@ func newTestHotConfig(t *testing.T, s *store.Store, app *config.AppConfig, token
 	return rt
 }
 
+type testCookieProbe struct{}
+
+func (testCookieProbe) InspectCookieCloud(ctx context.Context, draft config.DoubanCookieConfig) (CookieCloudInspect, error) {
+	ins, err := cookie.InspectCookieCloud(ctx, draft)
+	return CookieCloudInspect{
+		Cookie: ins.Cookie, Names: ins.Names, Previews: ins.Previews,
+		Algo: ins.Algo, CipherField: ins.CipherField, HTTPStatus: ins.HTTPStatus, Domains: ins.Domains,
+	}, err
+}
+
+func (testCookieProbe) ProbePage(ctx context.Context, probeURL, rawCookie string) DoubanPageResult {
+	page := cookie.ProbePage(ctx, probeURL, rawCookie, nil)
+	return DoubanPageResult{OK: page.OK, HTTP: page.HTTP, Snippet: page.Snippet}
+}
+
+type testLLMProbe struct{}
+
+func (testLLMProbe) ListModels(ctx context.Context, baseURL, apiKey, model string) ([]string, error) {
+	return llm.NewClient(llm.ClientOptions{BaseURL: baseURL, APIKey: apiKey, Model: model, DumpHTTP: true}).ListModels(ctx)
+}
+
+func (testLLMProbe) Chat(ctx context.Context, baseURL, apiKey, model, system, user string) (string, error) {
+	return llm.NewClient(llm.ClientOptions{BaseURL: baseURL, APIKey: apiKey, Model: model, DumpHTTP: true}).Chat(ctx, system, user)
+}
+
 // newTestServer 创建已完成 setup 的 admin Server（含新 store）
 func newTestServer(t *testing.T, app *config.AppConfig, token string, ctrl SourceController) *Server {
 	t.Helper()
@@ -57,7 +85,10 @@ func newTestServer(t *testing.T, app *config.AppConfig, token string, ctrl Sourc
 func newTestServerWithStore(t *testing.T, s *store.Store, app *config.AppConfig, token string, ctrl SourceController) *Server {
 	t.Helper()
 	rt := newTestHotConfig(t, s, app, token)
-	return NewServer(s, rt, ctrl)
+	srv := NewServer(s, rt, ctrl)
+	srv.SetCookieProbe(testCookieProbe{})
+	srv.SetLLMProbe(testLLMProbe{})
+	return srv
 }
 
 // TestHealthzNoAuth：健康检查豁免鉴权，无 token 直接 200 "ok"

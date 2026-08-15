@@ -70,6 +70,8 @@ var RestartKeys = map[string]bool{
 	"secret.filter.llm.api_style":        true,
 	"secret.notifier.feishu.webhook":     true,
 	"notifier.channels":                  true,
+	"notifier.batch_size":                true,
+	"notifier.retry_base_interval":       true,
 	"secret.notifier.dingtalk.webhook":   true,
 	"secret.notifier.dingtalk.secret":    true,
 	"secret.notifier.wecom.webhook":      true,
@@ -168,6 +170,7 @@ func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[stri
 	}
 	apiStyle := "openai"
 	ccPass := get(config.KeyDoubanCookieCloudPwd, env.Collector.Douban.CookiecloudPass)
+	ppToken := get("secret.notifier.pushplus.token", env.Notifier.Pushplus.Token)
 	llmBase := get("secret.filter.llm.base_url", env.Filter.LLM.BaseURL)
 	if llmBase == "" {
 		llmBase = "https://api.deepseek.com"
@@ -194,9 +197,9 @@ func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[stri
 	notifyBase := func(channel, group string) []configField {
 		return []configField{
 			{Key: "notifier.channels", Label: "启用", Value: channelsVal, Type: "sources", Options: []string{channel}, Group: group, Wide: true, Hint: "勾选后该渠道才会发通知；修改后需重启"},
-			{Key: "notifier.batch_size", Label: "组批大小", Value: get("notifier.batch_size", strconv.Itoa(app.Notifier.BatchSize)), Type: "number", Hint: "通知单次从库拉取处理的最大条数", Group: group},
+			{Key: "notifier.batch_size", Label: "组批大小", Value: get("notifier.batch_size", strconv.Itoa(app.Notifier.BatchSize)), Type: "number", Hint: "凑满这个条数就发；没凑满则等到「重试间隔」也发。两个条件满足其一即执行发送。修改后需重启", Group: group},
 			{Key: "notifier.max_attempts", Label: "最大重试", Value: get("notifier.max_attempts", strconv.Itoa(app.Notifier.MaxAttempts)), Type: "number", Group: group},
-			{Key: "notifier.retry_base_interval", Label: "重试间隔(秒)", Value: get("notifier.retry_base_interval", strconv.Itoa(app.Notifier.RetryBaseInterval)), Type: "number", Group: group, Wide: true},
+			{Key: "notifier.retry_base_interval", Label: "重试间隔(秒)", Value: get("notifier.retry_base_interval", strconv.Itoa(app.Notifier.RetryBaseInterval)), Type: "number", Group: group, Wide: true, Hint: "没凑满组批大小时，最多等这么久也发；和组批大小满足其一即执行发送。失败帖也按这个间隔再扫。修改后需重启"},
 		}
 	}
 	return []configSection{
@@ -241,7 +244,7 @@ func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[stri
 					{Key: config.KeyDoubanCookieRaw, Label: "Cookie 原文", Value: "", Type: "textarea", CanClear: true, Hint: cookieRawHint, ShowWhen: config.CookieModeRaw.String(), Group: "douban"},
 					{Key: config.KeyDoubanCookieCloudURL, Label: "CookieCloud 地址", Value: get(config.KeyDoubanCookieCloudURL, env.Collector.Douban.CookiecloudURL), Type: "text", Hint: "如 https://cc.example.com", CanClear: true, ShowWhen: config.CookieModeCookieCloud.String(), Group: "douban"},
 					{Key: config.KeyDoubanCookieCloudKey, Label: "CookieCloud UUID", Value: get(config.KeyDoubanCookieCloudKey, env.Collector.Douban.CookiecloudKey), Type: "text", CanClear: true, ShowWhen: config.CookieModeCookieCloud.String(), Group: "douban"},
-					{Key: config.KeyDoubanCookieCloudPwd, Label: "CookieCloud 密码", Value: ccPass, Type: "password", CanClear: true, Hint: "已回显已存密码；勾选清空可删除", ShowWhen: config.CookieModeCookieCloud.String(), Group: "douban", Wide: true},
+					{Key: config.KeyDoubanCookieCloudPwd, Label: "CookieCloud 密码", Value: ccPass, Type: "text", CanClear: true, Hint: "明文回显；勾选清空可删除", ShowWhen: config.CookieModeCookieCloud.String(), Group: "douban", Wide: true},
 				},
 			},
 			{
@@ -279,7 +282,7 @@ func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[stri
 				Title: "PushPlus", Hint: "发送节奏与 Token；一对多填群组编码，空则一对一", Class: "bg-orange-50 border-orange-200", Group: "pushplus",
 				Items: append(notifyBase("pushplus", "pushplus"),
 					configField{
-						Key: "secret.notifier.pushplus.token", Label: "PushPlus Token", Value: "", Type: "password", CanClear: true, Hint: "修改后需重启服务", Group: "pushplus", Wide: true,
+						Key: "secret.notifier.pushplus.token", Label: "PushPlus Token", Value: ppToken, Type: "text", CanClear: true, Hint: "明文回显；修改后需重启服务", Group: "pushplus", Wide: true,
 					},
 					configField{
 						Key: "secret.notifier.pushplus.topic", Label: "群组编码", Value: get("secret.notifier.pushplus.topic", env.Notifier.Pushplus.Topic), Type: "text", CanClear: true, Hint: "一对多 topic，如 doubanzufang；留空走一对一。修改后需重启", Group: "pushplus", Wide: true,

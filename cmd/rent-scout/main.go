@@ -323,8 +323,9 @@ func newNotifierConsumer(rt *config.HotConfig, db *store.Store) *pipeline.Consum
 		n.ProcessBatch,
 		pipeline.Options{
 			BatchSize: cfg.Notifier.BatchSize,
-			Linger:    pipeline.DefaultLinger,
+			Linger:    time.Duration(cfg.Notifier.RetryBaseInterval) * time.Second,
 			Component: pkglog.Notifier,
+			WaitFull:  true,
 		},
 	)
 }

@@ -102,6 +102,7 @@ func SecretsToKV(sec *Secrets) map[string]string {
 		"secret.notifier.dingtalk.secret":     n.Dingtalk.Secret,
 		"secret.notifier.wecom.webhook":       n.Wecom.Webhook,
 		"secret.notifier.pushplus.token":      n.Pushplus.Token,
+		"secret.notifier.pushplus.topic":      n.Pushplus.Topic,
 		"secret.notifier.serverchan.sendkey":  n.Serverchan.Sendkey,
 		"secret.notifier.webhook.url":         n.Webhook.URL,
 		"secret.notifier.webhook.template":    n.Webhook.Template,
@@ -130,7 +131,7 @@ var SectionKeys = map[string][]string{
 	"notifier": {
 		"notifier.max_attempts", "notifier.retry_base_interval", "notifier.batch_size", "notifier.channels",
 		"secret.notifier.feishu.webhook",
-		"secret.notifier.pushplus.token",
+		"secret.notifier.pushplus.token", "secret.notifier.pushplus.topic",
 	},
 	"admin": {
 		"admin.auth_required", "admin.token",
@@ -253,7 +254,7 @@ func KVToSecrets(kv map[string]string) *Secrets {
 		Feishu:     WebhookSecretConfig{Webhook: kv["secret.notifier.feishu.webhook"]},
 		Dingtalk:   DingtalkConfig{Webhook: kv["secret.notifier.dingtalk.webhook"], Secret: kv["secret.notifier.dingtalk.secret"]},
 		Wecom:      WebhookSecretConfig{Webhook: kv["secret.notifier.wecom.webhook"]},
-		Pushplus:   PushplusConfig{Token: kv["secret.notifier.pushplus.token"]},
+		Pushplus:   PushplusConfig{Token: kv["secret.notifier.pushplus.token"], Topic: kv["secret.notifier.pushplus.topic"]},
 		Serverchan: ServerchanConfig{Sendkey: kv["secret.notifier.serverchan.sendkey"]},
 		Webhook:    CustomWebhookConfig{URL: kv["secret.notifier.webhook.url"], Template: kv["secret.notifier.webhook.template"]},
 	}

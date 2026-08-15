@@ -74,6 +74,7 @@ var RestartKeys = map[string]bool{
 	"secret.notifier.dingtalk.secret":    true,
 	"secret.notifier.wecom.webhook":      true,
 	"secret.notifier.pushplus.token":     true,
+	"secret.notifier.pushplus.topic":     true,
 	"secret.notifier.serverchan.sendkey": true,
 	"secret.notifier.webhook.url":        true,
 	"secret.notifier.webhook.template":   true,
@@ -275,10 +276,15 @@ func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[stri
 				}),
 			},
 			{
-				Title: "PushPlus", Hint: "发送节奏与 Token", Class: "bg-orange-50 border-orange-200", Group: "pushplus",
-				Items: append(notifyBase("pushplus", "pushplus"), configField{
-					Key: "secret.notifier.pushplus.token", Label: "PushPlus Token", Value: "", Type: "password", CanClear: true, Hint: "修改后需重启服务", Group: "pushplus", Wide: true,
-				}),
+				Title: "PushPlus", Hint: "发送节奏与 Token；一对多填群组编码，空则一对一", Class: "bg-orange-50 border-orange-200", Group: "pushplus",
+				Items: append(notifyBase("pushplus", "pushplus"),
+					configField{
+						Key: "secret.notifier.pushplus.token", Label: "PushPlus Token", Value: "", Type: "password", CanClear: true, Hint: "修改后需重启服务", Group: "pushplus", Wide: true,
+					},
+					configField{
+						Key: "secret.notifier.pushplus.topic", Label: "群组编码", Value: get("secret.notifier.pushplus.topic", env.Notifier.Pushplus.Topic), Type: "text", CanClear: true, Hint: "一对多 topic，如 doubanzufang；留空走一对一。修改后需重启", Group: "pushplus", Wide: true,
+					},
+				),
 			},
 		}),
 		makeSection("admin", "管理", "控制台鉴权", []configBlock{

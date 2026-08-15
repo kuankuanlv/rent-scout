@@ -286,7 +286,7 @@ func newNotifierConsumer(rt *config.HotConfig, db *store.Store) *pipeline.Consum
 			}
 		case notifier.ChannelPushplus:
 			if env.Notifier.Pushplus.Token != "" {
-				chs = append(chs, channels.NewPushplusChannel("", env.Notifier.Pushplus.Token))
+				chs = append(chs, channels.NewPushplusChannel("", env.Notifier.Pushplus.Token, env.Notifier.Pushplus.Topic))
 			}
 		case notifier.ChannelServerchan:
 			if env.Notifier.Serverchan.Sendkey != "" {

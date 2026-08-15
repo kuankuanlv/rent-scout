@@ -159,9 +159,9 @@ func splitBatches(posts []models.RentPost, size int) [][]models.RentPost {
 	return out
 }
 
-// commitHard 硬规则定案。未命中白黑名单的拒绝不写空 filter_results。
+// commitHard 硬规则定案。黑白都未命中也会写 filter_results（rejected_by=默认拒绝）。
 func (c *Consumer) commitHard(res models.FilterResult) error {
-	if len(res.HardRules) > 0 {
+	if len(res.HardRules) > 0 || res.RejectedBy != "" || res.Status == models.PostStatusPassed {
 		if err := c.store.SaveFilterResult(res); err != nil {
 			pkglog.Component(pkglog.Filter).Error("筛选结果写库失败", "post_id", res.PostID, "err", err)
 		}

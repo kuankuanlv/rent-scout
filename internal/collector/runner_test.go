@@ -344,3 +344,18 @@ func TestRunnerResetsWhenRangeChanges(t *testing.T) {
 		t.Errorf("重置后首个 cursor = %v, want 空串", src.cursors)
 	}
 }
+
+func TestFormatPageCursor(t *testing.T) {
+	if got := formatPageCursor(""); got != "组0 offset=0" {
+		t.Errorf("空游标 = %s", got)
+	}
+	if got := formatPageCursor("1:50"); got != "组1 offset=50" {
+		t.Errorf("1:50 = %s", got)
+	}
+	if got := formatStartPos(true, ""); got != "追新·首页" {
+		t.Errorf("追新起点 = %s", got)
+	}
+	if got := formatNextPos(store.SourceProgress{SeenNewest: "x"}); got != "追新·首页" {
+		t.Errorf("追新下次 = %s", got)
+	}
+}

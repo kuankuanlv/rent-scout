@@ -198,18 +198,25 @@ func hitTagsFrom(p *models.RentPost, fr models.FilterResult, hasFR bool) []model
 	for _, t := range p.AddressTags {
 		add("whitelist", t)
 	}
-	if !hasFR {
-		return out
-	}
-	hardKind := "whitelist"
-	if p.Status == models.PostStatusRejected || fr.Status == models.PostStatusRejected {
-		hardKind = "blacklist"
-	}
-	for _, h := range fr.HardRules {
-		for _, part := range strings.FieldsFunc(h.Reason, isTagSep) {
-			add(hardKind, part)
+		if !hasFR {
+			if p.Status == models.PostStatusRejected {
+				add("blacklist", "默认拒绝")
+			}
+			return out
 		}
-	}
+		hardKind := "whitelist"
+		if p.Status == models.PostStatusRejected || fr.Status == models.PostStatusRejected {
+			hardKind = "blacklist"
+		}
+		for _, h := range fr.HardRules {
+			for _, part := range strings.FieldsFunc(h.Reason, isTagSep) {
+				add(hardKind, part)
+			}
+		}
+		if (p.Status == models.PostStatusRejected || fr.Status == models.PostStatusRejected) &&
+			len(fr.HardRules) == 0 && fr.AI == nil {
+			add("blacklist", "默认拒绝")
+		}
 	if fr.AI != nil {
 		text := "AI"
 		if strings.TrimSpace(fr.AI.Reason) != "" {

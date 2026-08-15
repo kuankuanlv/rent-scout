@@ -75,6 +75,70 @@ func (r *Repo) FetchPendingByStatus(status string, limit int) ([]models.RentPost
 	return posts, rows.Err()
 }
 
+// FetchPassedWithoutAI 已通过硬规则、还没有 AI 结果的帖（AI 协程拉批）
+func (r *Repo) FetchPassedWithoutAI(limit int) ([]models.RentPost, error) {
+	rows, err := r.DB.Query(`SELECT p.id, p.source, p.external_id, p.url, p.title, p.content, p.author, p.author_url,
+	    p.published_at, p.collected_at, p.status, p.address_tags, p.raw
+	    FROM posts p
+	    LEFT JOIN filter_results fr ON fr.post_id = p.id
+	    WHERE p.status = 'passed' AND (fr.ai_result IS NULL OR fr.ai_result = '')
+	    ORDER BY p.id LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("拉取待 AI 审核: %w", err)
+	}
+	defer rows.Close()
+	var posts []models.RentPost
+	for rows.Next() {
+		var p models.RentPost
+		var published sql.NullTime
+		var tagsJSON string
+		if err := rows.Scan(&p.ID, &p.Source, &p.ExternalID, &p.URL, &p.Title, &p.Content,
+			&p.Author, &p.AuthorURL, &published, &p.CollectedAt, &p.Status, &tagsJSON, &p.Raw); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(tagsJSON), &p.AddressTags); err != nil {
+			return nil, fmt.Errorf("解析地址标签: %w", err)
+		}
+		if published.Valid {
+			p.PublishedAt = published.Time
+		}
+		posts = append(posts, p)
+	}
+	return posts, rows.Err()
+}
+
+// ListPublishedBetween 时间窗内已入库帖（规则 replay 用），按 id 升序限量
+func (r *Repo) ListPublishedBetween(from, to time.Time, limit int) ([]models.RentPost, error) {
+	if limit <= 0 {
+		limit = 2000
+	}
+	rows, err := r.DB.Query(`SELECT id, source, external_id, url, title, content, author, author_url,
+	    published_at, collected_at, status, address_tags, raw FROM posts
+	    WHERE published_at >= ? AND published_at <= ? ORDER BY id LIMIT ?`, from, to, limit)
+	if err != nil {
+		return nil, fmt.Errorf("按发布时间拉帖: %w", err)
+	}
+	defer rows.Close()
+	var posts []models.RentPost
+	for rows.Next() {
+		var p models.RentPost
+		var published sql.NullTime
+		var tagsJSON string
+		if err := rows.Scan(&p.ID, &p.Source, &p.ExternalID, &p.URL, &p.Title, &p.Content,
+			&p.Author, &p.AuthorURL, &published, &p.CollectedAt, &p.Status, &tagsJSON, &p.Raw); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(tagsJSON), &p.AddressTags); err != nil {
+			return nil, fmt.Errorf("解析地址标签: %w", err)
+		}
+		if published.Valid {
+			p.PublishedAt = published.Time
+		}
+		posts = append(posts, p)
+	}
+	return posts, rows.Err()
+}
+
 // MarkStatus 原子更新一批帖子的主状态（仅四态，Spec 09 §1）
 func (r *Repo) MarkStatus(ids []int64, status string) error {
 	if len(ids) == 0 {
@@ -99,13 +163,13 @@ func (r *Repo) MarkStatus(ids []int64, status string) error {
 // validatePostStatusWrite 拒写 sent/acked 及非四态（Spec 09 §1）；notifications.status=sent 不受影响。
 func validatePostStatusWrite(status string) error {
 	switch status {
-	case models.PostStatusCollected, models.PostStatusPending, models.PostStatusPassed, models.PostStatusRejected:
-		return nil
-	case "sent", "acked":
-		return fmt.Errorf("禁止写入已废弃帖子状态 %s", status)
-	default:
-		return fmt.Errorf("非法帖子状态 %s，仅允许 collected|pending|passed|rejected", status)
-	}
+		case models.PostStatusCollected, models.PostStatusPassed, models.PostStatusRejected:
+			return nil
+		case "sent", "acked", "pending":
+			return fmt.Errorf("禁止写入已废弃帖子状态 %s", status)
+		default:
+			return fmt.Errorf("非法帖子状态 %s，仅允许 collected|passed|rejected", status)
+		}
 }
 
 // FetchPendingByStatuses 拉取多个主状态的一批帖子（filter 消费：collected+pending），按 id 升序限量

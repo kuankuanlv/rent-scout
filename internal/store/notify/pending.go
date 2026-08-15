@@ -13,21 +13,26 @@ import (
 // 语义（规格 6.5）：批内帖子至少有一个渠道待发；终止态（sent/dead）渠道数 = 启用渠道数的帖子不再返回。
 // 实现：终止态渠道数 < 启用渠道数（notifications 表 UNIQUE(post_id, channel)，每帖每渠道至多一条）
 // channels 为空时返回空批（防御，调用方恒传启用渠道列表；调用方不得传重复渠道名）
-func (r *Repo) FetchNotifyBatch(channels []string, limit int) ([]models.RentPost, error) {
+func (r *Repo) FetchNotifyBatch(channels []string, limit int, requireAIPassed bool) ([]models.RentPost, error) {
 	if len(channels) == 0 {
 		return nil, nil
 	}
 	ph := strings.Repeat("?,", len(channels))
 	ph = ph[:len(ph)-1]
+	aiClause := ""
+	if requireAIPassed {
+		aiClause = ` AND EXISTS (SELECT 1 FROM filter_results fr WHERE fr.post_id = posts.id
+			AND fr.ai_result != '' AND json_extract(fr.ai_result, '$.passed') = 1)`
+	}
 	query := fmt.Sprintf(`
-		SELECT id, source, external_id, url, title, content, author, author_url,
-		       published_at, collected_at, status, address_tags, raw
-		FROM posts
-		WHERE status = 'passed'
-		AND (SELECT COUNT(*) FROM notifications n
-		       WHERE n.post_id = posts.id AND n.channel IN (%s) AND n.status IN ('sent','dead')) < ?
-		ORDER BY id
-		LIMIT ?`, ph)
+			SELECT id, source, external_id, url, title, content, author, author_url,
+			       published_at, collected_at, status, address_tags, raw
+			FROM posts
+			WHERE status = 'passed'`+aiClause+`
+			AND (SELECT COUNT(*) FROM notifications n
+			       WHERE n.post_id = posts.id AND n.channel IN (%s) AND n.status IN ('sent','dead')) < ?
+			ORDER BY id
+			LIMIT ?`, ph)
 	args := make([]any, 0, len(channels)+2)
 	for _, c := range channels {
 		args = append(args, c)

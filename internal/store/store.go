@@ -169,6 +169,9 @@ func (s *Store) migrate() error {
 	if err := s.migrateResetRulesV2(); err != nil {
 		return err
 	}
+	if err := s.migratePostStatusV3(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -217,6 +220,26 @@ func (s *Store) migrateResetRulesV2() error {
 		return fmt.Errorf("清空旧规则: %w", err)
 	}
 	return SetConfig(s, rulesDefaultsVersionKey, rulesDefaultsVersion)
+}
+
+const postStatusV3Key = "posts.status_v3"
+
+// migratePostStatusV3 清掉旧 pending，并把「未定案默认通过」改成拒绝；只跑一次
+func (s *Store) migratePostStatusV3() error {
+	v, err := GetConfig(s, postStatusV3Key)
+	if err != nil {
+		return err
+	}
+	if v == "1" {
+		return nil
+	}
+	if _, err := s.db.Exec(`UPDATE posts SET status='collected' WHERE status='pending'`); err != nil {
+		return fmt.Errorf("pending→collected: %w", err)
+	}
+	if _, err := s.db.Exec(`UPDATE posts SET status='rejected' WHERE status='passed' AND (address_tags IS NULL OR address_tags='' OR address_tags='[]')`); err != nil {
+		return fmt.Errorf("空标签 passed→rejected: %w", err)
+	}
+	return SetConfig(s, postStatusV3Key, "1")
 }
 
 // columnExists 检查表是否已存在指定列（迁移幂等辅助）

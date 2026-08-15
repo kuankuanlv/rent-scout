@@ -81,14 +81,17 @@ func TestConfigTabs(t *testing.T) {
 	if strings.Contains(body, `data-source-tab="common"`) {
 		t.Errorf("sources 不应再有全局子 tab")
 	}
-	if !strings.Contains(body, "collector.douban.range_from") || !strings.Contains(body, "collector.douban.range_to") {
-		t.Errorf("豆瓣 tab 应有拉取范围从/到")
+	if !strings.Contains(body, "collector.douban.range_from") {
+		t.Errorf("豆瓣 tab 应有拉取起点")
 	}
-	if !strings.Contains(body, `value="-10"`) || !strings.Contains(body, `value="now"`) {
-		t.Errorf("拉取范围默认应显示 -10 与 now")
+	if strings.Contains(body, "collector.douban.range_to") || strings.Contains(body, "截止（几天后/前）") {
+		t.Errorf("截止日期恒为现在，不应再配 range_to")
 	}
-	if !strings.Contains(body, "起始（几天前）") || !strings.Contains(body, "截止（几天后/前）") {
-		t.Errorf("豆瓣范围标签应写清起始/截止含义")
+	if !strings.Contains(body, `value="-10"`) {
+		t.Errorf("拉取起点默认应显示 -10")
+	}
+	if !strings.Contains(body, "起始（几天前）") {
+		t.Errorf("豆瓣范围标签应写清起始含义")
 	}
 	if !strings.Contains(body, "按发布时间筛选") {
 		t.Errorf("时间窗应单独成组")

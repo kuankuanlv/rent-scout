@@ -3,24 +3,24 @@ package store
 import "testing"
 
 func TestParseSourceProgress(t *testing.T) {
-	if p := ParseSourceProgress(""); p.Phase != ProgressBackfill || p.Page != "" {
-		t.Errorf("空串 = %+v, want backfill 空 page", p)
+	if p := ParseSourceProgress(""); p.Page != "" || p.SeenNewest != "" {
+		t.Errorf("空串 = %+v", p)
 	}
 	legacy := ParseSourceProgress("1:0")
-	if legacy.Phase != ProgressBackfill || legacy.Page != "1:0" {
-		t.Errorf("旧游标 = %+v, want backfill page=1:0", legacy)
+	if legacy.Page != "1:0" || legacy.CatchingUp() {
+		t.Errorf("旧游标 = %+v, want page=1:0 未追新", legacy)
 	}
 	raw := SourceProgress{Phase: ProgressIncremental, Page: "", Watermark: "2026-08-13T00:00:00Z", RangeKey: "k"}.Encode()
 	got := ParseSourceProgress(raw)
-	if got.Phase != ProgressIncremental || got.Watermark != "2026-08-13T00:00:00Z" || got.RangeKey != "k" {
-		t.Errorf("JSON 往返 = %+v", got)
+	if !got.CatchingUp() || got.SeenNewest != "2026-08-13T00:00:00Z" || got.Fingerprint != "k" {
+		t.Errorf("旧 JSON 兼容 = %+v", got)
 	}
 }
 
 func TestProgressRoundTripAndClear(t *testing.T) {
 	s := newTestStore(t)
 	defer s.Close()
-	want := SourceProgress{Phase: ProgressBackfill, Page: "0:25", RangeKey: "r"}
+	want := SourceProgress{Page: "0:25", Fingerprint: "r"}
 	if err := s.SetProgress("douban", want); err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +28,7 @@ func TestProgressRoundTripAndClear(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("读进度: ok=%v err=%v", ok, err)
 	}
-	if got.Page != "0:25" || got.Phase != ProgressBackfill {
+	if got.Page != "0:25" || got.CatchingUp() {
 		t.Errorf("进度 = %+v", got)
 	}
 	if err := s.ClearProgress("douban"); err != nil {

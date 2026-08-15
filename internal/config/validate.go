@@ -45,7 +45,7 @@ func ValidateApp(cfg *AppConfig) []string {
 			errs = append(errs, "collector.douban.groups 不能为空（源 douban 已启用）")
 		}
 	}
-	if _, _, err := ResolveTimeRange(cfg.Collector.Douban.RangeFrom, cfg.Collector.Douban.RangeTo, time.Now()); err != nil {
+	if _, _, err := ResolveTimeRange(cfg.Collector.Douban.RangeFrom, "now", time.Now()); err != nil {
 		errs = append(errs, "collector.douban 拉取范围: "+err.Error())
 	}
 

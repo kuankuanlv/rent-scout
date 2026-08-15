@@ -16,9 +16,9 @@ func TestRentPostDedupKey(t *testing.T) {
 
 // 帖子主状态仅四态（Spec 09 §1）
 func TestStatusConstants(t *testing.T) {
-	flow := []string{PostStatusCollected, PostStatusPending, PostStatusPassed, PostStatusRejected}
-	if len(flow) != 4 {
-		t.Fatalf("主状态数 = %d, want 4", len(flow))
+	flow := []string{PostStatusCollected, PostStatusPassed, PostStatusRejected}
+	if len(flow) != 3 {
+		t.Fatalf("主状态数 = %d, want 3", len(flow))
 	}
 	for i, s := range flow {
 		if s == "" {

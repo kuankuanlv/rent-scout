@@ -30,17 +30,17 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) {
 	}
 	names := s.ctrl.Sources()
 	type item struct {
-		Name      string `json:"name"`
-		Enabled   bool   `json:"enabled"`
-		Cursor    string `json:"cursor"`
-		Phase     string `json:"phase"`
-		Watermark string `json:"watermark"`
+		Name       string `json:"name"`
+		Enabled    bool   `json:"enabled"`
+		Cursor     string `json:"cursor"`
+		Offset     string `json:"offset"`
+		SeenNewest string `json:"seen_newest"`
 	}
 	items := make([]item, 0, len(names))
 	for _, n := range names {
 		raw, _, _ := s.db.GetCursor(n)
 		p := store.ParseSourceProgress(raw)
-		items = append(items, item{n, s.ctrl.SourceEnabled(n), p.Page, p.Phase, p.Watermark})
+		items = append(items, item{n, s.ctrl.SourceEnabled(n), p.Page, p.Page, p.SeenNewest})
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(map[string]any{"sources": items})

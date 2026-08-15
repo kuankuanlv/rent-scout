@@ -1,7 +1,7 @@
 {{define "rules_panel"}}
 <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 sm:p-6 mb-6">
   <h1 class="text-xl sm:text-2xl font-bold mb-2">📜 规则管理</h1>
-  <p class="text-sm text-gray-500">判定顺序：白名单 → 黑名单 → AI。同条内逗号分隔表示「或」；白名单命中会写入地点 Tag。规则实时生效；改 value/优先级/启用后自动保存。</p>
+  <p class="text-sm text-gray-500">这是爬取过程中的留存规则：帖子先按时间窗抓入库，再用这里决定留下、拒绝还是送 AI。判定顺序：白名单 → 黑名单 → AI。同条内逗号分隔表示「或」；白名单命中会写入地点标签（全览「标签」列）。规则实时生效；改 value/优先级/启用后自动保存。</p>
 </div>
 <div class="desktop-table bg-white rounded-2xl shadow-sm border border-gray-100 overflow-x-auto mb-6">
   <table class="min-w-full text-sm divide-y divide-gray-100">

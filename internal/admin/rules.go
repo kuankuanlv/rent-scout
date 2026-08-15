@@ -107,6 +107,7 @@ func (s *Server) createRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	pkglog.Component(pkglog.Admin).Info("规则已创建", "name", name, "type", rtype, "priority", priority)
+	s.notifyRulesChanged()
 	s.redirectRules(w, r)
 }
 
@@ -181,6 +182,7 @@ func (s *Server) updateRule(w http.ResponseWriter, r *http.Request, id int64) {
 		return
 	}
 	pkglog.Component(pkglog.Admin).Info("规则已更新", "id", id, "value", value, "priority", priority, "enabled", enabled)
+	s.notifyRulesChanged()
 	s.replyRuleOK(w, r)
 }
 
@@ -212,6 +214,7 @@ func (s *Server) deleteRule(w http.ResponseWriter, r *http.Request, id int64) {
 		return
 	}
 	pkglog.Component(pkglog.Admin).Info("规则已删除", "id", id)
+	s.notifyRulesChanged()
 	s.redirectRules(w, r)
 }
 

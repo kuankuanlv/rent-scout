@@ -6,19 +6,22 @@ import (
 	"rent-scout/internal/models"
 )
 
-// HardVerdict 硬编码规则链判定结果
+// HardVerdict 硬编码规则链判定结果；硬规则总会定案
 type HardVerdict struct {
-	Passed  bool // 是否通过
-	Decided bool // 本阶段是否给出最终判定（true=无需再走 AI）
+	Passed bool
 }
 
-// EvaluateHard 硬编码规则链（Spec 09 §2.3）：
-//
-//	白名单（命中 → Decided+Passed 短路，产出 AddressTags）→ 黑名单（命中 → Decided+Rejected）→ 未定案交 AI
-//
-// 黑名单未命中不自动通过。返回：判定结果、命中的地点标签（白名单）、命中详情、拒绝原因
+// EvaluateHard 先黑后白：黑名单命中拒绝并记 tag；白名单命中通过并记地点；都未命中拒绝且不记 tag。
 func EvaluateHard(post models.RentPost, rules []models.Rule) (v HardVerdict, tags []string, hits []models.RuleHit, rejectedBy string, err error) {
-	// ① 白名单：评估全部；命中词写入 tags；任一命中 → 短路通过
+	for _, r := range rules {
+		if r.Type != models.RuleTypeBlacklist {
+			continue
+		}
+		if kw := matchAny(post, r.Value); kw != "" {
+			hits = append(hits, models.RuleHit{RuleID: r.ID, Mode: r.Mode, Reason: kw})
+			return HardVerdict{Passed: false}, nil, hits, "黑名单命中:" + kw, nil
+		}
+	}
 	whitelistHit := false
 	for _, r := range rules {
 		if r.Type != models.RuleTypeWhitelist {
@@ -33,20 +36,9 @@ func EvaluateHard(post models.RentPost, rules []models.Rule) (v HardVerdict, tag
 		hits = append(hits, models.RuleHit{RuleID: r.ID, Mode: r.Mode, Reason: strings.Join(found, ",")})
 	}
 	if whitelistHit {
-		return HardVerdict{Passed: true, Decided: true}, dedup(tags), hits, "", nil
+		return HardVerdict{Passed: true}, dedup(tags), hits, "", nil
 	}
-	// ② 黑名单：任一命中 → 拒绝；未命中不自动通过
-	for _, r := range rules {
-		if r.Type != models.RuleTypeBlacklist {
-			continue
-		}
-		if kw := matchAny(post, r.Value); kw != "" {
-			hits = append(hits, models.RuleHit{RuleID: r.ID, Mode: r.Mode, Reason: kw})
-			return HardVerdict{Passed: false, Decided: true}, nil, hits, "黑名单命中:" + kw, nil
-		}
-	}
-	// ③ 未定案 → 交 AI（或 AI 关闭时的默认策略）
-	return HardVerdict{Passed: false, Decided: false}, nil, hits, "", nil
+	return HardVerdict{Passed: false}, nil, nil, "", nil
 }
 
 // matchLocations 匹配地点关键字（标题+正文子串，大小写不敏感），返回命中列表（按输入顺序）

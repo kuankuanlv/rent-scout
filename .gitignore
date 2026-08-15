@@ -1,6 +1,12 @@
 # 本地计划/规格/架构草稿（整目录不入库）
 docs/
 
+# 本地编译产物（go build -o bin/...）
+/bin/
+
+# 误在模块根裸 go build 留下的二进制
+/rent-scout
+
 # SQLite 数据文件目录与文件
 db/
 *.db

@@ -215,15 +215,15 @@ func TestMarkStatus(t *testing.T) {
 		}
 		ids = append(ids, id)
 	}
-	if err := s.MarkStatus(ids, models.PostStatusPending); err != nil {
+	if err := s.MarkStatus(ids, models.PostStatusPassed); err != nil {
 		t.Fatal(err)
 	}
 	var cnt int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM posts WHERE status = 'pending'`).Scan(&cnt); err != nil {
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM posts WHERE status = 'passed'`).Scan(&cnt); err != nil {
 		t.Fatal(err)
 	}
 	if cnt != 3 {
-		t.Errorf("pending 数 = %d, want 3", cnt)
+		t.Errorf("passed 数 = %d, want 3", cnt)
 	}
 }
 
@@ -269,21 +269,16 @@ func TestFetchPendingByStatuses(t *testing.T) {
 			CollectedAt: time.Now(), Status: models.PostStatusCollected}
 		s.InsertPost(p)
 	}
-	// 一条 pending
-	p := models.RentPost{Source: "douban", ExternalID: "pending-1", Title: "t",
-		CollectedAt: time.Now(), Status: models.PostStatusPending}
-	s.InsertPost(p)
-	// 一条 passed（不应被拉取）
 	q := models.RentPost{Source: "douban", ExternalID: "passed-1", Title: "t",
 		CollectedAt: time.Now(), Status: models.PostStatusPassed}
 	s.InsertPost(q)
 
-	batch, err := s.FetchPendingByStatuses([]string{models.PostStatusCollected, models.PostStatusPending}, 10)
+	batch, err := s.FetchPendingByStatuses([]string{models.PostStatusCollected, models.PostStatusRejected}, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(batch) != 4 {
-		t.Errorf("批数 = %d, want 4", len(batch))
+	if len(batch) != 3 {
+		t.Errorf("批数 = %d, want 3", len(batch))
 	}
 }
 

@@ -86,7 +86,7 @@ func TestRunnerDoubanBackfillThenIncremental(t *testing.T) {
 		t.Fatalf("回填 Detail = %d, want 2", detailHits)
 	}
 	prog, ok, err := st.GetProgress("douban")
-	if err != nil || !ok || prog.Phase != store.ProgressIncremental {
+	if err != nil || !ok || !prog.CatchingUp() {
 		t.Fatalf("回填后进度 = %+v ok=%v err=%v", prog, ok, err)
 	}
 	nList := len(listStarts)

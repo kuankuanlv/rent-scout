@@ -50,8 +50,8 @@ func newTestHotConfig(t *testing.T, s *store.Store, app *config.AppConfig, token
 
 type testCookieProbe struct{}
 
-func (testCookieProbe) InspectCookieCloud(ctx context.Context, draft config.DoubanCookieConfig) (CookieCloudInspect, error) {
-	ins, err := cookie.InspectCookieCloud(ctx, draft)
+func (testCookieProbe) InspectCookieCloud(ctx context.Context, draft config.DoubanCookieConfig, source string) (CookieCloudInspect, error) {
+	ins, err := cookie.InspectCookieCloudFor(ctx, draft, source)
 	return CookieCloudInspect{
 		Cookie: ins.Cookie, Names: ins.Names, Previews: ins.Previews,
 		Algo: ins.Algo, CipherField: ins.CipherField, HTTPStatus: ins.HTTPStatus, Domains: ins.Domains,

@@ -38,7 +38,7 @@ func New(opts Options) (*Service, error) {
 		return nil, err
 	}
 	trigger := make(chan struct{}, postCreatedCap)
-	runner := collector.NewRunner(rt, db, []collector.Source{d, weibo.New()}, trigger)
+	runner := collector.NewRunner(rt, db, []collector.Source{d, weibo.New(rt)}, trigger)
 	return &Service{
 		rt:            rt,
 		db:            db,

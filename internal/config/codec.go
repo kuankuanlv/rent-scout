@@ -60,6 +60,7 @@ func AppToKV(cfg *AppConfig) map[string]string {
 		"collector.douban.interval":    strconv.Itoa(doubanInterval),
 		"collector.douban.range_from":  rangeFrom,
 		"collector.douban.range_to":    rangeTo,
+		"collector.weibo.urls":         strings.Join(cfg.Collector.Weibo.URLs, "\n"),
 		"filter.ai_enabled":            ai,
 		"filter.batch_size":            strconv.Itoa(cfg.Filter.BatchSize),
 		"filter.ai_batch_size":         strconv.Itoa(cfg.Filter.AIBatchSize),
@@ -79,20 +80,28 @@ func SecretsToKV(sec *Secrets) map[string]string {
 		return map[string]string{}
 	}
 	dc := sec.Collector.Douban
+	wc := sec.Collector.Weibo
 	llm := sec.Filter.LLM
 	n := sec.Notifier
 	cookieMode := ParseCookieMode(dc.CookieMode).String()
+	weiboMode := ParseCookieMode(wc.CookieMode).String()
 	apiStyle := ParseLLMAPIStyle(llm.APIStyle).String()
 	if apiStyle == "" {
 		apiStyle = LLMStyleOpenAI.String()
 	}
 	return map[string]string{
-		KeyDoubanCookieMode:                   cookieMode,
-		KeyDoubanCookieRaw:                    dc.CookieRaw,
-		"secret.collector.douban.cookie_file": dc.CookieFile,
-		KeyDoubanCookieCloudURL:               dc.CookiecloudURL,
-		KeyDoubanCookieCloudKey:               dc.CookiecloudKey,
-		KeyDoubanCookieCloudPwd:               dc.CookiecloudPass,
+			KeyDoubanCookieMode:                   cookieMode,
+			KeyDoubanCookieRaw:                    dc.CookieRaw,
+			"secret.collector.douban.cookie_file": dc.CookieFile,
+			KeyDoubanCookieCloudURL:               dc.CookiecloudURL,
+			KeyDoubanCookieCloudKey:               dc.CookiecloudKey,
+			KeyDoubanCookieCloudPwd:               dc.CookiecloudPass,
+			KeyWeiboCookieMode:                    weiboMode,
+			KeyWeiboCookieRaw:                     wc.CookieRaw,
+			"secret.collector.weibo.cookie_file":  wc.CookieFile,
+			KeyWeiboCookieCloudURL:                wc.CookiecloudURL,
+			KeyWeiboCookieCloudKey:                wc.CookiecloudKey,
+			KeyWeiboCookieCloudPwd:                wc.CookiecloudPass,
 		"secret.filter.llm.api_key":           llm.APIKey,
 		"secret.filter.llm.base_url":          llm.BaseURL,
 		"secret.filter.llm.model":             llm.Model,
@@ -119,10 +128,15 @@ var SectionKeys = map[string][]string{
 		"collector.sources", "collector.interval", "collector.jitter_ratio", "collector.max_age_days",
 		"collector.douban.groups", "collector.douban.interval",
 		"collector.douban.range_from", "collector.douban.range_to",
+		"collector.weibo.urls",
 		"secret.collector.douban.cookie_mode", "secret.collector.douban.cookie_raw",
 		"secret.collector.douban.cookie_file",
 		"secret.collector.douban.cookiecloud_url", "secret.collector.douban.cookiecloud_key",
 		"secret.collector.douban.cookiecloud_password",
+		"secret.collector.weibo.cookie_mode", "secret.collector.weibo.cookie_raw",
+		"secret.collector.weibo.cookie_file",
+		"secret.collector.weibo.cookiecloud_url", "secret.collector.weibo.cookiecloud_key",
+		"secret.collector.weibo.cookiecloud_password",
 	},
 	"filter": {
 		"filter.ai_enabled", "filter.batch_size", "filter.ai_batch_size",
@@ -182,6 +196,9 @@ func KVToApp(kv map[string]string) *AppConfig {
 	if v := kv["collector.douban.groups"]; v != "" {
 		cfg.Collector.Douban.Groups = splitLines(v)
 	}
+	if v := kv["collector.weibo.urls"]; v != "" {
+		cfg.Collector.Weibo.URLs = splitLines(v)
+	}
 	if v := kv["collector.douban.interval"]; v != "" {
 		cfg.Collector.Douban.Interval = atoi(v, 0)
 	}
@@ -227,24 +244,12 @@ func KVToSecrets(kv map[string]string) *Secrets {
 	if len(kv) == 0 {
 		return sec
 	}
-	cookieMode := kv[KeyDoubanCookieMode]
-	if strings.EqualFold(cookieMode, "file") {
-		cookieMode = CookieModeNone.String()
-	} else {
-		cookieMode = ParseCookieMode(cookieMode).String()
-	}
 	apiStyleLLM := ParseLLMAPIStyle(kv["secret.filter.llm.api_style"]).String()
 	if apiStyleLLM == "" {
 		apiStyleLLM = LLMStyleOpenAI.String()
 	}
-	sec.Collector.Douban = DoubanCookieConfig{
-		CookieMode:      cookieMode,
-		CookieRaw:       kv[KeyDoubanCookieRaw],
-		CookieFile:      kv["secret.collector.douban.cookie_file"],
-		CookiecloudURL:  kv[KeyDoubanCookieCloudURL],
-		CookiecloudKey:  kv[KeyDoubanCookieCloudKey],
-		CookiecloudPass: kv[KeyDoubanCookieCloudPwd],
-	}
+	sec.Collector.Douban = cookieConfigFromKV(kv, "douban")
+	sec.Collector.Weibo = cookieConfigFromKV(kv, "weibo")
 	sec.Filter.LLM = LLMConfig{
 		APIKey:         kv["secret.filter.llm.api_key"],
 		BaseURL:        kv["secret.filter.llm.base_url"],
@@ -261,6 +266,23 @@ func KVToSecrets(kv map[string]string) *Secrets {
 		Webhook:    CustomWebhookConfig{URL: kv["secret.notifier.webhook.url"], Template: kv["secret.notifier.webhook.template"]},
 	}
 	return sec
+}
+
+func cookieConfigFromKV(kv map[string]string, source string) DoubanCookieConfig {
+	cookieMode := kv[CookieModeKey(source)]
+	if strings.EqualFold(cookieMode, "file") {
+		cookieMode = CookieModeNone.String()
+	} else {
+		cookieMode = ParseCookieMode(cookieMode).String()
+	}
+	return DoubanCookieConfig{
+		CookieMode:      cookieMode,
+		CookieRaw:       kv[CookieRawKey(source)],
+		CookieFile:      kv["secret.collector."+CookieSource(source)+".cookie_file"],
+		CookiecloudURL:  kv[CookieCloudURLKey(source)],
+		CookiecloudKey:  kv[CookieCloudKeyKey(source)],
+		CookiecloudPass: kv[CookieCloudPwdKey(source)],
+	}
 }
 
 // MergeKV 合并两个 KV map（后者覆盖前者）

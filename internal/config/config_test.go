@@ -40,6 +40,9 @@ func TestDefaultValues(t *testing.T) {
 	if len(cfg.Collector.Douban.Groups) < 5 {
 		t.Error("内置豆瓣小组应至少 5 个")
 	}
+	if n := len(HTTPURLs(cfg.Collector.Weibo.URLs)); n != 13 {
+		t.Errorf("内置微博超话 URL = %d, want 13", n)
+	}
 }
 
 func TestKVBatchSizeFallback(t *testing.T) {
@@ -193,6 +196,18 @@ func TestKVCookieRawRoundTrip(t *testing.T) {
 	got := KVToSecrets(kv)
 	if got.Collector.Douban.CookieRaw != "a=1; b=2" || got.Collector.Douban.CookieMode != "raw" {
 		t.Errorf("KVToSecrets = %+v", got.Collector.Douban)
+	}
+	sec.Collector.Weibo.CookieMode = "cookiecloud"
+	sec.Collector.Weibo.CookiecloudURL = "https://cc.example"
+	sec.Collector.Weibo.CookiecloudKey = "uuid"
+	sec.Collector.Weibo.CookiecloudPass = "pw"
+	kv = SecretsToKV(sec)
+	if kv[KeyWeiboCookieMode] != "cookiecloud" || kv[KeyWeiboCookieCloudURL] != "https://cc.example" {
+		t.Errorf("SecretsToKV weibo = %q %q", kv[KeyWeiboCookieMode], kv[KeyWeiboCookieCloudURL])
+	}
+	got = KVToSecrets(kv)
+	if got.Collector.Weibo.CookieMode != "cookiecloud" || got.Collector.Weibo.CookiecloudPass != "pw" {
+		t.Errorf("KVToSecrets weibo = %+v", got.Collector.Weibo)
 	}
 }
 

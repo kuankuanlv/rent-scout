@@ -42,7 +42,7 @@ func (p hotConfigProvider) Get(ctx context.Context, source string) (string, erro
 	if p.hc == nil {
 		return "", nil
 	}
-	dc := p.hc.Secrets().Collector.Douban
+		dc := p.hc.Secrets().Collector.CookieFor(source)
 	mode := config.ParseCookieMode(dc.CookieMode)
 	if !mode.Valid() {
 		return "", fmt.Errorf("未知 cookie_mode: %q", dc.CookieMode)

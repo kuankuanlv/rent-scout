@@ -16,8 +16,8 @@ type cookieProbe struct{}
 
 func NewCookieProbe() admin.CookieProbe { return cookieProbe{} }
 
-func (cookieProbe) InspectCookieCloud(ctx context.Context, draft config.DoubanCookieConfig) (admin.CookieCloudInspect, error) {
-	ins, err := cookie.InspectCookieCloud(ctx, draft)
+func (cookieProbe) InspectCookieCloud(ctx context.Context, draft config.DoubanCookieConfig, source string) (admin.CookieCloudInspect, error) {
+	ins, err := cookie.InspectCookieCloudFor(ctx, draft, source)
 	return admin.CookieCloudInspect{
 		Cookie:      ins.Cookie,
 		Names:       ins.Names,

@@ -60,11 +60,68 @@ func ParseLLMAPIStyle(s string) LLMAPIStyle {
 	}
 }
 
-// 豆瓣 cookie 相关 KV key（syncer / 编解码共用）
+// 各源 cookie 相关 KV key（syncer / 编解码共用）
 const (
 	KeyDoubanCookieMode     = "secret.collector.douban.cookie_mode"
 	KeyDoubanCookieRaw      = "secret.collector.douban.cookie_raw"
 	KeyDoubanCookieCloudURL = "secret.collector.douban.cookiecloud_url"
 	KeyDoubanCookieCloudKey = "secret.collector.douban.cookiecloud_key"
 	KeyDoubanCookieCloudPwd = "secret.collector.douban.cookiecloud_password"
+
+	KeyWeiboCookieMode     = "secret.collector.weibo.cookie_mode"
+	KeyWeiboCookieRaw      = "secret.collector.weibo.cookie_raw"
+	KeyWeiboCookieCloudURL = "secret.collector.weibo.cookiecloud_url"
+	KeyWeiboCookieCloudKey = "secret.collector.weibo.cookiecloud_key"
+	KeyWeiboCookieCloudPwd = "secret.collector.weibo.cookiecloud_password"
 )
+
+// CookieSource 归一化采集源名；只认 weibo，其余当 douban
+func CookieSource(source string) string {
+	if strings.EqualFold(strings.TrimSpace(source), "weibo") {
+		return "weibo"
+	}
+	return "douban"
+}
+
+// CookieCloudDomain CookieCloud 明文里只拼这个域
+func CookieCloudDomain(source string) string {
+	if CookieSource(source) == "weibo" {
+		return "weibo.com"
+	}
+	return "douban.com"
+}
+
+func CookieModeKey(source string) string {
+	if CookieSource(source) == "weibo" {
+		return KeyWeiboCookieMode
+	}
+	return KeyDoubanCookieMode
+}
+
+func CookieRawKey(source string) string {
+	if CookieSource(source) == "weibo" {
+		return KeyWeiboCookieRaw
+	}
+	return KeyDoubanCookieRaw
+}
+
+func CookieCloudURLKey(source string) string {
+	if CookieSource(source) == "weibo" {
+		return KeyWeiboCookieCloudURL
+	}
+	return KeyDoubanCookieCloudURL
+}
+
+func CookieCloudKeyKey(source string) string {
+	if CookieSource(source) == "weibo" {
+		return KeyWeiboCookieCloudKey
+	}
+	return KeyDoubanCookieCloudKey
+}
+
+func CookieCloudPwdKey(source string) string {
+	if CookieSource(source) == "weibo" {
+		return KeyWeiboCookieCloudPwd
+	}
+	return KeyDoubanCookieCloudPwd
+}

@@ -12,7 +12,7 @@ import (
 // DefaultSyncInterval CookieCloud 同步间隔；不进 admin 配置
 const DefaultSyncInterval = 10 * time.Minute
 
-// Syncer 独立协程：从 CookieCloud 拉 cookie 写入 kv 的 cookie_raw，供 douban_collector 只读
+// Syncer 独立协程：从 CookieCloud 拉 cookie 写入 kv 的 cookie_raw，采集侧只读
 type Syncer struct {
 	rt       *config.HotConfig
 	db       *store.Store
@@ -48,22 +48,28 @@ func (s *Syncer) Run(ctx context.Context) {
 }
 
 func (s *Syncer) syncOnce(ctx context.Context) {
-	log := pkglog.Component(pkglog.DoubanCookieCloud)
-	dc := s.rt.Secrets().Collector.Douban
+	col := s.rt.Secrets().Collector
+	s.syncSource(ctx, "douban", col.Douban)
+	s.syncSource(ctx, "weibo", col.Weibo)
+}
+
+func (s *Syncer) syncSource(ctx context.Context, source string, dc config.DoubanCookieConfig) {
+	log := pkglog.Component(pkglog.SourceCookieCloud(source))
 	if config.ParseCookieMode(dc.CookieMode) != config.CookieModeCookieCloud {
 		log.Info("当前配置 CookieCloud 未启用，无需执行")
 		return
 	}
-	ins, err := InspectCookieCloud(ctx, dc)
+	ins, err := InspectCookieCloudFor(ctx, dc, source)
 	if err != nil {
 		log.Error("同步失败", "err", err)
 		return
 	}
+	rawKey := config.CookieRawKey(source)
 	if ins.Cookie == dc.CookieRaw {
 		log.Info("cookie 无变化，不写库", "names", ins.Names)
 		return
 	}
-	if err := store.SetConfigBatch(s.db, map[string]string{config.KeyDoubanCookieRaw: ins.Cookie}); err != nil {
+	if err := store.SetConfigBatch(s.db, map[string]string{rawKey: ins.Cookie}); err != nil {
 		log.Error("写库失败", "err", err)
 		return
 	}

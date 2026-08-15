@@ -41,8 +41,11 @@ func ValidateApp(cfg *AppConfig) []string {
 	}
 	// 豆瓣源校验
 	for _, src := range cfg.Collector.Sources {
-		if src == models.SourceDouban.String() && len(cfg.Collector.Douban.Groups) == 0 {
+		if src == models.SourceDouban.String() && len(HTTPURLs(cfg.Collector.Douban.Groups)) == 0 {
 			errs = append(errs, "collector.douban.groups 不能为空（源 douban 已启用）")
+		}
+		if src == models.SourceWeibo.String() && len(HTTPURLs(cfg.Collector.Weibo.URLs)) == 0 {
+			errs = append(errs, "collector.weibo.urls 不能为空（源 weibo 已启用）")
 		}
 	}
 	if _, _, err := ResolveTimeRange(cfg.Collector.Douban.RangeFrom, "now", time.Now()); err != nil {
@@ -74,6 +77,36 @@ func ValidateApp(cfg *AppConfig) []string {
 	return errs
 }
 
+func validateSourceCookie(source string, dc DoubanCookieConfig) []string {
+	var errs []string
+	prefix := "collector." + CookieSource(source)
+	mode := ParseCookieMode(dc.CookieMode)
+	switch mode {
+	case CookieModeNone:
+	case CookieModeRaw:
+		if strings.TrimSpace(dc.CookieRaw) == "" {
+			errs = append(errs, prefix+".cookie_raw 不能为空（cookie_mode=raw）")
+		}
+	case CookieModeCookieCloud:
+		if dc.CookiecloudURL == "" {
+			errs = append(errs, prefix+".cookiecloud_url 不能为空（cookie_mode=cookiecloud）")
+		}
+		if dc.CookiecloudKey == "" {
+			errs = append(errs, prefix+".cookiecloud_key 不能为空（cookie_mode=cookiecloud）")
+		}
+		if dc.CookiecloudPass == "" {
+			errs = append(errs, prefix+".cookiecloud_password 不能为空（cookie_mode=cookiecloud）")
+		}
+	default:
+		if strings.EqualFold(dc.CookieMode, "file") {
+			errs = append(errs, prefix+".cookie_mode=file 已移除，请改用 none/raw/cookiecloud")
+		} else {
+			errs = append(errs, prefix+".cookie_mode 必须是 none/raw/cookiecloud")
+		}
+	}
+	return errs
+}
+
 // ValidateSecrets 校验敏感配置，返回错误消息列表（空 slice 表示无问题）
 func ValidateSecrets(sec *Secrets) []string {
 	var errs []string
@@ -82,35 +115,8 @@ func ValidateSecrets(sec *Secrets) []string {
 		return []string{"敏感配置为空"}
 	}
 
-	// Collector 校验：所有源的 cookie 模式
-	// douban
-	dc := sec.Collector.Douban
-	mode := ParseCookieMode(dc.CookieMode)
-	switch mode {
-	case CookieModeNone:
-		// 空串与 none 同等，不要求 raw/cloud 字段
-	case CookieModeRaw:
-		// 保存路径：空提交已沿用已存 cookie_raw，此处看到的应是合并后的值
-		if strings.TrimSpace(dc.CookieRaw) == "" {
-			errs = append(errs, "collector.douban.cookie_raw 不能为空（cookie_mode=raw）")
-		}
-	case CookieModeCookieCloud:
-		if dc.CookiecloudURL == "" {
-			errs = append(errs, "collector.douban.cookiecloud_url 不能为空（cookie_mode=cookiecloud）")
-		}
-		if dc.CookiecloudKey == "" {
-			errs = append(errs, "collector.douban.cookiecloud_key 不能为空（cookie_mode=cookiecloud）")
-		}
-		if dc.CookiecloudPass == "" {
-			errs = append(errs, "collector.douban.cookiecloud_password 不能为空（cookie_mode=cookiecloud）")
-		}
-	default:
-		if strings.EqualFold(dc.CookieMode, "file") {
-			errs = append(errs, "collector.douban.cookie_mode=file 已移除，请改用 none/raw/cookiecloud")
-		} else {
-			errs = append(errs, "collector.douban.cookie_mode 必须是 none/raw/cookiecloud")
-		}
-	}
+	errs = append(errs, validateSourceCookie("douban", sec.Collector.Douban)...)
+	errs = append(errs, validateSourceCookie("weibo", sec.Collector.Weibo)...)
 
 	// Filter: LLM 校验（api_key 空则自动关闭，不报错；base_url 非空则校验）
 	llm := sec.Filter.LLM

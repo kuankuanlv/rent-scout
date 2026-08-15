@@ -34,7 +34,7 @@ type DoubanPageResult struct {
 
 // CookieProbe 管理台 CookieCloud / 豆瓣探测
 type CookieProbe interface {
-	InspectCookieCloud(ctx context.Context, draft config.DoubanCookieConfig) (CookieCloudInspect, error)
+	InspectCookieCloud(ctx context.Context, draft config.DoubanCookieConfig, source string) (CookieCloudInspect, error)
 	ProbePage(ctx context.Context, probeURL, rawCookie string) DoubanPageResult
 }
 

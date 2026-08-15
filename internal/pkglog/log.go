@@ -29,6 +29,7 @@ const (
 	Admin             = "admin"
 	Setup             = "setup"
 	DoubanCookieCloud = "douban_cookie_cloud" // CookieCloud 同步协程，与 douban_collector 隔离
+	WeiboCookieCloud  = "weibo_cookie_cloud"
 )
 
 const dutyKey = "duty"
@@ -40,6 +41,15 @@ func SourceCollector(source string) string {
 		return Collector
 	}
 	return source + "_collector"
+}
+
+// SourceCookieCloud CookieCloud 同步职责：weibo → weibo_cookie_cloud
+func SourceCookieCloud(source string) string {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return DoubanCookieCloud
+	}
+	return source + "_cookie_cloud"
 }
 
 // Component 绑定职责名；文本日志由 handler 写成 [duty] 前缀

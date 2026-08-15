@@ -132,3 +132,50 @@ func TestSyncerSkipsWriteWhenUnchanged(t *testing.T) {
 		t.Fatalf("无变化不应再写历史, cookie_raw 历史=%d", n)
 	}
 }
+
+func TestSyncerWritesWeiboCookieRaw(t *testing.T) {
+	payload := `{"cookie_data":{"weibo.com":[{"name":"SUB","value":"wb","domain":".weibo.com"}],"douban.com":[{"name":"bid","value":"skip","domain":".douban.com"}]}}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(payload))
+	}))
+	defer srv.Close()
+
+	db, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	app := config.DefaultApp()
+	sec := config.DefaultSecrets()
+	sec.Collector.Weibo = config.DoubanCookieConfig{
+		CookieMode:      config.CookieModeCookieCloud.String(),
+		CookiecloudURL:  srv.URL,
+		CookiecloudKey:  "uuid",
+		CookiecloudPass: "pass",
+	}
+	kv := config.MergeKV(config.AppToKV(app), config.SecretsToKV(sec))
+	if err := store.SetConfigBatch(db, kv); err != nil {
+		t.Fatal(err)
+	}
+	rt := config.NewHotConfig(db)
+	if err := rt.ReloadOnce(); err != nil {
+		t.Fatal(err)
+	}
+
+	NewSyncer(rt, db, time.Hour).syncOnce(context.Background())
+
+	got, err := store.GetConfig(db, config.KeyWeiboCookieRaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "SUB=wb" {
+		t.Errorf("weibo cookie_raw = %q, want SUB=wb", got)
+	}
+	if rt.Secrets().Collector.Weibo.CookieRaw != "SUB=wb" {
+		t.Errorf("热配置未刷新: %q", rt.Secrets().Collector.Weibo.CookieRaw)
+	}
+	if rt.Secrets().Collector.Douban.CookieRaw != "" {
+		t.Errorf("不应写入豆瓣 cookie: %q", rt.Secrets().Collector.Douban.CookieRaw)
+	}
+}

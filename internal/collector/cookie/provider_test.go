@@ -69,6 +69,24 @@ func TestHotConfigCookieProviderFollowsSecrets(t *testing.T) {
 	}
 }
 
+func TestHotConfigCookieProviderPerSource(t *testing.T) {
+	env := &config.Secrets{
+		Collector: config.SecretsCollector{
+			Douban: config.DoubanCookieConfig{CookieMode: "raw", CookieRaw: "db=1"},
+			Weibo:  config.DoubanCookieConfig{CookieMode: "raw", CookieRaw: "wb=1"},
+		},
+	}
+	p := NewHotConfigProvider(config.NewHotConfigWithSnapshot(nil, env))
+	got, err := p.Get(context.Background(), "weibo")
+	if err != nil || got != "wb=1" {
+		t.Fatalf("weibo Get = %q %v", got, err)
+	}
+	got, err = p.Get(context.Background(), "douban")
+	if err != nil || got != "db=1" {
+		t.Fatalf("douban Get = %q %v", got, err)
+	}
+}
+
 // 未知模式：报错（配置错误应显式暴露）
 func TestUnknownCookieMode(t *testing.T) {
 	if _, err := New("weird", config.DoubanCookieConfig{}); err == nil {

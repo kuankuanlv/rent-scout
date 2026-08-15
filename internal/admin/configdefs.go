@@ -27,6 +27,14 @@ const LLMModelsPath = "/admin/config/llm/models"
 // NotifyTestPath 飞书/PushPlus 草稿试发（不写通知账本）
 const NotifyTestPath = "/admin/config/notify/test"
 
+const aiSectionDesc = `本配置当前版本仅用于审核帖子：大模型不参与采集，也不改帖子主状态（collected / passed / rejected）。硬规则（白名单地点、黑名单词）先筛一遍，通过的帖再交给 AI 打徽章，并尽量补全月租、联系方式、通勤描述。
+
+系统提示词固定为「租房信息筛选助手」。规则页里启用的自然语言规则整批写入 system，和判定标准共用一次：满足任一条即通过；只依据帖文、不做无依据推测；不确定时倾向通过。同时要求抽出月租金（整数元，区间取下限，没有填 0）、微信/手机等原文、通勤/交通原文。理由限中文约 30 字。user 侧只放本批精简帖，不重复规则。
+
+为省 token：详情 HTML 去掉标签和图片链接，正文按 500 字截断；同一批共用一份 system，多帖拼进一次请求（凑满 AI 批大小或等到超时再调）。请求带 json_schema，约束返回 {"verdicts":[...]}；temperature 0.1，不塞 few-shot 示例。
+
+入库时标题和正文还会用正则抠价格、联系方式。模型返回了有效价格或联系方式，再写回 posts。关闭本页开关或密钥为空时，审核协程仍在，本轮直接跳过。`
+
 type configSection struct {
 	ID     string
 	Title  string
@@ -153,12 +161,15 @@ func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[stri
 	if app.Admin.AuthRequired {
 		auth = "true"
 	}
-	cookieRawHint := "粘贴 cookie 原文；留空不修改"
-	if raw := env.Collector.Douban.CookieRaw; raw != "" {
-		cookieRawHint = fmt.Sprintf("已保存 · 长度 %d；留空不修改", len(raw))
+	cookieRawHint := func(ck config.DoubanCookieConfig) string {
+		if raw := ck.CookieRaw; raw != "" {
+			return fmt.Sprintf("已保存 · 长度 %d；留空不修改", len(raw))
+		}
+		return "粘贴 cookie 原文；留空不修改"
 	}
 	apiStyle := "openai"
 	ccPass := get(config.KeyDoubanCookieCloudPwd, env.Collector.Douban.CookiecloudPass)
+	weiboCCPass := get(config.KeyWeiboCookieCloudPwd, env.Collector.Weibo.CookiecloudPass)
 	ppToken := get("secret.notifier.pushplus.token", env.Notifier.Pushplus.Token)
 	llmBase := get("secret.filter.llm.base_url", env.Filter.LLM.BaseURL)
 	if llmBase == "" {
@@ -223,7 +234,7 @@ func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[stri
 			{
 				Title: "豆瓣小组与请求节奏", Hint: "抓哪些小组；同一轮里两次访问豆瓣停几秒，用来降风控。", Class: "bg-emerald-50/80 border-emerald-200", Group: "douban",
 				Items: []configField{
-					{Key: "collector.douban.groups", Label: "豆瓣小组 URL", Value: get("collector.douban.groups", strings.Join(app.Collector.Douban.Groups, "\n")), Type: "textarea", Hint: "每行一个", Group: "douban"},
+					{Key: "collector.douban.groups", Label: "豆瓣小组 URL", Value: get("collector.douban.groups", strings.Join(app.Collector.Douban.Groups, "\n")), Type: "textarea", Hint: "每行一个网址。单独一行的 #话题 或非 http 行当注释，保存后仍保留。", Group: "douban"},
 					{Key: "collector.douban.interval", Label: "请求间隔(秒)", Value: get("collector.douban.interval", strconv.Itoa(app.Collector.Douban.Interval)), Type: "number", Group: "douban", Wide: true, Hint: "同一轮里两次访问豆瓣停几秒，默认 3，用来降风控。不是上面的采集间隔。"},
 				},
 			},
@@ -231,18 +242,34 @@ func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[stri
 				Title: "豆瓣 Cookie", Hint: "采集访问豆瓣用的登录态。raw 自己贴；cookiecloud 从云端同步到本地后再用。", Class: "bg-amber-50 border-amber-200", Group: "douban", Tools: "cookie",
 				Items: []configField{
 					{Key: config.KeyDoubanCookieMode, Label: "Cookie 模式", Value: get(config.KeyDoubanCookieMode, env.Collector.Douban.CookieMode), Type: "select", Options: []string{config.CookieModeNone.String(), config.CookieModeRaw.String(), config.CookieModeCookieCloud.String()}, Hint: "none 不带 cookie；raw 粘贴原文；cookiecloud 从 CookieCloud 同步", Group: "douban"},
-					{Key: config.KeyDoubanCookieRaw, Label: "Cookie 原文", Value: "", Type: "textarea", CanClear: true, Hint: cookieRawHint, ShowWhen: config.CookieModeRaw.String(), Group: "douban"},
+					{Key: config.KeyDoubanCookieRaw, Label: "Cookie 原文", Value: "", Type: "textarea", CanClear: true, Hint: cookieRawHint(env.Collector.Douban), ShowWhen: config.CookieModeRaw.String(), Group: "douban"},
 					{Key: config.KeyDoubanCookieCloudURL, Label: "CookieCloud 地址", Value: get(config.KeyDoubanCookieCloudURL, env.Collector.Douban.CookiecloudURL), Type: "text", Hint: "如 https://cc.example.com", CanClear: true, ShowWhen: config.CookieModeCookieCloud.String(), Group: "douban"},
 					{Key: config.KeyDoubanCookieCloudKey, Label: "CookieCloud UUID", Value: get(config.KeyDoubanCookieCloudKey, env.Collector.Douban.CookiecloudKey), Type: "text", CanClear: true, ShowWhen: config.CookieModeCookieCloud.String(), Group: "douban"},
 					{Key: config.KeyDoubanCookieCloudPwd, Label: "CookieCloud 密码", Value: ccPass, Type: "text", CanClear: true, Hint: "明文回显；勾选清空可删除", ShowWhen: config.CookieModeCookieCloud.String(), Group: "douban", Wide: true},
 				},
 			},
 			{
-				Title: "微博", Hint: "采集暂未实现，可先配置启用与间隔。", Class: "bg-slate-50 border-slate-200", Group: "weibo",
+				Title: "微博", Hint: "采集暂未实现，可先配超话地址与启用。", Class: "bg-slate-50 border-slate-200", Group: "weibo",
 				Items: sourceBase(models.SourceWeibo.String(), "weibo"),
 			},
+			{
+				Title: "微博超话", Hint: "搜索/超话页地址，采集接上后按这些 URL 拉帖。", Class: "bg-emerald-50/80 border-emerald-200", Group: "weibo",
+				Items: []configField{
+					{Key: "collector.weibo.urls", Label: "微博超话 URL", Value: get("collector.weibo.urls", strings.Join(app.Collector.Weibo.URLs, "\n")), Type: "textarea", Hint: "每行一个网址。#话题名 单独一行当注释，采集只认 http(s)。", Group: "weibo"},
+				},
+			},
+			{
+				Title: "微博 Cookie", Hint: "采集访问微博用的登录态。与豆瓣同一套模式；CookieCloud 只拼 weibo.com。账号可与豆瓣相同也可分开填。", Class: "bg-amber-50 border-amber-200", Group: "weibo", Tools: "cookie",
+				Items: []configField{
+					{Key: config.KeyWeiboCookieMode, Label: "Cookie 模式", Value: get(config.KeyWeiboCookieMode, env.Collector.Weibo.CookieMode), Type: "select", Options: []string{config.CookieModeNone.String(), config.CookieModeRaw.String(), config.CookieModeCookieCloud.String()}, Hint: "none 不带 cookie；raw 粘贴原文；cookiecloud 从 CookieCloud 同步", Group: "weibo"},
+					{Key: config.KeyWeiboCookieRaw, Label: "Cookie 原文", Value: "", Type: "textarea", CanClear: true, Hint: cookieRawHint(env.Collector.Weibo), ShowWhen: config.CookieModeRaw.String(), Group: "weibo"},
+					{Key: config.KeyWeiboCookieCloudURL, Label: "CookieCloud 地址", Value: get(config.KeyWeiboCookieCloudURL, env.Collector.Weibo.CookiecloudURL), Type: "text", Hint: "如 https://cc.example.com", CanClear: true, ShowWhen: config.CookieModeCookieCloud.String(), Group: "weibo"},
+					{Key: config.KeyWeiboCookieCloudKey, Label: "CookieCloud UUID", Value: get(config.KeyWeiboCookieCloudKey, env.Collector.Weibo.CookiecloudKey), Type: "text", CanClear: true, ShowWhen: config.CookieModeCookieCloud.String(), Group: "weibo"},
+					{Key: config.KeyWeiboCookieCloudPwd, Label: "CookieCloud 密码", Value: weiboCCPass, Type: "text", CanClear: true, Hint: "明文回显；勾选清空可删除", ShowWhen: config.CookieModeCookieCloud.String(), Group: "weibo", Wide: true},
+				},
+			},
 		}),
-		makeSection("filter", "AI", "本配置当前版本仅用于审核帖子", []configBlock{
+		makeSection("filter", "AI", aiSectionDesc, []configBlock{
 			{
 				Title: "AI 审核", Class: "bg-violet-50/80 border-violet-200", Tools: "llm",
 				Items: []configField{

@@ -68,14 +68,13 @@ func (c *RuleChain) EvaluateAIBatch(ctx context.Context, posts []models.RentPost
 			return nil, fmt.Errorf("AI 输出缺失 post %d", post.ID)
 		}
 		results[post.ID] = models.FilterResult{
-			PostID: post.ID, Status: statusFromAI(ai), Stage: models.StageAIRule,
-			RejectedBy: rejectReason(ai), DecidedAt: now, AI: ai,
+			PostID: post.ID, Status: models.PostStatusPassed, Stage: models.StageAIRule,
+			DecidedAt: now, AI: ai,
 		}
 	}
 	return results, nil
 }
 
-// enabledAIRules 过滤启用的自然语言规则（按 Priority 降序，与 store ListRules 一致）
 func enabledAIRules(rules []models.Rule) []models.Rule {
 	var out []models.Rule
 	for _, r := range rules {
@@ -84,20 +83,4 @@ func enabledAIRules(rules []models.Rule) []models.Rule {
 		}
 	}
 	return out
-}
-
-// statusFromAI AI 判定 → 帖子状态
-func statusFromAI(ai *models.AIResult) string {
-	if ai.Passed {
-		return models.PostStatusPassed
-	}
-	return models.PostStatusRejected
-}
-
-// rejectReason AI 拒绝原因摘要
-func rejectReason(ai *models.AIResult) string {
-	if ai == nil || ai.Passed {
-		return ""
-	}
-	return "AI拒绝:" + ai.Reason
 }

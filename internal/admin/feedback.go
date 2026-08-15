@@ -10,10 +10,13 @@ import (
 	"fmt"
 	"html"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"rent-scout/internal/models"
+	"rent-scout/internal/notifier"
 	"rent-scout/internal/pkglog"
 )
 
@@ -41,10 +44,18 @@ func (s *Server) verifyFeedbackSig(postID int64, action, exp, sig string) error 
 	return nil
 }
 
-// handleFeedback 反馈链接（/f?post=&action=&exp=&sig=）：校验 → 写反馈 → 结果页
+func (s *Server) postIDFromRefQuery(q url.Values) (int64, error) {
+	p := strings.TrimSpace(q.Get("p"))
+	if p == "" {
+		return 0, errors.New("缺少引用")
+	}
+	return notifier.OpenPostRef(p, s.rt.Get().Admin.Token)
+}
+
+// handleFeedback 反馈链接（/f?p=&action=&exp=&sig=）：校验 → 写反馈 → 结果页
 func (s *Server) handleFeedback(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	postID, err := strconv.ParseInt(q.Get("post"), 10, 64)
+	postID, err := s.postIDFromRefQuery(q)
 	action := q.Get("action")
 	if err != nil || postID <= 0 || (action != models.FeedbackUseful && action != models.FeedbackUseless) {
 		http.Error(w, "参数无效", http.StatusBadRequest)
@@ -73,7 +84,7 @@ func (s *Server) handleHandledLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	postID, err := strconv.ParseInt(q.Get("post"), 10, 64)
+	postID, err := s.postIDFromRefQuery(q)
 	if err != nil || postID <= 0 {
 		http.Error(w, "参数无效", http.StatusBadRequest)
 		return

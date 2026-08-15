@@ -198,6 +198,27 @@ func TestAPIPostsListFilters(t *testing.T) {
 	if code, posts := get("/api/posts?handled=0"); code != http.StatusOK || len(posts) != 1 || posts[0].ExternalID != "af1" {
 		t.Errorf("handled=0: code=%d posts=%+v", code, posts)
 	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/post-tags", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("post-tags status = %d", rec.Code)
+	}
+	var tagsOut struct {
+		Tags []string `json:"tags"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &tagsOut); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, tname := range tagsOut.Tags {
+		got[tname] = true
+	}
+	if !got["望京"] || !got["回龙观"] {
+		t.Errorf("post-tags = %v, want 含望京/回龙观", tagsOut.Tags)
+	}
 }
 
 // TestAPIPostsListDefaultLimit：不传 limit → 默认 50（播种 55 帖验证默认值生效）

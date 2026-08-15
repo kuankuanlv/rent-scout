@@ -180,14 +180,16 @@ func (c *Consumer) commitAI(res models.FilterResult) error {
 		pkglog.Component(pkglog.AIReview).Error("读已有筛选结果失败", "post_id", res.PostID, "err", err)
 	} else if ok {
 		res.HardRules = existing.HardRules
+		res.Status = existing.Status
+		res.RejectedBy = existing.RejectedBy
+	} else {
+		res.Status = models.PostStatusPassed
+		res.RejectedBy = ""
 	}
 	if err := c.store.SaveFilterResult(res); err != nil {
 		pkglog.Component(pkglog.AIReview).Error("筛选结果写库失败", "post_id", res.PostID, "err", err)
 	}
-	if err := c.store.MarkStatus([]int64{res.PostID}, res.Status); err != nil {
-		return err
-	}
-	pkglog.Component(pkglog.AIReview).Info("帖子已定案", "post_id", res.PostID, "stage", res.Stage, "result", res.Status,
+	pkglog.Component(pkglog.AIReview).Info("AI 徽章已写入", "post_id", res.PostID, "ai_passed", res.AI != nil && res.AI.Passed,
 		"ai_reason", aiReason(res.AI))
 	return nil
 }

@@ -14,7 +14,41 @@ import (
 	"rent-scout/internal/store"
 )
 
-// appendSelectedTag 当前筛选值不在选项里也塞进去，避免下拉丢选中态
+// postsFilter 全览筛选条当前值；With 改一维并清 page，供平铺枚举链接用
+type postsFilter struct {
+	Q, Status, Tag, AI, Handled, Token string
+	PageSize                           int
+}
+
+func (f postsFilter) With(key, val string) template.URL {
+	q := url.Values{}
+	set := func(k, v string) {
+		if strings.TrimSpace(v) != "" {
+			q.Set(k, v)
+		}
+	}
+	set("q", f.Q)
+	set("status", f.Status)
+	set("tag", f.Tag)
+	set("ai", f.AI)
+	set("handled", f.Handled)
+	set("token", f.Token)
+	if f.PageSize > 0 && f.PageSize != adminPostPageSize {
+		q.Set("page_size", strconv.Itoa(f.PageSize))
+	}
+	if strings.TrimSpace(val) == "" {
+		q.Del(key)
+	} else {
+		q.Set(key, val)
+	}
+	enc := q.Encode()
+	if enc == "" {
+		return template.URL("/admin/posts")
+	}
+	return template.URL("/admin/posts?" + enc)
+}
+
+// appendSelectedTag 当前筛选值不在选项里也塞进去，避免平铺丢选中态
 func appendSelectedTag(opts []string, selected string) []string {
 	selected = strings.TrimSpace(selected)
 	if selected == "" {
@@ -43,7 +77,7 @@ func postListFilterFromQuery(q url.Values) store.PostListFilter {
 func adminPostsQuery(r *http.Request) url.Values {
 	src := r.URL.Query()
 	out := url.Values{}
-	for _, k := range []string{"q", "status", "tag", "handled", "ai", "token"} {
+	for _, k := range []string{"q", "status", "tag", "handled", "ai", "page", "page_size", "token"} {
 		if v := src.Get(k); v != "" {
 			out.Set(k, v)
 		}
@@ -51,21 +85,60 @@ func adminPostsQuery(r *http.Request) url.Values {
 	return out
 }
 
-// adminPostsPath 拼 /admin?... 重定向目标
+// adminPostsPath 拼 /admin/posts?... 重定向目标
 func adminPostsPath(r *http.Request) string {
 	q := adminPostsQuery(r)
 	if len(q) == 0 {
-		return "/admin"
+		return "/admin/posts"
 	}
-	return "/admin?" + q.Encode()
+	return "/admin/posts?" + q.Encode()
 }
 
-// handleAdmin 帖子列表页（GET /admin）
+// handleHome 项目介绍页（GET /admin）
+func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := s.tmpl.ExecuteTemplate(w, "home", mergePageCtx(pageCtx(r, "home"), map[string]any{})); err != nil {
+		pkglog.Component(pkglog.Admin).Error("介绍页渲染失败", "err", err)
+	}
+}
+
+// handleAdmin 帖子列表页（GET /admin/posts）
 // 页面数据 {Posts, Token, Q, Status, Tag, Handled}：Token/筛选透传 URL query，
 // 供 nav 链接/筛选链接/表单 action 追加，保证鉴权开启时页面内跳转与提交不 401。
+const adminPostPageSize = 20
+
 func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
 	f := postListFilterFromQuery(r.URL.Query())
-	posts, err := s.db.ListPosts(f, 200, 0)
+	q := r.URL.Query()
+	page, _ := strconv.Atoi(q.Get("page"))
+	if page < 1 {
+		page = 1
+	}
+	size, _ := strconv.Atoi(q.Get("page_size"))
+	if size <= 0 {
+		size = adminPostPageSize
+	}
+	if size > 100 {
+		size = 100
+	}
+	total, err := s.db.CountPosts(f)
+	if err != nil {
+		pkglog.Component(pkglog.Admin).Error("帖子计数失败", "err", err)
+		http.Error(w, "查询失败", http.StatusInternalServerError)
+		return
+	}
+	pages := (total + size - 1) / size
+	if pages < 1 {
+		pages = 1
+	}
+	if page > pages {
+		page = pages
+	}
+	offset := (page - 1) * size
+	posts, err := s.db.ListPosts(f, size, offset)
 	if err != nil {
 		pkglog.Component(pkglog.Admin).Error("帖子列表查询失败", "err", err)
 		http.Error(w, "查询失败", http.StatusInternalServerError)
@@ -74,25 +147,64 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
 	if err := s.db.AttachHitTags(posts); err != nil {
 		pkglog.Component(pkglog.Admin).Warn("命中标签加载失败", "err", err)
 	}
-	tagOpts, err := s.db.ListFilterTags()
+	tags, err := s.db.ListFilterTags()
 	if err != nil {
-		pkglog.Component(pkglog.Admin).Warn("标签下拉加载失败", "err", err)
-		tagOpts = nil
+		pkglog.Component(pkglog.Admin).Warn("标签聚合失败", "err", err)
+		tags = nil
 	}
-	tagOpts = appendSelectedTag(tagOpts, f.Tag)
+	tags = appendSelectedTag(tags, f.Tag)
 	fq := adminPostsQuery(r).Encode()
+	prevQ, nextQ := pageQuery(r, page-1), pageQuery(r, page+1)
+	filter := postsFilter{
+		Q: f.Q, Status: f.Status, Tag: f.Tag, AI: f.AI, Handled: f.Handled,
+		Token: r.URL.Query().Get("token"), PageSize: size,
+	}
 	if err := s.tmpl.ExecuteTemplate(w, "admin", mergePageCtx(pageCtx(r, "posts"), map[string]any{
 		"Posts":       posts,
 		"Q":           f.Q,
 		"Status":      f.Status,
 		"Tag":         f.Tag,
-		"TagOptions":  tagOpts,
 		"Handled":     f.Handled,
 		"AI":          f.AI,
+		"Tags":        tags,
+		"Filter":      filter,
+		"Page":        page,
+		"Pages":       pages,
+		"Total":       total,
+		"PageSize":    size,
+		"HasPrev":     page > 1,
+		"HasNext":     page < pages,
+		"PrevQuery":   template.URL(prevQ),
+		"NextQuery":   template.URL(nextQ),
 		"FilterQuery": template.URL(fq), // 避免 action 里 = 被 html/template 编成 %3d
 	})); err != nil {
 		pkglog.Component(pkglog.Admin).Error("模板渲染失败", "err", err)
 	}
+}
+
+func pageQuery(r *http.Request, page int) string {
+	q := adminPostsQuery(r)
+	if page <= 1 {
+		q.Del("page")
+	} else {
+		q.Set("page", strconv.Itoa(page))
+	}
+	return q.Encode()
+}
+
+func (s *Server) handlePostTags(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	tags, err := s.db.ListFilterTags()
+	if err != nil {
+		pkglog.Component(pkglog.Admin).Error("标签聚合失败", "err", err)
+		http.Error(w, "查询失败", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(map[string]any{"tags": tags})
 }
 
 // handleMark 标记反馈（POST /admin/mark，表单：post_id/action/reason）

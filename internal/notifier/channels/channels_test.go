@@ -91,8 +91,11 @@ func TestPushplusChannelSend(t *testing.T) {
 	if got["topic"] != "doubanzufang" {
 		t.Errorf("topic: %v", got["topic"])
 	}
-	if !strings.Contains(got["title"], "望京") {
-		t.Errorf("title: %v", got["title"])
+	if got["template"] != "html" {
+		t.Errorf("template: %v", got["template"])
+	}
+	if !strings.Contains(got["content"], "AI审核原因") || !strings.Contains(got["content"], "有用") {
+		t.Errorf("content: %v", got["content"])
 	}
 }
 

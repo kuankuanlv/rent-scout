@@ -1,0 +1,32 @@
+{{define "home"}}
+<!DOCTYPE html>
+<html lang="zh">
+<head><title>rent-scout - 介绍</title>{{template "head" .}}</head>
+<body class="bg-gradient-to-br from-slate-50 via-white to-brand-50 min-h-screen text-gray-800">
+{{template "nav" .}}
+<main class="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+  <h1 class="text-3xl font-bold text-gray-900 mb-3">rent-scout</h1>
+  <p class="text-gray-600 leading-relaxed mb-8">豆瓣租房帖自动采集、规则筛选、多渠道通知。配置存在本地 SQLite，用上面的控制台管理。</p>
+  <div class="grid gap-4 sm:grid-cols-2">
+    <a href="/admin/posts{{if .Token}}?token={{.Token}}{{end}}" class="block rounded-2xl border border-gray-100 bg-white p-5 shadow-sm hover:border-brand-200">
+      <div class="font-semibold text-gray-900 mb-1">帖子</div>
+      <p class="text-sm text-gray-500">全览、筛选、人工标记</p>
+    </a>
+    <a href="/admin/stats{{if .Token}}?token={{.Token}}{{end}}" class="block rounded-2xl border border-gray-100 bg-white p-5 shadow-sm hover:border-brand-200">
+      <div class="font-semibold text-gray-900 mb-1">统计</div>
+      <p class="text-sm text-gray-500">采集与通知概况</p>
+    </a>
+    <a href="/admin/config{{if .Token}}?token={{.Token}}{{end}}" class="block rounded-2xl border border-gray-100 bg-white p-5 shadow-sm hover:border-brand-200">
+      <div class="font-semibold text-gray-900 mb-1">配置</div>
+      <p class="text-sm text-gray-500">采集、AI、通知渠道</p>
+    </a>
+    <a href="/admin/logs{{if .Token}}?token={{.Token}}{{end}}" class="block rounded-2xl border border-gray-100 bg-white p-5 shadow-sm hover:border-brand-200">
+      <div class="font-semibold text-gray-900 mb-1">日志</div>
+      <p class="text-sm text-gray-500">实时滚动系统日志</p>
+    </a>
+  </div>
+</main>
+<footer class="text-center text-xs text-gray-400 py-6">rent-scout · 租房信息 Scout</footer>
+</body>
+</html>
+{{end}}

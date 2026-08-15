@@ -263,8 +263,8 @@ func TestDualFeedbackLinksWithSignature(t *testing.T) {
 	if handledURL == "" {
 		t.Fatal("未找到已处理 URL")
 	}
-	if !strings.Contains(handledURL, "/h?post=") {
-		t.Errorf("已处理 URL 应走 /h: %s", handledURL)
+	if !strings.Contains(handledURL, "/h?p=") || strings.Contains(handledURL, "post=") {
+		t.Errorf("已处理 URL 应走 /h?p=: %s", handledURL)
 	}
 	if !strings.Contains(handledURL, "exp=") || !strings.Contains(handledURL, "sig=") {
 		t.Errorf("已处理 URL 应包含 exp 和 sig: %s", handledURL)

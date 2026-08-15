@@ -166,8 +166,8 @@ func TestConsumerAIBatch(t *testing.T) {
 		}
 		passed, _ := st.FetchPendingByStatus(models.PostStatusPassed, 10)
 		rejected, _ := st.FetchPendingByStatus(models.PostStatusRejected, 10)
-		if len(passed) != 2 || len(rejected) != 1 {
-			t.Errorf("passed=%d rejected=%d, want 2/1", len(passed), len(rejected))
+		if len(passed) != 3 || len(rejected) != 0 {
+			t.Errorf("passed=%d rejected=%d, want 3/0（AI 不改主状态）", len(passed), len(rejected))
 		}
 	})
 

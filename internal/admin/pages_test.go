@@ -34,9 +34,13 @@ func TestAdminPage(t *testing.T) {
 		return rec.Code, rec.Body.String()
 	}
 
-	// 全览：200 + 含全部标题
 	if code, body := get("/admin"); code != http.StatusOK {
-		t.Errorf("GET /admin status = %d, want 200", code)
+		t.Errorf("GET /admin 介绍页 status = %d", code)
+	} else if !strings.Contains(body, "豆瓣租房帖自动采集") {
+		t.Errorf("介绍页缺项目说明: %s", body[:200])
+	}
+	if code, body := get("/admin/posts"); code != http.StatusOK {
+		t.Errorf("GET /admin/posts status = %d, want 200", code)
 	} else {
 		for _, title := range []string{"标题0", "标题1", "标题2"} {
 			if !strings.Contains(body, title) {
@@ -52,7 +56,7 @@ func TestAdminPage(t *testing.T) {
 	}
 
 	// 过滤：只含 passed 帖
-	if code, body := get("/admin?status=passed"); code != http.StatusOK {
+	if code, body := get("/admin/posts?status=passed"); code != http.StatusOK {
 		t.Errorf("GET /admin?status=passed status = %d, want 200", code)
 	} else {
 		if !strings.Contains(body, "标题0") {
@@ -105,7 +109,7 @@ func TestAdminPageFilters(t *testing.T) {
 		return rec.Code, rec.Body.String()
 	}
 
-	code, body := get("/admin?q=合租")
+	code, body := get("/admin/posts?q=合租")
 	if code != http.StatusOK {
 		t.Fatalf("q 筛选 status = %d", code)
 	}
@@ -116,7 +120,7 @@ func TestAdminPageFilters(t *testing.T) {
 		t.Errorf("页面缺 AddressTags chips")
 	}
 
-	if code, body := get("/admin?status=rejected"); code != http.StatusOK {
+	if code, body := get("/admin/posts?status=rejected"); code != http.StatusOK {
 		t.Fatalf("rejected 列表 status = %d", code)
 	} else if !strings.Contains(body, "中介") || !strings.Contains(body, "bg-red-50") {
 		t.Errorf("拒绝帖应展示黑名单命中词: %s", body)
@@ -128,27 +132,67 @@ func TestAdminPageFilters(t *testing.T) {
 		t.Errorf("页面缺人工标记按钮")
 	}
 
-	if code, body := get("/admin"); code != http.StatusOK || !strings.Contains(body, "无标签") {
+	if code, body := get("/admin/posts"); code != http.StatusOK || !strings.Contains(body, "无标签") {
 		t.Errorf("无 AddressTags 帖应显示空态「无标签」: code=%d", code)
 	}
 
-	if code, body := get("/admin"); code != http.StatusOK {
-		t.Fatalf("标签下拉 status = %d", code)
+	if code, body := get("/admin/posts"); code != http.StatusOK {
+		t.Fatalf("标签平铺 status = %d", code)
 	} else {
-		if !strings.Contains(body, `name="tag"`) || strings.Contains(body, `placeholder="address tag"`) {
-			t.Error("标签应是下拉，不是自由输入")
+		if !strings.Contains(body, `>标签</span>`) || strings.Contains(body, `id="post-tag-select"`) {
+			t.Error("标签应是平铺枚举，不是下拉")
 		}
-		for _, opt := range []string{`value="望京"`, `value="14号线"`, `value="朝阳门"`} {
-			if !strings.Contains(body, opt) {
-				t.Errorf("标签下拉缺选项 %s", opt)
-			}
+		if !strings.Contains(body, "望京") {
+			t.Error("标签平铺应含帖子里的地址标签")
+		}
+		if !strings.Contains(body, "共 ") || !strings.Contains(body, "页") {
+			t.Error("全览应有分页条")
 		}
 	}
 
-	if code, body := get("/admin?tag=望京"); code != http.StatusOK || !strings.Contains(body, "望京合租帖") || strings.Contains(body, "其它帖") {
+	if code, body := get("/admin/posts?tag=望京"); code != http.StatusOK || !strings.Contains(body, "望京合租帖") || strings.Contains(body, "其它帖") {
 		t.Errorf("tag=望京: code=%d body 异常", code)
-	} else if !strings.Contains(body, `value="望京" selected`) {
-		t.Errorf("tag=望京 下拉未选中")
+	} else if !strings.Contains(body, `bg-indigo-600`) || !strings.Contains(body, ">望京</a>") {
+		t.Errorf("tag=望京 平铺未高亮选中")
+	}
+}
+
+func TestAdminPostsPagination(t *testing.T) {
+	s := newAdminTestStore(t)
+	defer s.Close()
+	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
+	base := time.Date(2026, 8, 1, 12, 0, 0, 0, time.Local)
+	for i := 0; i < 3; i++ {
+		p := models.RentPost{
+			Source: "douban", ExternalID: fmt.Sprintf("pg%d", i), Title: fmt.Sprintf("分页帖%d", i),
+			Status: models.PostStatusPassed, PublishedAt: base.Add(time.Duration(i) * time.Hour),
+		}
+		if _, err := s.InsertPost(p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	get := func(path string) (int, string) {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, req)
+		return rec.Code, rec.Body.String()
+	}
+	code, body := get("/admin/posts?page_size=1")
+	if code != http.StatusOK {
+		t.Fatalf("page_size=1 status = %d", code)
+	}
+	if !strings.Contains(body, "分页帖2") || strings.Contains(body, "分页帖0") {
+		t.Errorf("第1页应按发布时间倒序只含最新: %s", body)
+	}
+	if !strings.Contains(body, "共 3 条") || !strings.Contains(body, "第 1 / 3 页") {
+		t.Errorf("分页文案异常: %s", body)
+	}
+	code, body = get("/admin/posts?page_size=1&page=3")
+	if code != http.StatusOK {
+		t.Fatalf("page=3 status = %d", code)
+	}
+	if !strings.Contains(body, "分页帖0") || strings.Contains(body, "分页帖2") {
+		t.Errorf("第3页应是最早帖: %s", body)
 	}
 }
 
@@ -177,8 +221,8 @@ func TestAdminMark(t *testing.T) {
 	if rec.Code != http.StatusSeeOther {
 		t.Errorf("合法标记 status = %d, want 302", rec.Code)
 	}
-	if loc := rec.Header().Get("Location"); loc != "/admin" {
-		t.Errorf("Location = %q, want /admin", loc)
+	if loc := rec.Header().Get("Location"); loc != "/admin/posts" {
+		t.Errorf("Location = %q, want /admin/posts", loc)
 	}
 	// DB 有记录
 	items, err := s.ListFeedbacksByPost(id)
@@ -260,25 +304,29 @@ func TestAdminTokenPropagation(t *testing.T) {
 	}
 
 	// GET /admin?token=secret → 200 且链接透传 token
-	req := httptest.NewRequest(http.MethodGet, "/admin?token=secret", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/posts?token=secret", nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("GET /admin?token=secret status = %d, want 200", rec.Code)
+		t.Fatalf("GET /admin/posts?token=secret status = %d, want 200", rec.Code)
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
-		"/admin?token=secret",               // nav 帖子链接
-		"/admin/stats?token=secret",         // nav 统计链接
-		"/admin/config?token=secret",        // nav 配置链接
-		"/admin/logs?token=secret",          // nav 日志链接
-		"/admin?status=passed&token=secret", // 筛选链接（已有 query，用 & 拼接）
-		"/admin/mark?token=secret",          // 表单 action（FilterQuery 用 template.URL）
-		"/admin/handled?token=secret",       // 已处理表单
+		"/admin/posts?token=secret",   // nav 帖子链接
+		"/admin/stats?token=secret",   // nav 统计链接
+		"/admin/config?token=secret",  // nav 配置链接
+		"/admin/logs?token=secret",    // nav 日志链接
+		"/admin/mark?token=secret",    // 表单 action（FilterQuery 用 template.URL）
+		"/admin/handled?token=secret", // 已处理表单
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("页面缺 %q（token 未透传）", want)
 		}
+	}
+	// 状态筛选链接：html/template 会把 & 编成 &amp;
+	if !strings.Contains(body, "/admin/posts?status=passed&amp;token=secret") &&
+		!strings.Contains(body, "/admin/posts?status=passed&token=secret") {
+		t.Errorf("页面缺状态筛选透传 token 的链接")
 	}
 
 	// POST /admin/mark?token=secret + 合法表单 → 302，且重定向带回 token（PRG 后不 401）
@@ -290,7 +338,7 @@ func TestAdminTokenPropagation(t *testing.T) {
 	if rec2.Code != http.StatusSeeOther {
 		t.Errorf("POST /admin/mark?token=secret status = %d, want 302", rec2.Code)
 	}
-	if loc := rec2.Header().Get("Location"); loc != "/admin?token=secret" {
+	if loc := rec2.Header().Get("Location"); loc != "/admin/posts?token=secret" {
 		t.Errorf("Location = %q, want /admin?token=secret", loc)
 	}
 	items, err := s.ListFeedbacksByPost(id)

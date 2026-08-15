@@ -43,11 +43,12 @@ func sortByPriority(items []NotifyItem) []NotifyItem {
 // 已处理：/h?post=<id>&exp=<ts>&sig=<hmac>（签名载荷仍为 post|handled|exp）
 // secret 取 admin token；secret 空 = 不签名（鉴权关闭全开放场景）
 func BuildFeedbackURL(postID int64, action, secret string) string {
+	ref := SealPostRef(postID, secret)
 	var base string
 	if action == "handled" {
-		base = fmt.Sprintf("/h?post=%d", postID)
+		base = fmt.Sprintf("/h?p=%s", ref)
 	} else {
-		base = fmt.Sprintf("/f?post=%d&action=%s", postID, action)
+		base = fmt.Sprintf("/f?p=%s&action=%s", ref, action)
 	}
 	if secret == "" {
 		return base

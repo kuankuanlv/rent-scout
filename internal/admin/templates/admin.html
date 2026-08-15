@@ -7,45 +7,57 @@
 <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
 <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
   <div class="px-4 sm:px-6 py-4 border-b border-gray-100 flex flex-col gap-3">
-    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+    <div class="flex flex-wrap items-center gap-2">
+      <h1 class="text-xl sm:text-2xl font-bold text-gray-900">📋 帖子全览</h1>
+      <a href="/admin/config?tab=rules{{if .Token}}&token={{.Token}}{{end}}" class="px-3 py-1.5 rounded-lg text-xs sm:text-sm border border-brand-200 text-brand-700 bg-brand-50 hover:bg-brand-100">爬取过滤规则</a>
+    </div>
+    {{$f := .Filter}}
+    <div class="flex flex-col gap-2.5 text-xs sm:text-sm">
+      <form method="get" action="/admin/posts" class="flex flex-wrap items-center gap-2">
+        {{if .Token}}<input type="hidden" name="token" value="{{.Token}}">{{end}}
+        {{if .Status}}<input type="hidden" name="status" value="{{.Status}}">{{end}}
+        {{if .Tag}}<input type="hidden" name="tag" value="{{.Tag}}">{{end}}
+        {{if .AI}}<input type="hidden" name="ai" value="{{.AI}}">{{end}}
+        {{if .Handled}}<input type="hidden" name="handled" value="{{.Handled}}">{{end}}
+        {{if and .PageSize (ne .PageSize 20)}}<input type="hidden" name="page_size" value="{{.PageSize}}">{{end}}
+        <span class="text-gray-400 shrink-0 w-12">关键词</span>
+        <input name="q" value="{{.Q}}" placeholder="标题/正文" class="border rounded-lg px-2 py-1.5 w-40 sm:w-56 {{if .Q}}border-slate-800 ring-2 ring-slate-300 bg-slate-50 font-semibold{{else}}border-gray-200{{end}}">
+        <button class="bg-brand-600 text-white px-3 py-1.5 rounded-lg">搜索</button>
+        {{if .Q}}<a href="{{$f.With "q" ""}}" class="text-gray-500 hover:text-gray-800 underline">清除</a>{{end}}
+      </form>
+
       <div class="flex flex-wrap items-center gap-2">
-        <h1 class="text-xl sm:text-2xl font-bold text-gray-900">📋 帖子全览</h1>
-        <a href="/admin/config?tab=rules{{if .Token}}&token={{.Token}}{{end}}" class="px-3 py-1.5 rounded-lg text-xs sm:text-sm border border-brand-200 text-brand-700 bg-brand-50 hover:bg-brand-100">爬取过滤规则</a>
+        <span class="text-gray-400 shrink-0 w-12">状态</span>
+        <a href="{{$f.With "status" ""}}" class="px-3 py-1.5 rounded-full border {{if eq .Status ""}}bg-slate-800 text-white border-slate-800 font-semibold shadow-sm ring-2 ring-slate-400/60{{else}}bg-white text-gray-600 border-gray-200 hover:bg-gray-50{{end}}">全部</a>
+        <a href="{{$f.With "status" "passed"}}" class="px-3 py-1.5 rounded-full border {{if eq .Status "passed"}}bg-emerald-600 text-white border-emerald-700 font-semibold shadow-sm ring-2 ring-emerald-300{{else}}bg-white text-gray-600 border-gray-200 hover:bg-gray-50{{end}}">通过</a>
+        <a href="{{$f.With "status" "rejected"}}" class="px-3 py-1.5 rounded-full border {{if eq .Status "rejected"}}bg-rose-600 text-white border-rose-700 font-semibold shadow-sm ring-2 ring-rose-300{{else}}bg-white text-gray-600 border-gray-200 hover:bg-gray-50{{end}}">拒绝</a>
+        <a href="{{$f.With "status" "collected"}}" class="px-3 py-1.5 rounded-full border {{if eq .Status "collected"}}bg-sky-600 text-white border-sky-700 font-semibold shadow-sm ring-2 ring-sky-300{{else}}bg-white text-gray-600 border-gray-200 hover:bg-gray-50{{end}}">已采集</a>
       </div>
-      <div class="flex flex-wrap gap-2 text-xs sm:text-sm">
-        <a href="/admin{{if .Token}}?token={{.Token}}{{end}}" class="px-3 py-1.5 rounded-full {{if eq .Status ""}}bg-brand-100 text-brand-800{{else}}bg-gray-100 text-gray-700{{end}}">全部</a>
-        <a href="/admin?status=passed{{if .Token}}&token={{.Token}}{{end}}" class="px-3 py-1.5 rounded-full {{if eq .Status "passed"}}bg-green-200 text-green-900{{else}}bg-green-100 text-green-800{{end}}">通过</a>
-        <a href="/admin?status=rejected{{if .Token}}&token={{.Token}}{{end}}" class="px-3 py-1.5 rounded-full {{if eq .Status "rejected"}}bg-red-200 text-red-900{{else}}bg-red-100 text-red-800{{end}}">拒绝</a>
-        <a href="/admin?status=collected{{if .Token}}&token={{.Token}}{{end}}" class="px-3 py-1.5 rounded-full {{if eq .Status "collected"}}bg-blue-200 text-blue-900{{else}}bg-blue-100 text-blue-800{{end}}">已采集</a>
-        <a href="/admin?ai=reviewed{{if .Status}}&status={{.Status}}{{end}}{{if .Token}}&token={{.Token}}{{end}}" class="px-3 py-1.5 rounded-full {{if eq .AI "reviewed"}}bg-violet-200 text-violet-900{{else}}bg-violet-50 text-violet-800{{end}}">AI 已审核</a>
-        <a href="/admin?ai=unreviewed{{if .Status}}&status={{.Status}}{{end}}{{if .Token}}&token={{.Token}}{{end}}" class="px-3 py-1.5 rounded-full {{if eq .AI "unreviewed"}}bg-slate-200 text-slate-900{{else}}bg-slate-100 text-slate-700{{end}}">AI 未审核</a>
+
+      <div class="flex flex-wrap items-center gap-2">
+        <span class="text-gray-400 shrink-0 w-12">标签</span>
+        <a href="{{$f.With "tag" ""}}" class="px-3 py-1.5 rounded-full border {{if eq .Tag ""}}bg-slate-800 text-white border-slate-800 font-semibold shadow-sm ring-2 ring-slate-400/60{{else}}bg-white text-gray-600 border-gray-200 hover:bg-gray-50{{end}}">全部</a>
+        {{range .Tags}}
+        <a href="{{$f.With "tag" .}}" class="px-3 py-1.5 rounded-full border {{if eq $.Tag .}}bg-indigo-600 text-white border-indigo-700 font-semibold shadow-sm ring-2 ring-indigo-300{{else}}bg-white text-gray-600 border-gray-200 hover:bg-gray-50{{end}}">{{.}}</a>
+        {{end}}
+      </div>
+
+      <div class="flex flex-wrap items-center gap-2">
+        <span class="text-gray-400 shrink-0 w-12">AI</span>
+        <a href="{{$f.With "ai" ""}}" class="px-3 py-1.5 rounded-full border {{if eq .AI ""}}bg-slate-800 text-white border-slate-800 font-semibold shadow-sm ring-2 ring-slate-400/60{{else}}bg-white text-gray-600 border-gray-200 hover:bg-gray-50{{end}}">全部</a>
+        <a href="{{$f.With "ai" "pass"}}" class="px-3 py-1.5 rounded-full border {{if eq .AI "pass"}}bg-emerald-600 text-white border-emerald-700 font-semibold shadow-sm ring-2 ring-emerald-300{{else}}bg-white text-gray-600 border-gray-200 hover:bg-gray-50{{end}}">AI通过</a>
+        <a href="{{$f.With "ai" "fail"}}" class="px-3 py-1.5 rounded-full border {{if eq .AI "fail"}}bg-amber-600 text-white border-amber-700 font-semibold shadow-sm ring-2 ring-amber-300{{else}}bg-white text-gray-600 border-gray-200 hover:bg-gray-50{{end}}">AI未通过</a>
+        <a href="{{$f.With "ai" "reviewed"}}" class="px-3 py-1.5 rounded-full border {{if eq .AI "reviewed"}}bg-violet-600 text-white border-violet-700 font-semibold shadow-sm ring-2 ring-violet-300{{else}}bg-white text-gray-600 border-gray-200 hover:bg-gray-50{{end}}">已审核</a>
+        <a href="{{$f.With "ai" "unreviewed"}}" class="px-3 py-1.5 rounded-full border {{if eq .AI "unreviewed"}}bg-slate-600 text-white border-slate-700 font-semibold shadow-sm ring-2 ring-slate-300{{else}}bg-white text-gray-600 border-gray-200 hover:bg-gray-50{{end}}">未审核</a>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-2">
+        <span class="text-gray-400 shrink-0 w-12">已查看</span>
+        <a href="{{$f.With "handled" ""}}" class="px-3 py-1.5 rounded-full border {{if eq .Handled ""}}bg-slate-800 text-white border-slate-800 font-semibold shadow-sm ring-2 ring-slate-400/60{{else}}bg-white text-gray-600 border-gray-200 hover:bg-gray-50{{end}}">全部</a>
+        <a href="{{$f.With "handled" "0"}}" class="px-3 py-1.5 rounded-full border {{if eq .Handled "0"}}bg-slate-800 text-white border-slate-800 font-semibold shadow-sm ring-2 ring-slate-400/60{{else}}bg-white text-gray-600 border-gray-200 hover:bg-gray-50{{end}}">未查看</a>
+        <a href="{{$f.With "handled" "1"}}" class="px-3 py-1.5 rounded-full border {{if eq .Handled "1"}}bg-emerald-600 text-white border-emerald-700 font-semibold shadow-sm ring-2 ring-emerald-300{{else}}bg-white text-gray-600 border-gray-200 hover:bg-gray-50{{end}}">已查看</a>
       </div>
     </div>
-    <form method="get" action="/admin" class="flex flex-wrap gap-2 items-end text-xs sm:text-sm">
-      {{if .Token}}<input type="hidden" name="token" value="{{.Token}}">{{end}}
-      {{if .Status}}<input type="hidden" name="status" value="{{.Status}}">{{end}}
-      {{if .AI}}<input type="hidden" name="ai" value="{{.AI}}">{{end}}
-      <label class="flex flex-col gap-1">
-        <span class="text-gray-500">关键词</span>
-        <input name="q" value="{{.Q}}" placeholder="标题/正文" class="border rounded-lg px-2 py-1.5 w-36 sm:w-48">
-      </label>
-      <label class="flex flex-col gap-1">
-        <span class="text-gray-500">标签</span>
-        <select name="tag" class="border rounded-lg px-2 py-1.5 min-w-[7rem]">
-          <option value="" {{if eq .Tag ""}}selected{{end}}>全部</option>
-          {{range .TagOptions}}<option value="{{.}}" {{if eq $.Tag .}}selected{{end}}>{{.}}</option>{{end}}
-        </select>
-      </label>
-      <label class="flex flex-col gap-1">
-        <span class="text-gray-500">已查看</span>
-        <select name="handled" class="border rounded-lg px-2 py-1.5">
-          <option value="" {{if eq .Handled ""}}selected{{end}}>全部</option>
-          <option value="0" {{if eq .Handled "0"}}selected{{end}}>未查看</option>
-          <option value="1" {{if eq .Handled "1"}}selected{{end}}>已查看</option>
-        </select>
-      </label>
-      <button class="bg-brand-600 text-white px-3 py-1.5 rounded-lg">筛选</button>
-    </form>
   </div>
   <div class="desktop-table overflow-x-auto">
     <table class="min-w-full divide-y divide-gray-200">
@@ -104,6 +116,13 @@
         <button type="submit" class="handled-btn w-full text-sm py-2 rounded-lg {{if .HandledAt}}border border-emerald-300 text-emerald-800{{else}}bg-emerald-600 text-white{{end}}">{{if .HandledAt}}清除已查看{{else}}标记已查看{{end}}</button>
       </form>
     </div>{{else}}<p class="text-center text-gray-400 py-8">暂无帖子</p>{{end}}
+  </div>
+  <div class="px-4 sm:px-6 py-3 border-t border-gray-100 flex flex-wrap items-center justify-between gap-2 text-xs sm:text-sm text-gray-600">
+    <span>共 {{.Total}} 条 · 第 {{.Page}} / {{.Pages}} 页</span>
+    <div class="flex gap-2">
+      {{if .HasPrev}}<a href="/admin/posts{{if .PrevQuery}}?{{.PrevQuery}}{{end}}" class="px-3 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50">上一页</a>{{else}}<span class="px-3 py-1.5 rounded-lg border border-gray-100 text-gray-300">上一页</span>{{end}}
+      {{if .HasNext}}<a href="/admin/posts?{{.NextQuery}}" class="px-3 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50">下一页</a>{{else}}<span class="px-3 py-1.5 rounded-lg border border-gray-100 text-gray-300">下一页</span>{{end}}
+    </div>
   </div>
 </div>
 </main>

@@ -19,9 +19,10 @@ func NewPushplusChannel(baseURL, token, topic string) notifier.Channel {
 		build: func(items []notifier.NotifyItem) ([]byte, error) {
 			title := fmt.Sprintf("%s · %d 条", items[0].AddressTag, len(items))
 			body := map[string]string{
-				"token":   token,
-				"title":   title,
-				"content": textPayload(items),
+				"token":    token,
+				"title":    title,
+				"template": "html",
+				"content":  notifier.HTMLView{}.Render(items),
 			}
 			if t := strings.TrimSpace(topic); t != "" {
 				body["topic"] = t

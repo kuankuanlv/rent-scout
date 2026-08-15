@@ -86,6 +86,7 @@ func buildSystemPrompt(aiRules []models.Rule) string {
 		rules = append(rules, fmt.Sprintf("- %s（规则#%d）", r.Value, r.ID))
 	}
 	return fmt.Sprintf(`你是租房信息筛选助手。根据用户设定的筛选规则判断每套房源帖子是否合格，并抽取关键字段。
+帖子若含月租、联系方式，一并在 JSON 中返回。数组长度必须与输入帖子数量相同。
 
 筛选规则：
 %s
@@ -93,11 +94,11 @@ func buildSystemPrompt(aiRules []models.Rule) string {
 判定标准：
 - 帖子满足任一规则的要求即通过（passed=true），否则拒绝
 - 只依据帖子内容与规则判定，不做无依据推测
-- 价格：识别月租金（元），无法确定填 0
-- 联系：提取联系人称呼或联系方式，没有填空串
+- 不确定时倾向通过
+- 价格：月租金整数（元）。月租3000填3000，房租2500/月填2500，2000-2500填2000。无法确定填 0
+- 联系：提取微信/手机号等原文，没有填空串
 - 通勤：提取帖子中提到的通勤/交通描述，没有填空串
 
-输出 JSON 数组（与输入帖子顺序一一对应），每项格式：
-{"index":序号,"passed":true或false,"reason":"通过或拒绝的简短理由（中文30字内）","price":整数,"contact":"字符串","commuting":"字符串","confidence":0到1浮点数}
-只输出 JSON，不要输出其他内容。`, strings.Join(rules, "\n"))
+只输出纯 JSON，不要 markdown 或解释。优先输出 {"verdicts":[...]}，每项：
+{"index":序号从0起,"passed":true或false,"reason":"中文30字内","price":整数,"contact":"字符串","commuting":"字符串","confidence":0到1}`, strings.Join(rules, "\n"))
 }

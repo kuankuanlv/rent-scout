@@ -60,6 +60,8 @@ func (c *Consumer[T]) Signal() {
 // Run 阻塞消费循环：trigger / linger 触发 → 拉批 → 处理 → 循环。
 // ctx 取消或 Stop 调用后退出
 func (c *Consumer[T]) Run(ctx context.Context) {
+	log := pkglog.Component(c.opts.Component)
+	log.Info(startedLog(c.opts.Component))
 	// 防御：Linger<=0 时 time.NewTicker 会 panic；兜底用 DefaultLinger
 	linger := c.opts.Linger
 	if linger <= 0 {
@@ -113,5 +115,18 @@ func (c *Consumer[T]) Stop() {
 	case <-c.stop:
 	default:
 		close(c.stop)
+	}
+}
+
+func startedLog(component string) string {
+	switch component {
+	case pkglog.Filter:
+		return "硬规则筛选协程已启动"
+	case pkglog.AIReview:
+		return "AI 审核协程已启动"
+	case pkglog.Notifier:
+		return "通知协程已启动"
+	default:
+		return "协程已启动"
 	}
 }

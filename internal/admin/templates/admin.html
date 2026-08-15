@@ -64,6 +64,8 @@
       <thead class="bg-gray-50"><tr>
         <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">ID</th>
         <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">标题</th>
+        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">价格</th>
+        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">联系</th>
         <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">标签</th>
         <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">AI 原因</th>
         <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">源</th>
@@ -77,6 +79,8 @@
           <td class="px-4 py-3 text-sm max-w-xs">
             <a href="{{.URL}}" target="_blank" class="text-brand-600 hover:underline">{{.Title}}</a>
           </td>
+          <td class="px-4 py-3 text-sm text-gray-700 whitespace-nowrap">{{if .Price}}{{.Price}}{{else}}暂无{{end}}</td>
+          <td class="px-4 py-3 text-sm text-gray-700 max-w-[10rem] truncate" title="{{.Contact}}">{{if .Contact}}{{.Contact}}{{else}}暂无{{end}}</td>
           <td class="px-4 py-3">
             <div class="flex flex-wrap gap-1">
               {{if .HitTags}}{{range .HitTags}}<span class="px-1.5 py-0.5 rounded text-xs {{if eq .Kind "blacklist"}}bg-red-50 text-red-700{{else if eq .Kind "ai"}}bg-violet-50 text-violet-700{{else}}bg-indigo-50 text-indigo-700{{end}}">{{.Text}}</span>{{end}}{{else}}<span class="text-xs text-gray-400">无标签</span>{{end}}
@@ -94,7 +98,7 @@
               <button type="submit" class="handled-btn text-xs px-2 py-1 rounded {{if .HandledAt}}border border-emerald-300 text-emerald-800{{else}}bg-emerald-600 text-white{{end}}">{{if .HandledAt}}清除已查看{{else}}已查看{{end}}</button>
             </form>
           </td>
-        </tr>{{else}}<tr><td colspan="8" class="px-4 py-8 text-center text-gray-400">暂无帖子</td></tr>{{end}}
+        </tr>{{else}}<tr><td colspan="10" class="px-4 py-8 text-center text-gray-400">暂无帖子</td></tr>{{end}}
       </tbody>
     </table>
   </div>
@@ -107,6 +111,8 @@
       <div class="flex flex-wrap gap-1 mb-2">
         {{if .HitTags}}{{range .HitTags}}<span class="px-1.5 py-0.5 rounded text-xs {{if eq .Kind "blacklist"}}bg-red-50 text-red-700{{else if eq .Kind "ai"}}bg-violet-50 text-violet-700{{else}}bg-indigo-50 text-indigo-700{{end}}">{{.Text}}</span>{{end}}{{else}}<span class="text-xs text-gray-400">无标签</span>{{end}}
       </div>
+      <div class="text-xs text-gray-600 mb-2">价格：{{if .Price}}{{.Price}}{{else}}暂无{{end}}</div>
+      <div class="text-xs text-gray-600 mb-2">联系：{{if .Contact}}{{.Contact}}{{else}}暂无{{end}}</div>
       <div class="text-xs text-gray-600 mb-2">{{if .AIReason}}AI：{{.AIReason}}{{else}}AI 未审核{{end}}</div>
       <div class="text-xs text-gray-500 mb-3">#{{.ID}} · {{.Source}}<span class="handled-badge {{if not .HandledAt}}hidden{{end}}"> · 已查看</span></div>
       <button type="button" class="mark-open-btn w-full bg-brand-600 text-white text-sm py-2 rounded-lg" data-post-id="{{.ID}}">人工标记</button>

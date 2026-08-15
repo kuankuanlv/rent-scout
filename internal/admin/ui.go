@@ -7,9 +7,12 @@ import (
 	"strings"
 )
 
+// ProjectRepoURL 控制台首页/页脚展示的仓库地址
+const ProjectRepoURL = "https://github.com/kuankuanlv/rent-scout"
+
 // pageCtx 页面公共数据：Token 透传 + Active 导航高亮
 func pageCtx(r *http.Request, active string) map[string]any {
-	return map[string]any{"Token": r.URL.Query().Get("token"), "Active": active}
+	return map[string]any{"Token": r.URL.Query().Get("token"), "Active": active, "RepoURL": ProjectRepoURL}
 }
 
 // mergePageCtx 合并页面数据（base 优先保留 Token/Active）

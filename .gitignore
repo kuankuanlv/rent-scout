@@ -13,6 +13,9 @@ db/
 *.db-wal
 *.db-shm
 
+# Docker compose 本地数据卷
+data/
+
 # 敏感配置历史遗留（已迁移至 SQLite）
 config.env.local.toml
 config.toml

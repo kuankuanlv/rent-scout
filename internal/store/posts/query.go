@@ -74,8 +74,8 @@ func postListWhere(f PostListFilter) (string, []any) {
 // 不用 datetime()：库里是 Go time.String()（带时区），datetime 解成 NULL 会退化成 id 排序
 func (r *Repo) ListPosts(f PostListFilter, limit, offset int) ([]models.RentPost, error) {
 	clause, args := postListWhere(f)
-	sqlStr := `SELECT id, source, external_id, url, title, content, author, author_url,
-		    published_at, collected_at, status, address_tags, handled_at, raw FROM posts` + clause +
+		sqlStr := `SELECT id, source, external_id, url, title, content, author, author_url,
+			    published_at, collected_at, status, address_tags, handled_at, raw, price, contact FROM posts` + clause +
 		` ORDER BY COALESCE(published_at, collected_at) DESC, id DESC LIMIT ? OFFSET ?`
 	args = append(args, limit, offset)
 
@@ -108,8 +108,8 @@ func (r *Repo) CountPosts(f PostListFilter) (int, error) {
 
 // GetPost 单帖详情（/api/posts/{id}）；不存在返回 ok=false
 func (r *Repo) GetPost(id int64) (models.RentPost, bool, error) {
-	row := r.DB.QueryRow(`SELECT id, source, external_id, url, title, content, author, author_url,
-	    published_at, collected_at, status, address_tags, handled_at, raw FROM posts WHERE id=?`, id)
+		row := r.DB.QueryRow(`SELECT id, source, external_id, url, title, content, author, author_url,
+		    published_at, collected_at, status, address_tags, handled_at, raw, price, contact FROM posts WHERE id=?`, id)
 	p, err := scanRentPost(row)
 	if err == sql.ErrNoRows {
 		return p, false, nil
@@ -145,8 +145,8 @@ func scanRentPost(sc rowScanner) (models.RentPost, error) {
 	var p models.RentPost
 	var published, handled sql.NullTime
 	var tagsJSON string
-	if err := sc.Scan(&p.ID, &p.Source, &p.ExternalID, &p.URL, &p.Title, &p.Content,
-		&p.Author, &p.AuthorURL, &published, &p.CollectedAt, &p.Status, &tagsJSON, &handled, &p.Raw); err != nil {
+		if err := sc.Scan(&p.ID, &p.Source, &p.ExternalID, &p.URL, &p.Title, &p.Content,
+			&p.Author, &p.AuthorURL, &published, &p.CollectedAt, &p.Status, &tagsJSON, &handled, &p.Raw, &p.Price, &p.Contact); err != nil {
 		return p, err
 	}
 	if published.Valid {

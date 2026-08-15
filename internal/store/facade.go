@@ -51,6 +51,14 @@ func (s *Store) ClearPostHandled(postID int64) error {
 	return s.posts.ClearPostHandled(postID)
 }
 
+func (s *Store) UpdatePostPrice(postID int64, yuan int) error {
+	return s.posts.UpdatePostPrice(postID, yuan)
+}
+
+func (s *Store) UpdatePostContact(postID int64, contact string) error {
+	return s.posts.UpdatePostContact(postID, contact)
+}
+
 // --- notify ---
 
 func (s *Store) InsertNotification(postID int64, channel string) (bool, error) {

@@ -413,7 +413,7 @@
         var on = g === name;
         el.classList.toggle('hidden', !on);
         el.style.display = on ? '' : 'none';
-        el.querySelectorAll('input,select,textarea,button').forEach(function(inp){
+        el.querySelectorAll('input,select,textarea').forEach(function(inp){
           if (inp.name === 'notifier.channels') return;
           inp.disabled = !on;
         });
@@ -432,12 +432,20 @@
     var form = document.getElementById('config-section-form');
     document.querySelectorAll('.notify-probe-btn').forEach(function(btn){
       btn.addEventListener('click', function(){
-        var channel = btn.getAttribute('data-channel');
+        var channel = btn.getAttribute('data-channel') || (btn.closest('[data-notify-group]') && btn.closest('[data-notify-group]').getAttribute('data-notify-group')) || '';
         var box = btn.parentElement.querySelector('.notify-probe-summary');
         if (box) { box.textContent = '发送中…'; box.className = 'notify-probe-summary text-sm font-medium text-gray-600'; }
-        var fd = new FormData(form);
-        fd.set('channel', channel);
-        fetch('/admin/config/notify/test{{if $.Token}}?token={{$.Token}}{{end}}', {method:'POST', body: fd, credentials:'same-origin'})
+        var params = new URLSearchParams();
+        params.set('channel', channel);
+        function pick(name){
+          var el = form && form.querySelector('[name="'+name+'"]:not([disabled])');
+          return el ? el.value : '';
+        }
+        params.set('secret.notifier.feishu.webhook', pick('secret.notifier.feishu.webhook'));
+        params.set('secret.notifier.pushplus.token', pick('secret.notifier.pushplus.token'));
+        params.set('secret.notifier.pushplus.topic', pick('secret.notifier.pushplus.topic'));
+        var q = 'channel=' + encodeURIComponent(channel) + '{{if $.Token}}&token={{$.Token}}{{end}}';
+        fetch('/admin/config/notify/test?' + q, {method:'POST', body: params.toString(), headers: {'Content-Type': 'application/x-www-form-urlencoded'}, credentials:'same-origin'})
           .then(function(r){ return r.json().then(function(j){ return {ok:r.ok, j:j}; }); })
           .then(function(x){
             var j = x.j || {};

@@ -6,6 +6,7 @@ import (
 	"rent-scout/internal/collector"
 	"rent-scout/internal/collector/cookie"
 	"rent-scout/internal/collector/sources/douban"
+	"rent-scout/internal/collector/sources/weibo"
 	"rent-scout/internal/config"
 	"rent-scout/internal/store"
 )
@@ -37,7 +38,7 @@ func New(opts Options) (*Service, error) {
 		return nil, err
 	}
 	trigger := make(chan struct{}, postCreatedCap)
-	runner := collector.NewRunner(rt, db, []collector.Source{d}, trigger)
+	runner := collector.NewRunner(rt, db, []collector.Source{d, weibo.New()}, trigger)
 	return &Service{
 		rt:            rt,
 		db:            db,

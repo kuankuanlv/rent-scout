@@ -25,15 +25,14 @@ func (s *Server) handleNotifyTest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "解析表单失败", http.StatusBadRequest)
-		return
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		_ = r.ParseForm()
 	}
 	if s.notifyProbe == nil {
 		writeJSON(w, map[string]any{"ok": false, "summary": "失败：探测未配置"})
 		return
 	}
-	ch := strings.ToLower(strings.TrimSpace(r.PostFormValue("channel")))
+	ch := notifyProbeChannel(r)
 	if ch != "feishu" && ch != "pushplus" {
 		writeJSON(w, map[string]any{"ok": false, "summary": "失败：仅支持飞书或 PushPlus"})
 		return
@@ -87,24 +86,34 @@ func (s *Server) handleNotifyTest(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"ok": true, "summary": summary, "mocked": mocked, "count": len(items)})
 }
 
+func notifyProbeChannel(r *http.Request) string {
+	for _, k := range []string{"channel", "notify_channel"} {
+		v := strings.ToLower(strings.TrimSpace(r.FormValue(k)))
+		if v == "feishu" || v == "pushplus" {
+			return v
+		}
+	}
+	return strings.ToLower(strings.TrimSpace(r.FormValue("channel")))
+}
+
 func (s *Server) draftNotifySecrets(r *http.Request) (webhook, token, topic string) {
 	stored := s.rt.Secrets().Notifier
 	webhook = firstNonEmpty(
-		r.PostFormValue("secret.notifier.feishu.webhook"),
-		r.PostFormValue("feishu_webhook"),
+		r.FormValue("secret.notifier.feishu.webhook"),
+		r.FormValue("feishu_webhook"),
 	)
 	if webhook == "" || webhook == "••••••••" {
 		webhook = stored.Feishu.Webhook
 	}
 	token = firstNonEmpty(
-		r.PostFormValue("secret.notifier.pushplus.token"),
-		r.PostFormValue("pushplus_token"),
+		r.FormValue("secret.notifier.pushplus.token"),
+		r.FormValue("pushplus_token"),
 	)
 	if token == "" || token == "••••••••" {
 		token = stored.Pushplus.Token
 	}
 	topic = firstNonEmpty(
-		r.PostFormValue("secret.notifier.pushplus.topic"),
+		r.FormValue("secret.notifier.pushplus.topic"),
 		stored.Pushplus.Topic,
 	)
 	return strings.TrimSpace(webhook), strings.TrimSpace(token), strings.TrimSpace(topic)
@@ -128,13 +137,21 @@ func (s *Server) postsToProbeItems(posts []models.RentPost) []NotifyProbeItem {
 			Title:              p.Title,
 			URL:                p.URL,
 			AddressTag:         tag,
+			Price:              models.PriceYuan(p.Price),
 			FeedbackURL:        absProbeURL(origin, probeFeedbackURL(p.ID, "useful", secret)),
 			FeedbackUselessURL: absProbeURL(origin, probeFeedbackURL(p.ID, "useless", secret)),
 			HandledURL:         absProbeURL(origin, probeFeedbackURL(p.ID, "handled", secret)),
 		}
+		if models.HasContact(p.Contact) {
+			item.Contact = p.Contact
+		}
 		if fr, ok, err := s.db.FilterResultByPostID(p.ID); err == nil && ok && fr.AI != nil {
-			item.Price = fr.AI.Price
-			item.Contact = fr.AI.Contact
+			if item.Price <= 0 {
+				item.Price = fr.AI.Price
+			}
+			if item.Contact == "" && models.HasContact(fr.AI.Contact) {
+				item.Contact = fr.AI.Contact
+			}
 			item.Commuting = fr.AI.Commuting
 			item.Reason = fr.AI.Reason
 		}

@@ -1,12 +1,18 @@
 {{define "home"}}
 <!DOCTYPE html>
 <html lang="zh">
-<head><title>rent-scout - 介绍</title>{{template "head" .}}</head>
+<head><title>rent-scout · 租房侦察兵</title>{{template "head" .}}</head>
 <body class="bg-gradient-to-br from-slate-50 via-white to-brand-50 min-h-screen text-gray-800">
 {{template "nav" .}}
 <main class="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
-  <h1 class="text-3xl font-bold text-gray-900 mb-3">rent-scout</h1>
-  <p class="text-gray-600 leading-relaxed mb-8">豆瓣租房帖自动采集、规则筛选、多渠道通知。配置存在本地 SQLite，用上面的控制台管理。</p>
+  <p class="text-sm font-medium text-brand-600 mb-2">rent-scout</p>
+  <h1 class="text-3xl font-bold text-gray-900 mb-3">租房侦察兵</h1>
+  <div class="text-gray-600 leading-relaxed space-y-3 mb-4">
+    <p>自托管的租房信息流水线：从公开讨论区采集帖子，经地点白名单与黑名单硬规则筛选，可选再走大模型复核，并抽取月租、联系方式，按地址分组推到飞书、PushPlus 等渠道。</p>
+    <p>配置、帖子与通知账本都在本机 SQLite，用上方控制台改规则、源、密钥和日志。不经过第三方账号体系，也不做房源中介。</p>
+    <p>豆瓣小组已接入；微博、小红书等源在同一套调度里占位，接上后沿用现有筛选与通知。豆瓣 Cookie 可用 CookieCloud 定时同步到本地。</p>
+  </div>
+  <p class="text-sm text-gray-500 mb-8">仓库：{{if .RepoURL}}<a href="{{.RepoURL}}" class="text-brand-600 hover:underline break-all" target="_blank" rel="noopener">{{.RepoURL}}</a>{{else}}https://github.com/kuankuanlv/rent-scout{{end}}</p>
   <div class="grid gap-4 sm:grid-cols-2">
     <a href="/admin/posts{{if .Token}}?token={{.Token}}{{end}}" class="block rounded-2xl border border-gray-100 bg-white p-5 shadow-sm hover:border-brand-200">
       <div class="font-semibold text-gray-900 mb-1">帖子</div>
@@ -26,7 +32,7 @@
     </a>
   </div>
 </main>
-<footer class="text-center text-xs text-gray-400 py-6">rent-scout · 租房信息 Scout</footer>
+<footer class="text-center text-xs text-gray-400 py-6">rent-scout · 租房侦察兵{{if .RepoURL}} · <a href="{{.RepoURL}}" class="text-brand-600 hover:underline" target="_blank" rel="noopener">{{.RepoURL}}</a>{{end}}</footer>
 </body>
 </html>
 {{end}}

@@ -56,7 +56,8 @@ func (c *Client) Chat(ctx context.Context, system, user string) (string, error) 
 			{"role": "system", "content": system},
 			{"role": "user", "content": user},
 		},
-		"temperature": 0, // 判定任务：确定性优先
+		"temperature": 0.1,
+		"response_format": batchVerdictSchema(),
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -156,4 +157,40 @@ func truncate(s string, n int) string {
 		return string(r[:n]) + "..."
 	}
 	return s
+}
+
+// batchVerdictSchema 约束批量判定 JSON（Structured Outputs）；顶层必须是 object。
+func batchVerdictSchema() map[string]any {
+	item := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"index":      map[string]any{"type": "integer", "description": "与输入第几条对应，从 0 开始"},
+			"passed":     map[string]any{"type": "boolean", "description": "是否通过用户规则"},
+			"reason":     map[string]any{"type": "string", "description": "判定理由，中文 30 字内"},
+			"price":      map[string]any{"type": "integer", "description": "月租金，单位元。如月租3000填3000，房租2500/月填2500，2000-2500填2000。仅数字。未明确提及填0"},
+			"contact":    map[string]any{"type": "string", "description": "微信/手机号等原文，未提及填空串"},
+			"commuting":  map[string]any{"type": "string", "description": "通勤/交通原文关键词，未提及填空串"},
+			"confidence": map[string]any{"type": "number", "description": "0 到 1"},
+		},
+		"required":             []string{"index", "passed", "reason", "price", "contact", "commuting", "confidence"},
+		"additionalProperties": false,
+	}
+	return map[string]any{
+		"type": "json_schema",
+		"json_schema": map[string]any{
+			"name":   "batch_ai_verdict",
+			"strict": true,
+			"schema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"verdicts": map[string]any{
+						"type":  "array",
+						"items": item,
+					},
+				},
+				"required":             []string{"verdicts"},
+				"additionalProperties": false,
+			},
+		},
+	}
 }

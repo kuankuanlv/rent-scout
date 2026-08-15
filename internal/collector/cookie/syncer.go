@@ -33,6 +33,7 @@ func (s *Syncer) Run(ctx context.Context) {
 		log.Error("同步器未初始化")
 		return
 	}
+	log.Info("CookieCloud 同步协程已启动", "interval", s.interval.String())
 	s.syncOnce(ctx)
 	t := time.NewTicker(s.interval)
 	defer t.Stop()
@@ -50,6 +51,7 @@ func (s *Syncer) syncOnce(ctx context.Context) {
 	log := pkglog.Component(pkglog.DoubanCookieCloud)
 	dc := s.rt.Secrets().Collector.Douban
 	if config.ParseCookieMode(dc.CookieMode) != config.CookieModeCookieCloud {
+		log.Info("当前配置 CookieCloud 未启用，无需执行")
 		return
 	}
 	ins, err := InspectCookieCloud(ctx, dc)
@@ -58,7 +60,7 @@ func (s *Syncer) syncOnce(ctx context.Context) {
 		return
 	}
 	if ins.Cookie == dc.CookieRaw {
-		log.Info("cookie 无变化", "names", ins.Names)
+		log.Info("cookie 无变化，不写库", "names", ins.Names)
 		return
 	}
 	if err := store.SetConfigBatch(s.db, map[string]string{config.KeyDoubanCookieRaw: ins.Cookie}); err != nil {

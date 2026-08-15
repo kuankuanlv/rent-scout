@@ -84,6 +84,32 @@ func TestInsertPostDedup(t *testing.T) {
 	if cnt != 1 {
 		t.Errorf("帖子数 = %d, want 1", cnt)
 	}
+	got, ok, err := s.GetPost(1)
+	if err != nil || !ok {
+		t.Fatalf("GetPost: ok=%v err=%v", ok, err)
+	}
+	if got.Price != models.PriceUnknown {
+		t.Errorf("无价格帖 Price=%q want %q", got.Price, models.PriceUnknown)
+	}
+	if _, err := s.InsertPost(models.RentPost{
+		Source: "douban", ExternalID: "102", Title: "梨园月租3800",
+		CollectedAt: time.Now(), Status: models.PostStatusCollected,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	list, err := s.ListPosts(PostListFilter{}, 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var priced models.RentPost
+	for _, x := range list {
+		if x.ExternalID == "102" {
+			priced = x
+		}
+	}
+	if priced.Price != "3800" {
+		t.Errorf("正则价格 = %q want 3800 (id=%d)", priced.Price, priced.ID)
+	}
 }
 
 func TestListFilterTags(t *testing.T) {
@@ -921,6 +947,14 @@ func TestMigrateAddsHandledAtColumn(t *testing.T) {
 	ok, err := s.columnExists("posts", "handled_at")
 	if err != nil || !ok {
 		t.Fatalf("旧库补 handled_at 失败: ok=%v err=%v", ok, err)
+	}
+	ok, err = s.columnExists("posts", "price")
+	if err != nil || !ok {
+		t.Fatalf("旧库补 price 失败: ok=%v err=%v", ok, err)
+	}
+	ok, err = s.columnExists("posts", "contact")
+	if err != nil || !ok {
+		t.Fatalf("旧库补 contact 失败: ok=%v err=%v", ok, err)
 	}
 }
 

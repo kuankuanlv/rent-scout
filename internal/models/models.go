@@ -54,6 +54,8 @@ type RentPost struct {
 	HitTags     []HitTag   `json:"hitTags,omitempty"`  // 全览展示用，不落 posts 表
 	AIReason    string     `json:"aiReason,omitempty"` // 全览展示 AI 原因，不落 posts 表
 	HandledAt   *time.Time // 已处理时间；nil=未处理（独立于 useful/useless 反馈）
+	Price       string     // 月租金（元）；默认「暂无」，正则或 AI 抽到再写成数字
+	Contact     string     // 联系方式；默认「暂无」，正则或 AI 抽到再写
 	Raw         string     // 源适配器完整原始输出（JSON，供重放/排查）
 }
 

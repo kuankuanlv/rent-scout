@@ -67,15 +67,18 @@ func TestHardBothMissRejects(t *testing.T) {
 		{ID: 2, Type: models.RuleTypeBlacklist, Value: "中介", Priority: 5},
 	}
 	post := models.RentPost{ID: 4, Title: "普通整租", Content: "房东直租"}
-	v, tags, hits, _, err := EvaluateHard(post, rules)
+	v, tags, hits, rejectedBy, err := EvaluateHard(post, rules)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if v.Passed {
 		t.Errorf("双未命中应拒绝: %+v", v)
 	}
+	if rejectedBy != "默认拒绝" {
+		t.Errorf("rejectedBy = %q, want 默认拒绝", rejectedBy)
+	}
 	if len(tags) != 0 || len(hits) != 0 {
-		t.Errorf("未命中不应记 tag: tags=%v hits=%v", tags, hits)
+		t.Errorf("未命中不应记地点/规则命中: tags=%v hits=%v", tags, hits)
 	}
 }
 

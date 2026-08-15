@@ -37,8 +37,8 @@ func TestRuleChainMissRejects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Status != models.PostStatusRejected {
-		t.Errorf("未命中应拒绝: %+v", res)
+	if res.Status != models.PostStatusRejected || res.RejectedBy != "默认拒绝" {
+		t.Errorf("未命中应拒绝且默认拒绝: %+v", res)
 	}
 }
 

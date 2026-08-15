@@ -43,8 +43,15 @@ func TestConsumerProcessHard(t *testing.T) {
 	if len(passed[0].AddressTags) != 1 || passed[0].AddressTags[0] != "望京" {
 		t.Errorf("通过帖标签 = %v, want [望京]", passed[0].AddressTags)
 	}
-	if _, ok, _ := st.FilterResultByPostID(rejected[0].ID); ok {
-		t.Error("未命中拒绝不应写 filter_results")
+	fr, ok, _ := st.FilterResultByPostID(rejected[0].ID)
+	if !ok || fr.RejectedBy != "默认拒绝" {
+		t.Errorf("未命中拒绝应写默认拒绝: ok=%v %+v", ok, fr)
+	}
+	if err := st.AttachHitTags(rejected); err != nil {
+		t.Fatal(err)
+	}
+	if len(rejected[0].HitTags) != 1 || rejected[0].HitTags[0].Text != "默认拒绝" {
+		t.Errorf("展示标签 = %+v, want [默认拒绝]", rejected[0].HitTags)
 	}
 }
 

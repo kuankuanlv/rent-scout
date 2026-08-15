@@ -152,11 +152,13 @@ func (r *Runner) runSource(ctx context.Context, src Source) {
 		failStreak = 0
 		wait := jittered(interval, jitter)
 		log.Info("本轮结束，等待下一轮",
-			"耗时", time.Since(t0).Round(time.Millisecond).String(),
+			"source", src.Name(),
+			"窗从", res.WindowFrom,
+			"窗至", res.WindowTo,
+			"本轮页", joinPages(res.Fetched),
 			"新帖", res.NewPosts,
-			"offset", emptyDash(res.Offset),
+			"下次", res.NextPos,
 			"seen_newest", formatWatermark(res.SeenNewest),
-			"pages", res.Pages,
 			"wait_s", int(wait.Seconds()),
 		)
 		if !waitRound(ctx, r.manual[src.Name()], wait) {
@@ -178,9 +180,11 @@ func waitRound(ctx context.Context, manual <-chan struct{}, wait time.Duration) 
 
 type roundResult struct {
 	NewPosts   int
-	Offset     string
+	Fetched    []string
+	NextPos    string
 	SeenNewest string
-	Pages      int
+	WindowFrom string
+	WindowTo   string
 }
 
 // RunOnce 跑一轮采集（测试与手动触发共用）
@@ -217,11 +221,14 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 	if !catchUp {
 		listCursor = prog.Page
 	}
+	winFrom := start.Format("01-02 15:04")
+	winTo := end.Format("01-02 15:04")
 	log.Info("开始本轮采集",
-		"offset", emptyDash(listCursor),
+		"source", src.Name(),
+		"窗从", winFrom,
+		"窗至", winTo,
+		"起点", formatStartPos(catchUp, listCursor),
 		"seen_newest", formatWatermark(prog.SeenNewest),
-		"窗从", start.Format("01-02 15:04"),
-		"窗至", end.Format("01-02 15:04"),
 	)
 
 	var wm time.Time
@@ -237,6 +244,7 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 	}
 	newPosts := 0
 	pages := 0
+	fetched := make([]string, 0, maxPagesPerRound)
 	firstHTTP := true
 	pace := func() {
 		if firstHTTP {
@@ -251,10 +259,15 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 		}
 	}
 	out := func() roundResult {
-		return roundResult{NewPosts: newPosts, Offset: prog.Page, SeenNewest: prog.SeenNewest, Pages: pages}
+		return roundResult{
+			NewPosts: newPosts, Fetched: append([]string(nil), fetched...),
+			NextPos: formatNextPos(prog), SeenNewest: prog.SeenNewest,
+			WindowFrom: winFrom, WindowTo: winTo,
+		}
 	}
 	for pages < maxPagesPerRound {
 		pace()
+		pageLabel := formatFetchedPage(catchUp, listCursor)
 		items, next, err := src.List(ctx, listCursor)
 		if err != nil {
 			if cookieDead(err) {
@@ -264,6 +277,12 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 			return roundResult{}, fmt.Errorf("列表页: %w", err)
 		}
 		pages++
+		fetched = append(fetched, pageLabel)
+		log.Info("本轮拉页",
+			"source", src.Name(),
+			"页", pageLabel,
+			"条目", len(items),
+		)
 		var fresh []ListItem
 		stop := false
 		for _, it := range items {
@@ -480,14 +499,55 @@ func (r *Runner) requestGap(src Source) time.Duration {
 func formatWatermark(s string) string {
 	t := parseWatermark(s)
 	if t.IsZero() {
-		return emptyDash(s)
+		if strings.TrimSpace(s) == "" {
+			return "无"
+		}
+		return s
 	}
 	return t.Format("01-02 15:04")
 }
 
-func emptyDash(s string) string {
-	if strings.TrimSpace(s) == "" {
-		return "-"
+// formatPageCursor 豆瓣游标 组下标:offset 转成人话；空游标就是第一组第一页
+func formatPageCursor(cursor string) string {
+	gi, off := 0, 0
+	c := strings.TrimSpace(cursor)
+	if c != "" {
+		parts := strings.SplitN(c, ":", 2)
+		gi, _ = strconv.Atoi(parts[0])
+		if len(parts) == 2 {
+			off, _ = strconv.Atoi(parts[1])
+		}
 	}
-	return s
+	return fmt.Sprintf("组%d offset=%d", gi, off)
+}
+
+func formatStartPos(catchUp bool, cursor string) string {
+	if catchUp {
+		return "追新·首页"
+	}
+	return "翻历史·" + formatPageCursor(cursor)
+}
+
+func formatFetchedPage(catchUp bool, cursor string) string {
+	if catchUp {
+		if strings.TrimSpace(cursor) == "" {
+			return "追新·首页"
+		}
+		return "追新·" + formatPageCursor(cursor)
+	}
+	return formatPageCursor(cursor)
+}
+
+func formatNextPos(p store.SourceProgress) string {
+	if p.CatchingUp() {
+		return "追新·首页"
+	}
+	return "翻历史·" + formatPageCursor(p.Page)
+}
+
+func joinPages(pages []string) string {
+	if len(pages) == 0 {
+		return "无"
+	}
+	return strings.Join(pages, ", ")
 }

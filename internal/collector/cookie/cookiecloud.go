@@ -53,16 +53,23 @@ type CloudInspect struct {
 	Domains     []string
 }
 
-// InspectCookieCloud 拉取并解密 CookieCloud：只拼豆瓣域 cookie；探测/同步共用
+// InspectCookieCloud 拉取并解密 CookieCloud：只拼指定源域名 cookie；探测/同步共用
 func InspectCookieCloud(ctx context.Context, cfg config.DoubanCookieConfig) (CloudInspect, error) {
-	log := pkglog.Component(pkglog.DoubanCookieCloud)
+	return InspectCookieCloudFor(ctx, cfg, "douban")
+}
+
+// InspectCookieCloudFor 按采集源过滤 CookieCloud 明文域名
+func InspectCookieCloudFor(ctx context.Context, cfg config.DoubanCookieConfig, source string) (CloudInspect, error) {
+	source = config.CookieSource(source)
+	interest := config.CookieCloudDomain(source)
+	log := pkglog.Component(pkglog.SourceCookieCloud(source))
 	var empty CloudInspect
 	if cfg.CookiecloudURL == "" || cfg.CookiecloudKey == "" {
 		err := fmt.Errorf("cookiecloud 配置不完整（url/key）")
 		log.Error("请求失败", "err", err)
 		return empty, err
 	}
-	status, raw, err := fetchCookieCloud(ctx, cfg)
+	status, raw, err := fetchCookieCloud(ctx, cfg, source)
 	empty.HTTPStatus = status
 	if err != nil {
 		return empty, err
@@ -88,19 +95,19 @@ func InspectCookieCloud(ctx context.Context, cfg config.DoubanCookieConfig) (Clo
 		log.Info("解密", "algo", algo, "field", field)
 	}
 
-	hit, skip := filterInterestDomains(plain)
-	log.Info("过滤域名", "keep", InterestDomain, "hit", hit, "skip_n", skip)
+	hit, skip := filterInterestDomains(plain, interest)
+	log.Info("过滤域名", "keep", interest, "hit", hit, "skip_n", skip)
 	ins := CloudInspect{
-		Cookie:      buildCookieString(plain),
-		Names:       ListDoubanCookieNames(plain),
-		Previews:    ListDoubanCookiePreviews(plain),
+		Cookie:      buildCookieString(plain, interest),
+		Names:       listCookieNames(plain, interest),
+		Previews:    listCookiePreviews(plain, interest),
 		Algo:        algo,
 		CipherField: field,
 		HTTPStatus:  status,
 		Domains:     hit,
 	}
 	if ins.Cookie == "" {
-		err := fmt.Errorf("未拿到 %s cookie（algo=%s 域=%s）", InterestDomain, ins.Algo, strings.Join(hit, ","))
+		err := fmt.Errorf("未拿到 %s cookie（algo=%s 域=%s）", interest, ins.Algo, strings.Join(hit, ","))
 		log.Error("未拿到 cookie", "err", err)
 		return ins, err
 	}
@@ -108,9 +115,9 @@ func InspectCookieCloud(ctx context.Context, cfg config.DoubanCookieConfig) (Clo
 	return ins, nil
 }
 
-func fetchCookieCloud(ctx context.Context, cfg config.DoubanCookieConfig) (int, []byte, error) {
+func fetchCookieCloud(ctx context.Context, cfg config.DoubanCookieConfig, source string) (int, []byte, error) {
 	getURL := strings.TrimSuffix(cfg.CookiecloudURL, "/") + "/get/" + cfg.CookiecloudKey
-	status, body, err := doCookieCloud(ctx, http.MethodGet, getURL, nil)
+	status, body, err := doCookieCloud(ctx, source, http.MethodGet, getURL, nil)
 	if err != nil {
 		return status, nil, err
 	}
@@ -121,15 +128,15 @@ func fetchCookieCloud(ctx context.Context, cfg config.DoubanCookieConfig) (int, 
 		"uuid":     cfg.CookiecloudKey,
 		"password": cfg.CookiecloudPass,
 	})
-	postStatus, postBody, postErr := doCookieCloud(ctx, http.MethodPost, getURL, payload)
+	postStatus, postBody, postErr := doCookieCloud(ctx, source, http.MethodPost, getURL, payload)
 	if postErr != nil {
 		return status, body, fmt.Errorf("CookieCloud GET 无密文字段且 POST 失败: %w", postErr)
 	}
 	return postStatus, postBody, nil
 }
 
-func doCookieCloud(ctx context.Context, method, rawURL string, payload []byte) (int, []byte, error) {
-	log := pkglog.Component(pkglog.DoubanCookieCloud)
+func doCookieCloud(ctx context.Context, source, method, rawURL string, payload []byte) (int, []byte, error) {
+	log := pkglog.Component(pkglog.SourceCookieCloud(source))
 	log.Info("请求", "method", method, "url", rawURL)
 	var rdr io.Reader
 	if payload != nil {
@@ -211,7 +218,7 @@ func clipLog(s string, n int) string {
 	return s
 }
 
-func filterInterestDomains(plain string) (hit []string, skipN int) {
+func filterInterestDomains(plain, interest string) (hit []string, skipN int) {
 	items := parseCookieCloudItems(plain)
 	if items == nil {
 		return nil, 0
@@ -223,7 +230,7 @@ func filterInterestDomains(plain string) (hit []string, skipN int) {
 		if d == "" {
 			d = "(空)"
 		}
-		if isDoubanCookieDomain(it.Domain) {
+		if isInterestCookieDomain(it.Domain, interest) {
 			if !seenHit[d] {
 				seenHit[d] = true
 				hit = append(hit, d)
@@ -239,19 +246,19 @@ func filterInterestDomains(plain string) (hit []string, skipN int) {
 }
 
 func listCookieCloudDomains(plain string) []string {
-	hit, _ := filterInterestDomains(plain)
+	hit, _ := filterInterestDomains(plain, InterestDomain)
 	return hit
 }
 
-// buildCookieString 解析 CookieCloud 明文 JSON，只保留豆瓣相关域名，拼装 "k=v; k=v"
-func buildCookieString(plain string) string {
+// buildCookieString 解析 CookieCloud 明文 JSON，只保留目标域，拼装 "k=v; k=v"
+func buildCookieString(plain, interest string) string {
 	items := parseCookieCloudItems(plain)
 	if items == nil {
 		return strings.TrimSpace(plain) // 非 JSON 兜底：原样返回
 	}
 	var parts []string
 	for _, it := range items {
-		if it.Name == "" || !isDoubanCookieDomain(it.Domain) {
+		if it.Name == "" || !isInterestCookieDomain(it.Domain, interest) {
 			continue
 		}
 		parts = append(parts, it.Name+"="+it.Value)
@@ -261,6 +268,10 @@ func buildCookieString(plain string) string {
 
 // ListDoubanCookieNames 列出 CookieCloud 明文中命中豆瓣域名的 cookie 名（探测 API 用，无明文 value）
 func ListDoubanCookieNames(plain string) []string {
+	return listCookieNames(plain, InterestDomain)
+}
+
+func listCookieNames(plain, interest string) []string {
 	items := parseCookieCloudItems(plain)
 	if items == nil {
 		return nil
@@ -268,7 +279,7 @@ func ListDoubanCookieNames(plain string) []string {
 	var names []string
 	seen := map[string]bool{}
 	for _, it := range items {
-		if it.Name == "" || !isDoubanCookieDomain(it.Domain) || seen[it.Name] {
+		if it.Name == "" || !isInterestCookieDomain(it.Domain, interest) || seen[it.Name] {
 			continue
 		}
 		seen[it.Name] = true
@@ -279,6 +290,10 @@ func ListDoubanCookieNames(plain string) []string {
 
 // ListDoubanCookiePreviews 脱敏预览 name=value…（探测摘要用）
 func ListDoubanCookiePreviews(plain string) []string {
+	return listCookiePreviews(plain, InterestDomain)
+}
+
+func listCookiePreviews(plain, interest string) []string {
 	items := parseCookieCloudItems(plain)
 	if items == nil {
 		return nil
@@ -286,7 +301,7 @@ func ListDoubanCookiePreviews(plain string) []string {
 	var out []string
 	seen := map[string]bool{}
 	for _, it := range items {
-		if it.Name == "" || !isDoubanCookieDomain(it.Domain) || seen[it.Name] {
+		if it.Name == "" || !isInterestCookieDomain(it.Domain, interest) || seen[it.Name] {
 			continue
 		}
 		seen[it.Name] = true
@@ -295,13 +310,26 @@ func ListDoubanCookiePreviews(plain string) []string {
 	return out
 }
 
-// isDoubanCookieDomain domain 含 douban.com / douban；空 domain 视为兼容旧扁平数组（全收）
-func isDoubanCookieDomain(domain string) bool {
+// isInterestCookieDomain 空 domain 视为兼容旧扁平数组（全收）
+func isInterestCookieDomain(domain, interest string) bool {
 	d := strings.ToLower(strings.TrimSpace(domain))
 	if d == "" {
 		return true
 	}
-	return strings.Contains(d, InterestDomain) || strings.Contains(d, "douban")
+	interest = strings.ToLower(strings.TrimSpace(interest))
+	if interest == "" {
+		interest = InterestDomain
+	}
+	if strings.Contains(d, interest) {
+		return true
+	}
+	if strings.Contains(interest, "weibo") {
+		return strings.Contains(d, "weibo")
+	}
+	if strings.Contains(interest, "douban") {
+		return strings.Contains(d, "douban")
+	}
+	return false
 }
 
 // parseCookieCloudItems 兼容：[{name,value,domain}] / {cookie_data:{domain:[...]}} / {域名:[...]}

@@ -90,6 +90,12 @@ func TestConfigTabs(t *testing.T) {
 	if !strings.Contains(body, `data-source-tab="douban"`) || !strings.Contains(body, `data-source-tab="weibo"`) {
 		t.Errorf("sources 应有豆瓣/微博子 tab")
 	}
+	if !strings.Contains(body, "collector.weibo.urls") || !strings.Contains(body, "微博超话") {
+		t.Errorf("微博 tab 应有超话 URL 配置")
+	}
+	if !strings.Contains(body, `name="secret.collector.weibo.cookie_mode"`) {
+		t.Errorf("微博 tab 应有 cookie 配置")
+	}
 	if strings.Contains(body, `data-source-tab="common"`) {
 		t.Errorf("sources 不应再有全局子 tab")
 	}
@@ -167,7 +173,10 @@ func TestConfigTabs(t *testing.T) {
 		t.Fatalf("GET tab=ai status = %d", code)
 	}
 	if !strings.Contains(body, "本配置当前版本仅用于审核帖子") {
-		t.Errorf("ai tab Desc 不符")
+		t.Errorf("ai tab Desc 应说明仅用于审核")
+	}
+	if !strings.Contains(body, "系统提示词") || !strings.Contains(body, "json_schema") || !strings.Contains(body, "500 字") {
+		t.Errorf("ai tab Desc 应说明 prompt、结构化输出和省 token")
 	}
 	if !strings.Contains(body, "filter.batch_size") || !strings.Contains(body, "filter.ai_batch_size") {
 		t.Errorf("ai 应含组批/AI 批（高级配置）")

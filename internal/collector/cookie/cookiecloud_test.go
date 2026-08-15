@@ -175,7 +175,7 @@ func TestBuildCookieStringDoubanDomainFilter(t *testing.T) {
 			{"domain":".weibo.com","name":"SUB","value":"no"},
 			{"name":"bid","value":"legacy-no-domain"}
 		]`
-	got := buildCookieString(plain)
+	got := buildCookieString(plain, InterestDomain)
 	if !strings.Contains(got, "dbcl2=yes") || !strings.Contains(got, "bid=legacy-no-domain") {
 		t.Errorf("应保留豆瓣/无 domain: %q", got)
 	}
@@ -188,7 +188,7 @@ func TestBuildCookieStringDoubanDomainFilter(t *testing.T) {
 	}
 
 	wrapped := `{"cookie_data":{"douban.com":[{"name":"ck","value":"1"}],"weibo.com":[{"name":"w","value":"2"}]}}`
-	got = buildCookieString(wrapped)
+	got = buildCookieString(wrapped, InterestDomain)
 	if got != "ck=1" {
 		t.Errorf("cookie_data 过滤 = %q", got)
 	}
@@ -198,6 +198,33 @@ func TestBuildCookieStringDoubanDomainFilter(t *testing.T) {
 	prev := ListDoubanCookiePreviews(wrapped)
 	if len(prev) != 1 || prev[0] != "ck=1" {
 		t.Errorf("ListDoubanCookiePreviews = %v", prev)
+	}
+}
+
+func TestInspectCookieCloudWeiboDomain(t *testing.T) {
+	payload := `{"cookie_data":{"weibo.com":[{"name":"SUB","value":"wb","domain":".weibo.com"}],"douban.com":[{"name":"bid","value":"skip","domain":".douban.com"}]}}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(payload))
+	}))
+	defer srv.Close()
+	cfg := config.DoubanCookieConfig{
+		CookiecloudURL:  srv.URL,
+		CookiecloudKey:  "uuid",
+		CookiecloudPass: "pass",
+	}
+	got, err := InspectCookieCloudFor(context.Background(), cfg, "weibo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Cookie != "SUB=wb" {
+		t.Errorf("weibo cookie = %q", got.Cookie)
+	}
+	douban, err := InspectCookieCloud(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if douban.Cookie != "bid=skip" {
+		t.Errorf("douban cookie = %q", douban.Cookie)
 	}
 }
 

@@ -56,11 +56,11 @@ func (d *Douban) groups() []string {
 	if len(d.fixedGroups) > 0 {
 		return d.fixedGroups
 	}
-	if d.rt != nil {
-		if app := d.rt.Get(); app != nil {
-			return app.Collector.Douban.Groups
+		if d.rt != nil {
+			if app := d.rt.Get(); app != nil {
+				return config.HTTPURLs(app.Collector.Douban.Groups)
+			}
 		}
-	}
 	return nil
 }
 

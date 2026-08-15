@@ -85,6 +85,37 @@ func TestCookieTestRawDraftNoWrite(t *testing.T) {
 	}
 }
 
+func TestCookieTestWeiboProbesWeiboURL(t *testing.T) {
+	s := newAdminTestStore(t)
+	defer s.Close()
+	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
+	srv.SetCookieProbe(stubPageProbe{fn: func(ctx context.Context, rawURL, c string) DoubanPageResult {
+		if !strings.Contains(rawURL, "weibo.com") {
+			t.Errorf("微博探测 URL = %q", rawURL)
+		}
+		if c != "SUB=wb" {
+			t.Errorf("cookie = %q", c)
+		}
+		return DoubanPageResult{OK: true, HTTP: 200}
+	}})
+	form := url.Values{
+		"source":      {"weibo"},
+		"cookie_mode": {"raw"},
+		"cookie_raw":  {"SUB=wb"},
+		"collector.weibo.urls": {"https://s.weibo.com/weibo?q=test"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/admin/config/cookie/test", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"ok":true`) {
+		t.Errorf("body=%s", rec.Body.String())
+	}
+}
+
 func TestCookieTestRawUsesStoredWhenEmpty(t *testing.T) {
 	s := newAdminTestStore(t)
 	defer s.Close()
@@ -243,8 +274,8 @@ type stubPageProbe struct {
 	fn func(ctx context.Context, probeURL, rawCookie string) DoubanPageResult
 }
 
-func (s stubPageProbe) InspectCookieCloud(ctx context.Context, draft config.DoubanCookieConfig) (CookieCloudInspect, error) {
-	return testCookieProbe{}.InspectCookieCloud(ctx, draft)
+func (s stubPageProbe) InspectCookieCloud(ctx context.Context, draft config.DoubanCookieConfig, source string) (CookieCloudInspect, error) {
+	return testCookieProbe{}.InspectCookieCloud(ctx, draft, source)
 }
 
 func (s stubPageProbe) ProbePage(ctx context.Context, probeURL, rawCookie string) DoubanPageResult {

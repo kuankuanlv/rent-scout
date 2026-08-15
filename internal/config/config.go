@@ -48,14 +48,20 @@ type CollectorConfig struct {
 	JitterRatio float64      // 间隔随机抖动比例
 	MaxAgeDays  int          // 时间窗：超过此天数的帖子不再采集（规格 4.5）
 	Douban      DoubanConfig // 豆瓣源（新增源在此扩展）
+	Weibo       WeiboConfig
 }
 
 // DoubanConfig 豆瓣源公开配置
 type DoubanConfig struct {
-	Groups    []string // 豆瓣租房小组 URL
+	Groups    []string // 豆瓣租房小组 URL；可夹注释行
 	Interval  int      // 同一轮里两次访问豆瓣的间隔（秒），默认 3；不是轮次间隔
 	RangeFrom string   // 只抓此时间之后发的帖，单位天，只能为负；默认 -10
 	RangeTo   string   // 只抓此时间之前发的帖，单位天，可正可负；默认 now
+}
+
+// WeiboConfig 微博源公开配置
+type WeiboConfig struct {
+	URLs []string // 超话/搜索 URL；可夹注释行
 }
 
 // FilterConfig 过滤：AI 开关与效率
@@ -87,12 +93,21 @@ type Secrets struct {
 	Notifier  SecretsNotifier
 }
 
-// SecretsCollector 每源敏感配置
+// SecretsCollector 每源敏感配置；结构相同，KV 前缀不同
 type SecretsCollector struct {
 	Douban DoubanCookieConfig
+	Weibo  DoubanCookieConfig
 }
 
-// DoubanCookieConfig 豆瓣 cookie 三模式 none|raw|cookiecloud（规格 §5）
+// CookieFor 按采集源取 cookie 配置；未知源当豆瓣
+func (c SecretsCollector) CookieFor(source string) DoubanCookieConfig {
+	if CookieSource(source) == "weibo" {
+		return c.Weibo
+	}
+	return c.Douban
+}
+
+// DoubanCookieConfig 单源 cookie 三模式 none|raw|cookiecloud；豆瓣/微博共用
 type DoubanCookieConfig struct {
 	CookieMode      string
 	CookieRaw       string
@@ -165,6 +180,35 @@ var defaultDoubanGroups = []string{
 	"https://www.douban.com/group/596202/discussion",
 }
 
+var defaultWeiboURLs = []string{
+	"#北京租房",
+	"https://s.weibo.com/weibo?q=%23%E5%8C%97%E4%BA%AC%E7%A7%9F%E6%88%BF%23",
+	"#北京市租房",
+	"https://s.weibo.com/weibo?q=%23%E5%8C%97%E4%BA%AC%E5%B8%82%E7%A7%9F%E6%88%BF%23",
+	"租房",
+	"https://s.weibo.com/weibo?q=%23%E7%A7%9F%E6%88%BF%23",
+	"#北京租房大全",
+	"https://s.weibo.com/weibo?q=%23%E5%8C%97%E4%BA%AC%E7%A7%9F%E6%88%BF%E5%A4%A7%E5%85%A8%23",
+	"#北京租房合租",
+	"https://s.weibo.com/weibo?q=%23%E5%8C%97%E4%BA%AC%E7%A7%9F%E6%88%BF%E5%90%88%E7%A7%9F%23",
+	"#北京合租",
+	"https://s.weibo.com/weibo?q=%23%E5%8C%97%E4%BA%AC%E5%90%88%E7%A7%9F%23",
+	"#北京合租房",
+	"https://s.weibo.com/weibo?q=%23%E5%8C%97%E4%BA%AC%E5%90%88%E7%A7%9F%E6%88%BF%23",
+	"#北京租房找室友",
+	"https://s.weibo.com/weibo?q=%23%E5%8C%97%E4%BA%AC%E7%A7%9F%E6%88%BF%E6%89%BE%E5%AE%A4%E5%8F%8B%23",
+	"#北京租房转租",
+	"https://s.weibo.com/weibo?q=%23%E5%8C%97%E4%BA%AC%E7%A7%9F%E6%88%BF%E8%BD%AC%E7%A7%9F%23",
+	"#北京无中介租房",
+	"https://s.weibo.com/weibo?q=%23%E5%8C%97%E4%BA%AC%E6%97%A0%E4%B8%AD%E4%BB%8B%E7%A7%9F%E6%88%BF%23",
+	"#北京短租",
+	"https://s.weibo.com/weibo?q=%23%E5%8C%97%E4%BA%AC%E7%9F%AD%E7%A7%9F%23",
+	"#北京石景山租房",
+	"https://s.weibo.com/weibo?q=%23%E5%8C%97%E4%BA%AC%E7%9F%B3%E6%99%AF%E5%B1%B1%E7%A7%9F%E6%88%BF%23",
+	"#北京租房大师",
+	"https://s.weibo.com/weibo?q=%23%E5%8C%97%E4%BA%AC%E7%A7%9F%E6%88%BF%E5%A4%A7%E5%B8%88%23",
+}
+
 // DefaultApp 内置默认公开配置（SQLite 空库时使用）
 func DefaultApp() *AppConfig {
 	cfg := &AppConfig{}
@@ -177,6 +221,7 @@ func DefaultSecrets() *Secrets {
 	return &Secrets{
 		Collector: SecretsCollector{
 			Douban: DoubanCookieConfig{CookieMode: CookieModeNone.String()},
+			Weibo:  DoubanCookieConfig{CookieMode: CookieModeNone.String()},
 		},
 		Filter: SecretsFilter{
 			LLM: LLMConfig{
@@ -216,6 +261,9 @@ func applyDefaults(cfg *AppConfig) {
 	// 豆瓣默认启用内置小组；覆盖了 interval 才用覆盖值
 	if len(cfg.Collector.Douban.Groups) == 0 {
 		cfg.Collector.Douban.Groups = defaultDoubanGroups
+	}
+	if len(cfg.Collector.Weibo.URLs) == 0 {
+		cfg.Collector.Weibo.URLs = append([]string(nil), defaultWeiboURLs...)
 	}
 	if cfg.Collector.Douban.Interval == 0 {
 		cfg.Collector.Douban.Interval = 3

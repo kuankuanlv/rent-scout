@@ -22,6 +22,7 @@ func (s *Server) handleCookieCloudTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	draft := s.draftCookieConfig(r)
+	source := cookieSource(r)
 	if strings.ToLower(draft.CookieMode) != "cookiecloud" {
 		draft.CookieMode = "cookiecloud"
 	}
@@ -31,7 +32,7 @@ func (s *Server) handleCookieCloudTest(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"ok": false, "summary": "失败：探测未配置"})
 		return
 	}
-	ins, err := s.cookieProbe.InspectCookieCloud(ctx, draft)
+	ins, err := s.cookieProbe.InspectCookieCloud(ctx, draft, source)
 	resp := map[string]any{
 		"ok":      err == nil && ins.Cookie != "",
 		"http":    ins.HTTPStatus,
@@ -79,7 +80,7 @@ func (s *Server) handleCookieTest(w http.ResponseWriter, r *http.Request) {
 
 	mode := strings.ToLower(strings.TrimSpace(firstNonEmpty(
 		r.PostFormValue("cookie_mode"),
-		r.PostFormValue("secret.collector.douban.cookie_mode"),
+		r.PostFormValue(config.CookieModeKey(cookieSource(r))),
 	)))
 	if mode == "" {
 		mode = config.CookieModeNone.String()
@@ -94,9 +95,9 @@ func (s *Server) handleCookieTest(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
 
-	rawCookie, err := s.fetchDraftCookie(ctx, mode, draft)
+	rawCookie, err := s.fetchDraftCookie(ctx, mode, draft, cookieSource(r))
 	if err != nil {
-		pkglog.Component(pkglog.Admin).Info("豆瓣检测", "stage", "fetch_cookie", "mode", mode, "err", err)
+		pkglog.Component(pkglog.Admin).Info("Cookie 检测", "stage", "fetch_cookie", "mode", mode, "err", err)
 		writeJSON(w, map[string]any{"ok": false, "http": 0, "summary": "失败：" + err.Error(), "snippet": err.Error()})
 		return
 	}
@@ -119,7 +120,7 @@ func (s *Server) handleCookieTest(w http.ResponseWriter, r *http.Request) {
 	if !page.OK && page.Snippet != "" {
 		resp["snippet"] = page.Snippet
 	}
-	pkglog.Component(pkglog.Admin).Info("豆瓣检测",
+	pkglog.Component(pkglog.Admin).Info("Cookie 检测",
 		"stage", "page",
 		"mode", mode,
 		"ok", page.OK,
@@ -129,11 +130,16 @@ func (s *Server) handleCookieTest(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, resp)
 }
 
+func cookieSource(r *http.Request) string {
+	return config.CookieSource(firstNonEmpty(r.PostFormValue("source")))
+}
+
 func (s *Server) draftCookieConfig(r *http.Request) config.DoubanCookieConfig {
-	stored := s.rt.Secrets().Collector.Douban
+	source := cookieSource(r)
+	stored := s.rt.Secrets().Collector.CookieFor(source)
 	mode := strings.ToLower(strings.TrimSpace(firstNonEmpty(
 		r.PostFormValue("cookie_mode"),
-		r.PostFormValue("secret.collector.douban.cookie_mode"),
+		r.PostFormValue(config.CookieModeKey(source)),
 		stored.CookieMode,
 	)))
 	if mode == "" {
@@ -143,32 +149,32 @@ func (s *Server) draftCookieConfig(r *http.Request) config.DoubanCookieConfig {
 		CookieMode: mode,
 		CookieRaw: firstNonEmpty(
 			r.PostFormValue("cookie_raw"),
-			r.PostFormValue("secret.collector.douban.cookie_raw"),
+			r.PostFormValue(config.CookieRawKey(source)),
 			stored.CookieRaw,
 		),
 		CookiecloudURL: firstNonEmpty(
 			r.PostFormValue("cookiecloud_url"),
-			r.PostFormValue("secret.collector.douban.cookiecloud_url"),
+			r.PostFormValue(config.CookieCloudURLKey(source)),
 		),
 		CookiecloudKey: firstNonEmpty(
 			r.PostFormValue("cookiecloud_key"),
-			r.PostFormValue("secret.collector.douban.cookiecloud_key"),
+			r.PostFormValue(config.CookieCloudKeyKey(source)),
 		),
 		CookiecloudPass: firstNonEmpty(
 			r.PostFormValue("cookiecloud_password"),
-			r.PostFormValue("secret.collector.douban.cookiecloud_password"),
+			r.PostFormValue(config.CookieCloudPwdKey(source)),
 		),
 	}
 	return draft
 }
 
-func (s *Server) fetchDraftCookie(ctx context.Context, mode string, draft config.DoubanCookieConfig) (string, error) {
+func (s *Server) fetchDraftCookie(ctx context.Context, mode string, draft config.DoubanCookieConfig, source string) (string, error) {
 	m := config.ParseCookieMode(mode)
 	if m == config.CookieModeNone {
 		return "", nil
 	}
 	if m == config.CookieModeCookieCloud {
-		ins, err := s.cookieProbe.InspectCookieCloud(ctx, draft)
+		ins, err := s.cookieProbe.InspectCookieCloud(ctx, draft, source)
 		if err != nil {
 			return "", err
 		}
@@ -185,35 +191,41 @@ func (s *Server) fetchDraftCookie(ctx context.Context, mode string, draft config
 	return ck, nil
 }
 
-// cookieProbeURL 优先草稿/已存第一组小组 URL，否则豆瓣首页
+// cookieProbeURL 优先草稿/已存第一组 URL，否则源首页
 func cookieProbeURL(r *http.Request, rt *config.HotConfig) string {
+	source := cookieSource(r)
+	if source == "weibo" {
+		raw := firstNonEmpty(
+			r.PostFormValue("collector.weibo.urls"),
+			r.PostFormValue("urls"),
+		)
+		if line := config.FirstHTTPURL(raw); line != "" {
+			return line
+		}
+		if rt != nil {
+			if app := rt.Get(); app != nil {
+				if urls := config.HTTPURLs(app.Collector.Weibo.URLs); len(urls) > 0 {
+					return urls[0]
+				}
+			}
+		}
+		return "https://weibo.com/"
+	}
 	raw := firstNonEmpty(
 		r.PostFormValue("collector.douban.groups"),
 		r.PostFormValue("groups"),
 	)
-	if line := firstGroupLine(raw); line != "" {
+	if line := config.FirstHTTPURL(raw); line != "" {
 		return line
 	}
 	if rt != nil {
 		if app := rt.Get(); app != nil {
-			if groups := app.Collector.Douban.Groups; len(groups) > 0 {
-				if g := strings.TrimSpace(groups[0]); g != "" {
-					return g
-				}
+			if urls := config.HTTPURLs(app.Collector.Douban.Groups); len(urls) > 0 {
+				return urls[0]
 			}
 		}
 	}
 	return "https://www.douban.com/"
-}
-
-func firstGroupLine(raw string) string {
-	for _, line := range strings.Split(raw, "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			return line
-		}
-	}
-	return ""
 }
 
 const errCookieMissing = cookieMissingError("本地 cookie 为空")

@@ -505,7 +505,10 @@ func sourceFingerprint(name string, cfg *config.AppConfig) string {
 		return name
 	}
 	if name == models.SourceDouban.String() {
-		return name + "|" + cfg.Collector.Douban.RangeFrom + "|" + strings.Join(cfg.Collector.Douban.Groups, ",")
+		return name + "|" + cfg.Collector.Douban.RangeFrom + "|" + strings.Join(config.HTTPURLs(cfg.Collector.Douban.Groups), ",")
+	}
+	if name == models.SourceWeibo.String() {
+		return name + "|from=" + strconv.Itoa(cfg.Collector.MaxAgeDays) + "|" + strings.Join(config.HTTPURLs(cfg.Collector.Weibo.URLs), ",")
 	}
 	return name + "|from=" + strconv.Itoa(cfg.Collector.MaxAgeDays)
 }

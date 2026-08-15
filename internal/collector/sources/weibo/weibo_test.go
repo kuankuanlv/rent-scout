@@ -6,7 +6,7 @@ import (
 )
 
 func TestWeiboStub(t *testing.T) {
-	s := New()
+	s := New(nil)
 	if s.Name() != "weibo" {
 		t.Fatalf("name=%s", s.Name())
 	}

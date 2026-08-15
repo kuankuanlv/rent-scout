@@ -12,14 +12,22 @@ import (
 // ErrLastEnabledRule 删除或禁用会导致启用规则总数变为 0
 var ErrLastEnabledRule = errors.New("至少保留一条启用规则")
 
-// DefaultLocationRule 启用规则数为 0 时写入的默认白名单（Spec 09 §2.2）
+// DefaultLocationRule 兼容旧测试引用；新库走 EnsureDefaultRule 黑白两条种子
 func DefaultLocationRule() models.Rule {
 	return models.Rule{
-		Name:     "默认地点",
+		Name:     "白名单-地点",
 		Type:     models.RuleTypeWhitelist,
-		Value:    "雍和宫,和平里",
+		Value:    "梨园,雍和宫",
 		Enabled:  true,
-		Priority: 100,
+		Priority: 80,
+	}
+}
+
+// defaultSeedRules 启用规则数为 0 时写入的默认黑名单和白名单
+func defaultSeedRules() []models.Rule {
+	return []models.Rule{
+		{Name: "黑名单-中介", Type: models.RuleTypeBlacklist, Value: "中介,代理,隔断,", Enabled: true, Priority: 90},
+		{Name: "白名单-地点", Type: models.RuleTypeWhitelist, Value: "梨园,雍和宫", Enabled: true, Priority: 80},
 	}
 }
 
@@ -63,6 +71,20 @@ func (s *Store) ListRules(onlyEnabled bool) ([]models.Rule, error) {
 	return out, rows.Err()
 }
 
+// GetRule 按 id 取一条规则；不存在 ok=false
+func (s *Store) GetRule(id int64) (models.Rule, bool, error) {
+	var rule models.Rule
+	err := s.db.QueryRow(`SELECT id, name, type, mode, value, enabled, priority, created_at FROM rules WHERE id=?`, id).
+		Scan(&rule.ID, &rule.Name, &rule.Type, &rule.Mode, &rule.Value, &rule.Enabled, &rule.Priority, &rule.CreatedAt)
+	if err == sql.ErrNoRows {
+		return rule, false, nil
+	}
+	if err != nil {
+		return rule, false, fmt.Errorf("查规则: %w", err)
+	}
+	return rule, true, nil
+}
+
 // CountEnabledRules 启用规则总数（任意类型合计）
 func (s *Store) CountEnabledRules() (int, error) {
 	var n int
@@ -72,7 +94,7 @@ func (s *Store) CountEnabledRules() (int, error) {
 	return n, nil
 }
 
-// EnsureDefaultRule 启用规则数为 0 时写入默认地点白名单
+// EnsureDefaultRule 启用规则数为 0 时写入默认黑名单和白名单
 func (s *Store) EnsureDefaultRule() error {
 	n, err := s.CountEnabledRules()
 	if err != nil {
@@ -81,8 +103,10 @@ func (s *Store) EnsureDefaultRule() error {
 	if n > 0 {
 		return nil
 	}
-	if _, err := s.CreateRule(DefaultLocationRule()); err != nil {
-		return fmt.Errorf("种子默认规则: %w", err)
+	for _, r := range defaultSeedRules() {
+		if _, err := s.CreateRule(r); err != nil {
+			return fmt.Errorf("种子默认规则: %w", err)
+		}
 	}
 	return nil
 }

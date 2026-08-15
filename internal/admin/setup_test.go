@@ -11,7 +11,6 @@ import (
 
 	"rent-scout/internal/collector/cookie"
 	"rent-scout/internal/config"
-	"rent-scout/internal/models"
 	"rent-scout/internal/store"
 )
 
@@ -58,12 +57,8 @@ func TestSetupFinishSeedsDefaultRule(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rules) != 1 {
-		t.Fatalf("启用规则 = %d, want 1", len(rules))
-	}
-	r := rules[0]
-	if r.Name != "默认地点" || r.Type != models.RuleTypeWhitelist || r.Value != "雍和宫,和平里" || r.Priority != 100 {
-		t.Errorf("默认规则不符: %+v", r)
+	if len(rules) != 2 {
+		t.Fatalf("启用规则 = %d, want 2", len(rules))
 	}
 	m, _ := store.GetConfigMap(s)
 	if m[config.KeySetupCompleted] != "true" {
@@ -100,8 +95,8 @@ func TestSetupSkipLastStepFinishes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rules) != 1 {
-		t.Fatalf("启用规则 = %d, want 1", len(rules))
+	if len(rules) != 2 {
+		t.Fatalf("启用规则 = %d, want 2", len(rules))
 	}
 }
 
@@ -246,5 +241,37 @@ func TestSetupAllowsCookieTestDuringSetup(t *testing.T) {
 	}
 	if out["http"] != float64(200) {
 		t.Errorf("http = %v, want 200", out["http"])
+	}
+}
+
+// TestCookieCloudTestUsesFormNotDB 页面没填 url/key/password 时不得用库里的凭证
+func TestCookieCloudTestUsesFormNotDB(t *testing.T) {
+	s := newAdminTestStore(t)
+	defer s.Close()
+	srv := newSetupInProgressServer(t, s, map[string]string{
+		"secret.collector.douban.cookie_mode":          "cookiecloud",
+		"secret.collector.douban.cookiecloud_url":      "https://cc.stored.example/get/xxxxxxxx",
+		"secret.collector.douban.cookiecloud_key":      "stored-uuid",
+		"secret.collector.douban.cookiecloud_password": "stored-pass",
+	})
+
+	form := url.Values{"cookie_mode": {"cookiecloud"}}
+	req := httptest.NewRequest(http.MethodPost, "/admin/config/cookiecloud/test", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var out map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out["ok"] != false {
+		t.Errorf("缺页面凭证应失败: %v", out)
+	}
+	sum, _ := out["summary"].(string)
+	if !strings.Contains(sum, "失败") {
+		t.Errorf("summary = %q", sum)
 	}
 }

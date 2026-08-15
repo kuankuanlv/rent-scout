@@ -166,6 +166,9 @@ func (s *Store) migrate() error {
 	if err := s.migrateCookieModeFile(); err != nil {
 		return err
 	}
+	if err := s.migrateResetRulesV2(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -190,12 +193,30 @@ func (s *Store) migrateRuleTypes() error {
 
 // migrateCookieModeFile 旧 file 模式改为 none；幂等
 func (s *Store) migrateCookieModeFile() error {
-		res, err := s.db.Exec(`UPDATE kv_config SET value='none' WHERE key='secret.collector.douban.cookie_mode' AND lower(value)='file'`)
+	res, err := s.db.Exec(`UPDATE kv_config SET value='none' WHERE key='secret.collector.douban.cookie_mode' AND lower(value)='file'`)
 	if err != nil {
 		return fmt.Errorf("迁移 cookie_mode=file→none: %w", err)
 	}
 	_ = res
 	return nil
+}
+
+const rulesDefaultsVersionKey = "rules.defaults_version"
+const rulesDefaultsVersion = "2"
+
+// migrateResetRulesV2 清空旧规则，由 EnsureDefaultRule 按新默认值重种；只跑一次
+func (s *Store) migrateResetRulesV2() error {
+	v, err := GetConfig(s, rulesDefaultsVersionKey)
+	if err != nil {
+		return err
+	}
+	if v == rulesDefaultsVersion {
+		return nil
+	}
+	if _, err := s.db.Exec(`DELETE FROM rules`); err != nil {
+		return fmt.Errorf("清空旧规则: %w", err)
+	}
+	return SetConfig(s, rulesDefaultsVersionKey, rulesDefaultsVersion)
 }
 
 // columnExists 检查表是否已存在指定列（迁移幂等辅助）

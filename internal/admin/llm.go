@@ -146,7 +146,7 @@ func (s *Server) parseLLMDraft(r *http.Request) (llmDraft, error) {
 		baseURL = stored.BaseURL
 	}
 	if baseURL == "" && style == "openai" {
-		baseURL = "https://api.openai.com/v1"
+		baseURL = "https://api.deepseek.com"
 	}
 	apiKey := firstNonEmpty(
 		r.PostFormValue("api_key"),

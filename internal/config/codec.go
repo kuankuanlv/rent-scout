@@ -126,7 +126,6 @@ var SectionKeys = map[string][]string{
 		"filter.ai_enabled", "filter.batch_size", "filter.ai_batch_size",
 		"secret.filter.llm.api_style",
 		"secret.filter.llm.api_key", "secret.filter.llm.base_url", "secret.filter.llm.model",
-		"secret.filter.llm.fallback_models",
 	},
 	"notifier": {
 		"notifier.max_attempts", "notifier.retry_base_interval", "notifier.batch_size", "notifier.channels",

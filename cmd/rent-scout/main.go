@@ -40,6 +40,10 @@ func main() {
 		os.Exit(1)
 	}
 	defer db.Close()
+	if err := db.EnsureDefaultRule(); err != nil {
+		boot.Error("写入默认规则失败", "err", err)
+		os.Exit(1)
+	}
 
 	cnt, err := store.ConfigCount(db)
 	if err != nil {
@@ -251,10 +255,7 @@ func newNotifierConsumer(rt *config.HotConfig, db *store.Store, notifyTrigger <-
 	cfg := rt.Get()
 	env := rt.Secrets()
 	var chs []notifier.Channel
-	enabled := notifier.EnabledChannels(env.Notifier)
-	if len(cfg.Notifier.Channels) > 0 {
-		enabled = cfg.Notifier.Channels
-	}
+	enabled := cfg.Notifier.Channels
 	for _, name := range enabled {
 		switch name {
 		case notifier.ChannelFeishu:

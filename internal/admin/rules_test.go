@@ -252,11 +252,45 @@ func TestRulesUpdateJSONMissingValue(t *testing.T) {
 	req.Header.Set("Accept", "application/json")
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "参数无效") {
-		t.Errorf("body = %s", rec.Body.String())
+	rules, _ := s.ListRules(false)
+	for _, g := range rules {
+		if g.ID == r.ID {
+			if g.Value != "v" || !g.Enabled {
+				t.Errorf("缺 value 时应沿用库内值: %+v", g)
+			}
+			return
+		}
+	}
+	t.Errorf("规则 %d 不存在", r.ID)
+}
+
+func TestRulesToggleEnabledOnly(t *testing.T) {
+	s := newAdminTestStore(t)
+	defer s.Close()
+	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
+	r, err := s.CreateRule(models.Rule{Name: "只改启用", Type: models.RuleTypeBlacklist, Value: "中介", Enabled: false, Priority: 9})
+	if err != nil {
+		t.Fatal(err)
+	}
+	form := url.Values{"enabled": {"on"}}
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/admin/rules/%d", r.ID), strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("X-Requested-With", "XMLHttpRequest")
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	got, ok, err := s.GetRule(r.ID)
+	if err != nil || !ok {
+		t.Fatalf("GetRule: ok=%v err=%v", ok, err)
+	}
+	if !got.Enabled || got.Value != "中介" || got.Name != "只改启用" {
+		t.Errorf("只提交 enabled 未按库补全: %+v", got)
 	}
 }
 
@@ -455,12 +489,21 @@ func TestRulesTokenPropagation(t *testing.T) {
 		t.Errorf("Location = %q, want /admin/config?tab=rules&token=secret", loc)
 	}
 	rules, _ := s.ListRules(false)
-	if rules[0].Value != "y" {
-		t.Errorf("鉴权下更新未生效: %+v", rules)
+	found := false
+	for _, g := range rules {
+		if g.ID == r.ID {
+			found = true
+			if g.Value != "y" {
+				t.Errorf("鉴权下更新未生效: %+v", g)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("鉴权规则 %d 不存在: %+v", r.ID, rules)
 	}
 }
 
-// TestRulesEnsureDefaultOnEmptyTab 启用规则为 0 时打开 rules tab → 种子默认地点
+// TestRulesEnsureDefaultOnEmptyTab 启用规则为 0 时打开 rules tab → 种子默认黑白名单
 func TestRulesEnsureDefaultOnEmptyTab(t *testing.T) {
 	s := newAdminTestStore(t)
 	defer s.Close()
@@ -473,20 +516,18 @@ func TestRulesEnsureDefaultOnEmptyTab(t *testing.T) {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "默认地点") {
-		t.Errorf("页面缺默认地点")
+	if !strings.Contains(body, "黑名单-中介") || !strings.Contains(body, "白名单-地点") {
+		t.Errorf("页面缺默认黑/白名单")
+	}
+	if !strings.Contains(body, "中介,代理,隔断,") || !strings.Contains(body, "梨园,雍和宫") {
+		t.Errorf("默认规则值不符")
 	}
 	rules, err := s.ListRules(true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rules) != 1 {
-		t.Fatalf("启用规则 = %d, want 1", len(rules))
-	}
-	r := rules[0]
-	if r.Name != "默认地点" || r.Type != models.RuleTypeWhitelist ||
-		r.Value != "雍和宫,和平里" || !r.Enabled || r.Priority != 100 {
-		t.Errorf("默认规则不符: %+v", r)
+	if len(rules) != 2 {
+		t.Fatalf("启用规则 = %d, want 2", len(rules))
 	}
 }
 

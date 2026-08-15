@@ -64,13 +64,13 @@ type FilterConfig struct {
 	AIBatchSize int   // AI 审核凑批大小（从库读 pending，满批或 linger 才调 LLM）
 }
 
-// NotifierConfig 通知：重试参数；渠道启用遵循约定（配了 webhook 自动启用）。
+// NotifierConfig 通知：重试参数；只有 Channels 勾选的渠道才会发。
 // 各渠道差异在 SecretsNotifier 子结构，同样扁平 kv，不是渠道子表或 JSON blob
 type NotifierConfig struct {
 	MaxAttempts       int
 	RetryBaseInterval int
 	BatchSize         int      // pipeline 拉批大小
-	Channels          []string // 可选白名单；空 = 按已配 webhook 自动启用
+	Channels          []string // 启用渠道；空 = 不发通知
 }
 
 // AdminConfig 管理面鉴权（规格 7.1；Docker 部署安全考虑）
@@ -176,6 +176,12 @@ func DefaultSecrets() *Secrets {
 		Collector: SecretsCollector{
 			Douban: DoubanCookieConfig{CookieMode: CookieModeNone.String()},
 		},
+		Filter: SecretsFilter{
+			LLM: LLMConfig{
+				BaseURL:  "https://api.deepseek.com",
+				APIStyle: LLMStyleOpenAI.String(),
+			},
+		},
 	}
 }
 
@@ -197,7 +203,7 @@ func applyDefaults(cfg *AppConfig) {
 		cfg.Collector.Sources = []string{models.SourceDouban.String()}
 	}
 	if cfg.Collector.Interval == 0 {
-		cfg.Collector.Interval = 1800
+		cfg.Collector.Interval = 300
 	}
 	if cfg.Collector.JitterRatio == 0 {
 		cfg.Collector.JitterRatio = 0.2
@@ -259,5 +265,5 @@ func (c CollectorConfig) SourceInterval(source string) int {
 	if c.Interval > 0 {
 		return c.Interval
 	}
-	return 1800
+	return 300
 }

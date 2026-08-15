@@ -86,6 +86,86 @@ func TestInsertPostDedup(t *testing.T) {
 	}
 }
 
+func TestListFilterTags(t *testing.T) {
+	s := newTestStore(t)
+	defer s.Close()
+
+	if _, err := s.InsertPost(models.RentPost{
+		Source: "douban", ExternalID: "t1", Title: "a", CollectedAt: time.Now(),
+		Status: models.PostStatusPassed, AddressTags: []string{"望京", "14号线"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateRule(models.Rule{
+		Name: "地点", Type: models.RuleTypeWhitelist, Value: "朝阳门,望京", Enabled: true, Priority: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateRule(models.Rule{
+		Name: "黑", Type: models.RuleTypeBlacklist, Value: "中介", Enabled: true, Priority: 2,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.ListFilterTags()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{"望京": true, "14号线": true, "朝阳门": true}
+	if len(got) != 3 {
+		t.Fatalf("tags = %v, want 3 个（不含黑名单）", got)
+	}
+	for _, tname := range got {
+		if !want[tname] {
+			t.Errorf("多余标签 %q", tname)
+		}
+	}
+}
+
+func TestReconstructKVAfter(t *testing.T) {
+	s := newTestStore(t)
+	defer s.Close()
+
+	if err := SetConfig(s, "log.level", "info"); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetConfig(s, "log.level", "debug"); err != nil {
+		t.Fatal(err)
+	}
+	hist, err := ListConfigHistory(s, 10)
+	if err != nil || len(hist) < 2 {
+		t.Fatalf("history n=%d err=%v", len(hist), err)
+	}
+	// hist[0] 最新 debug；hist[1] 更早 info
+	var infoID, debugID int64
+	for _, e := range hist {
+		switch {
+		case e.Key == "log.level" && e.NewValue == "info":
+			infoID = e.ID
+		case e.Key == "log.level" && e.NewValue == "debug":
+			debugID = e.ID
+		}
+	}
+	if infoID == 0 || debugID == 0 || infoID >= debugID {
+		t.Fatalf("ids info=%d debug=%d", infoID, debugID)
+	}
+
+	kv, _, err := ReconstructKVAfter(s, infoID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kv["log.level"] != "info" {
+		t.Errorf("回放到 info 后 = %q, want info", kv["log.level"])
+	}
+	kv, _, err = ReconstructKVAfter(s, debugID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kv["log.level"] != "debug" {
+		t.Errorf("回放到 debug 后 = %q, want debug", kv["log.level"])
+	}
+}
+
 // 拉取待筛选批：只拉 collected，限量，按 id 升序
 func TestFetchPending(t *testing.T) {
 	s := newTestStore(t)
@@ -257,7 +337,7 @@ func TestRulesCRUD(t *testing.T) {
 	}
 }
 
-// EnsureDefaultRule：启用为 0 时种子默认地点；已有启用则不重复
+// EnsureDefaultRule：启用为 0 时种子黑白名单；已有启用则不重复
 func TestEnsureDefaultRule(t *testing.T) {
 	s := newTestStore(t)
 	defer s.Close()
@@ -268,20 +348,21 @@ func TestEnsureDefaultRule(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rules) != 1 {
-		t.Fatalf("启用 = %d, want 1", len(rules))
+	if len(rules) != 2 {
+		t.Fatalf("启用 = %d, want 2", len(rules))
 	}
-	want := DefaultLocationRule()
-	r := rules[0]
-	if r.Name != want.Name || r.Type != want.Type || r.Mode != want.Mode ||
-		r.Value != want.Value || !r.Enabled || r.Priority != want.Priority {
-		t.Errorf("默认规则 = %+v, want %+v", r, want)
+	byName := map[string]models.Rule{}
+	for _, r := range rules {
+		byName[r.Name] = r
+	}
+	if byName["黑名单-中介"].Value != "中介,代理,隔断," || byName["白名单-地点"].Value != "梨园,雍和宫" {
+		t.Errorf("默认规则值不符: %+v", rules)
 	}
 	if err := s.EnsureDefaultRule(); err != nil {
 		t.Fatal(err)
 	}
 	rules, _ = s.ListRules(false)
-	if len(rules) != 1 {
+	if len(rules) != 2 {
 		t.Errorf("不应重复种子: %d", len(rules))
 	}
 }
@@ -811,6 +892,14 @@ func TestMigrateRuleTypes(t *testing.T) {
 			s.name, s.typ, s.mode, s.value, now); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if _, err := legacy.Exec(`CREATE TABLE kv_config (
+	    key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := legacy.Exec(`INSERT INTO kv_config (key,value,updated_at) VALUES ('rules.defaults_version','2',0)`); err != nil {
+		t.Fatal(err)
 	}
 	legacy.Close()
 

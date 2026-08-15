@@ -14,6 +14,20 @@ import (
 	"rent-scout/internal/store"
 )
 
+// appendSelectedTag 当前筛选值不在选项里也塞进去，避免下拉丢选中态
+func appendSelectedTag(opts []string, selected string) []string {
+	selected = strings.TrimSpace(selected)
+	if selected == "" {
+		return opts
+	}
+	for _, o := range opts {
+		if o == selected {
+			return opts
+		}
+	}
+	return append(opts, selected)
+}
+
 // postListFilterFromQuery 从 URL 取帖子列表筛选（admin / API 共用）
 func postListFilterFromQuery(q url.Values) store.PostListFilter {
 	return store.PostListFilter{
@@ -56,12 +70,19 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "查询失败", http.StatusInternalServerError)
 		return
 	}
+	tagOpts, err := s.db.ListFilterTags()
+	if err != nil {
+		pkglog.Component(pkglog.Admin).Warn("标签下拉加载失败", "err", err)
+		tagOpts = nil
+	}
+	tagOpts = appendSelectedTag(tagOpts, f.Tag)
 	fq := adminPostsQuery(r).Encode()
 	if err := s.tmpl.ExecuteTemplate(w, "admin", mergePageCtx(pageCtx(r, "posts"), map[string]any{
 		"Posts":       posts,
 		"Q":           f.Q,
 		"Status":      f.Status,
 		"Tag":         f.Tag,
+		"TagOptions":  tagOpts,
 		"Handled":     f.Handled,
 		"FilterQuery": template.URL(fq), // 避免 action 里 = 被 html/template 编成 %3d
 	})); err != nil {

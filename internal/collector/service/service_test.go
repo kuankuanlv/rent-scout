@@ -30,6 +30,19 @@ func TestNewAlwaysHasRunner(t *testing.T) {
 	if svc.SourceEnabled(models.SourceDouban.String()) {
 		t.Fatal("配置未勾选时不应视为启用")
 	}
+	names := svc.Sources()
+	hasWeibo := false
+	for _, n := range names {
+		if n == models.SourceWeibo.String() {
+			hasWeibo = true
+		}
+	}
+	if !hasWeibo {
+		t.Fatalf("应常驻 weibo 协程, sources=%v", names)
+	}
+	if svc.SourceEnabled(models.SourceWeibo.String()) {
+		t.Fatal("微博未勾选时不应视为启用")
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- svc.Run(ctx) }()

@@ -21,7 +21,7 @@ func (r *Repo) FetchNotifyBatch(channels []string, limit int) ([]models.RentPost
 	ph = ph[:len(ph)-1]
 	query := fmt.Sprintf(`
 			SELECT id, source, external_id, url, title, content, author, author_url,
-			       published_at, collected_at, status, address_tags, raw
+			       published_at, collected_at, status, address_tags, raw, price, contact
 			FROM posts
 			WHERE status = 'passed'
 			AND (SELECT COUNT(*) FROM notifications n
@@ -44,7 +44,7 @@ func (r *Repo) FetchNotifyBatch(channels []string, limit int) ([]models.RentPost
 		var published sql.NullTime
 		var tagsJSON string
 		if err := rows.Scan(&p.ID, &p.Source, &p.ExternalID, &p.URL, &p.Title, &p.Content,
-			&p.Author, &p.AuthorURL, &published, &p.CollectedAt, &p.Status, &tagsJSON, &p.Raw); err != nil {
+			&p.Author, &p.AuthorURL, &published, &p.CollectedAt, &p.Status, &tagsJSON, &p.Raw, &p.Price, &p.Contact); err != nil {
 			return nil, err
 		}
 		if published.Valid {

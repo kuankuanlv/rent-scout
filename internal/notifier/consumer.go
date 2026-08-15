@@ -152,14 +152,22 @@ func (n *Notifier) sendGroup(ctx context.Context, ch Channel, tag string, posts 
 			Title:              p.Title,
 			URL:                p.URL,
 			AddressTag:         tag,
+			Price:              models.PriceYuan(p.Price),
 			FeedbackURL:        absActionURL(origin, BuildFeedbackURL(p.ID, "useful", secret)),
 			FeedbackUselessURL: absActionURL(origin, BuildFeedbackURL(p.ID, "useless", secret)),
 			HandledURL:         absActionURL(origin, BuildFeedbackURL(p.ID, "handled", secret)),
 		}
-		// 展示字段来自 filter_results（价格/联系人/通勤/理由）
+		if models.HasContact(p.Contact) {
+			item.Contact = p.Contact
+		}
+		// 展示字段来自 filter_results（价格/联系人/通勤/理由）；库里已有则优先
 		if fr, ok, err := n.st.FilterResultByPostID(p.ID); err == nil && ok && fr.AI != nil {
-			item.Price = fr.AI.Price
-			item.Contact = fr.AI.Contact
+			if item.Price <= 0 {
+				item.Price = fr.AI.Price
+			}
+			if item.Contact == "" && models.HasContact(fr.AI.Contact) {
+				item.Contact = fr.AI.Contact
+			}
 			item.Commuting = fr.AI.Commuting
 			item.Reason = fr.AI.Reason
 		}

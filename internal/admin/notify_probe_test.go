@@ -40,6 +40,20 @@ func TestNotifyTestMethodNotAllowed(t *testing.T) {
 	}
 }
 
+func TestNotifyTestChannelFromQuery(t *testing.T) {
+	srv := newTestServer(t, config.DefaultApp(), "", nil)
+	form := url.Values{"secret.notifier.feishu.webhook": {"https://example.com/hook"}}
+	req := httptest.NewRequest(http.MethodPost, "/admin/config/notify/test?channel=feishu", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	var out map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	if out["ok"] == false && strings.Contains(fmtString(out["summary"]), "仅支持") {
+		t.Fatalf("query channel 应识别飞书: %v", out)
+	}
+}
+
 func TestNotifyTestRequiresChannel(t *testing.T) {
 	srv := newTestServer(t, config.DefaultApp(), "", nil)
 	req := httptest.NewRequest(http.MethodPost, "/admin/config/notify/test", strings.NewReader(""))

@@ -36,8 +36,14 @@ func TestAdminPage(t *testing.T) {
 
 	if code, body := get("/admin"); code != http.StatusOK {
 		t.Errorf("GET /admin 介绍页 status = %d", code)
-	} else if !strings.Contains(body, "豆瓣租房帖自动采集") {
-		t.Errorf("介绍页缺项目说明: %s", body[:200])
+	} else if !strings.Contains(body, "租房侦察兵") || !strings.Contains(body, "微博") || !strings.Contains(body, "小红书") {
+		t.Errorf("介绍页缺品牌与多源说明")
+	} else if !strings.Contains(body, "https://github.com/kuankuanlv/rent-scout") {
+		t.Errorf("介绍页仓库地址错误")
+	} else if !strings.Contains(body, "SQLite") || !strings.Contains(body, "硬规则") {
+		t.Errorf("介绍页缺流水线说明")
+	} else if !strings.Contains(body, "🏠 首页") {
+		t.Errorf("顶栏应有首页入口")
 	}
 	if code, body := get("/admin/posts"); code != http.StatusOK {
 		t.Errorf("GET /admin/posts status = %d, want 200", code)

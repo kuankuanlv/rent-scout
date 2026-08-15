@@ -142,7 +142,7 @@ func TestConsumerAIBatch(t *testing.T) {
 		fake := &fakeAIEvaluator{}
 		c, st, batch := setupAIConsumer(t, fake, ConsumerOptions{})
 		fake.results = map[int64]*models.AIResult{
-			batch[0].ID: {Passed: true, Reason: "位置好", Price: 4500},
+			batch[0].ID: {Passed: true, Reason: "位置好", Price: 4500, Contact: "wx_ok"},
 			batch[1].ID: {Passed: false, Reason: "超出预算", Price: 9000},
 			batch[2].ID: {Passed: true, Reason: "通勤方便", Price: 4200},
 		}
@@ -164,6 +164,10 @@ func TestConsumerAIBatch(t *testing.T) {
 		}
 		if fake.calls != 1 {
 			t.Errorf("EvaluateBatch 调用次数 = %d, want 1", fake.calls)
+		}
+		p0, ok, err := st.GetPost(batch[0].ID)
+		if err != nil || !ok || p0.Price != "4500" || p0.Contact != "wx_ok" {
+			t.Errorf("AI 价格/联系方式未写库: ok=%v price=%q contact=%q err=%v", ok, p0.Price, p0.Contact, err)
 		}
 		passed, _ := st.FetchPendingByStatus(models.PostStatusPassed, 10)
 		rejected, _ := st.FetchPendingByStatus(models.PostStatusRejected, 10)

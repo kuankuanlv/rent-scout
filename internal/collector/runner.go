@@ -133,6 +133,7 @@ func (r *Runner) hasSource(name string) bool {
 // 周期轮询恢复判定——enable 后无需额外信号，循环自然恢复
 func (r *Runner) runSource(ctx context.Context, src Source) {
 	log := pkglog.Component(pkglog.SourceCollector(src.Name()))
+	log.Info("采集协程已启动", "source", src.Name())
 	failStreak := 0
 	prevEnabled := true
 	for {

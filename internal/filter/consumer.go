@@ -218,6 +218,16 @@ func (c *Consumer) commitAI(res models.FilterResult) error {
 	if err := c.store.SaveFilterResult(res); err != nil {
 		pkglog.Component(pkglog.AIReview).Error("筛选结果写库失败", "post_id", res.PostID, "err", err)
 	}
+	if res.AI != nil && res.AI.Price > 0 {
+		if err := c.store.UpdatePostPrice(res.PostID, res.AI.Price); err != nil {
+			pkglog.Component(pkglog.AIReview).Error("帖子价格写库失败", "post_id", res.PostID, "price", res.AI.Price, "err", err)
+		}
+	}
+	if res.AI != nil && models.HasContact(res.AI.Contact) {
+		if err := c.store.UpdatePostContact(res.PostID, res.AI.Contact); err != nil {
+			pkglog.Component(pkglog.AIReview).Error("帖子联系方式写库失败", "post_id", res.PostID, "err", err)
+		}
+	}
 	pkglog.Component(pkglog.AIReview).Info("AI 徽章已写入", "post_id", res.PostID, "ai_passed", res.AI != nil && res.AI.Passed,
 		"ai_reason", aiReason(res.AI))
 	return nil

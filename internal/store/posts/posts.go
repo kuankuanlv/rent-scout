@@ -30,12 +30,13 @@ func (r *Repo) InsertPost(p models.RentPost) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("序列化地址标签: %w", err)
 	}
+	models.FillPostExtracted(&p)
 	// INSERT OR IGNORE：UNIQUE 冲突静默跳过，RowsAffected=0 → added=false
 	res, err := r.DB.Exec(`INSERT OR IGNORE INTO posts
-	    (source, external_id, url, title, content, author, author_url, published_at, collected_at, status, address_tags, raw)
-	    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	    (source, external_id, url, title, content, author, author_url, published_at, collected_at, status, address_tags, raw, price, contact)
+	    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.Source, p.ExternalID, p.URL, p.Title, p.Content, p.Author, p.AuthorURL,
-		nullableTime(p.PublishedAt), p.CollectedAt, p.Status, string(tagsJSON), p.Raw)
+		nullableTime(p.PublishedAt), p.CollectedAt, p.Status, string(tagsJSON), p.Raw, p.Price, p.Contact)
 	if err != nil {
 		return false, fmt.Errorf("插入帖子: %w", err)
 	}
@@ -50,7 +51,7 @@ func (r *Repo) InsertPost(p models.RentPost) (bool, error) {
 // 模块消费协议组批入口（规格 2.3）
 func (r *Repo) FetchPendingByStatus(status string, limit int) ([]models.RentPost, error) {
 	rows, err := r.DB.Query(`SELECT id, source, external_id, url, title, content, author, author_url,
-	    published_at, collected_at, status, address_tags, raw FROM posts WHERE status = ? ORDER BY id LIMIT ?`, status, limit)
+	    published_at, collected_at, status, address_tags, raw, price, contact FROM posts WHERE status = ? ORDER BY id LIMIT ?`, status, limit)
 	if err != nil {
 		return nil, fmt.Errorf("拉取 %s 批: %w", status, err)
 	}
@@ -61,7 +62,7 @@ func (r *Repo) FetchPendingByStatus(status string, limit int) ([]models.RentPost
 		var published sql.NullTime
 		var tagsJSON string
 		if err := rows.Scan(&p.ID, &p.Source, &p.ExternalID, &p.URL, &p.Title, &p.Content,
-			&p.Author, &p.AuthorURL, &published, &p.CollectedAt, &p.Status, &tagsJSON, &p.Raw); err != nil {
+			&p.Author, &p.AuthorURL, &published, &p.CollectedAt, &p.Status, &tagsJSON, &p.Raw, &p.Price, &p.Contact); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(tagsJSON), &p.AddressTags); err != nil {
@@ -78,7 +79,7 @@ func (r *Repo) FetchPendingByStatus(status string, limit int) ([]models.RentPost
 // FetchPassedWithoutAI 已通过硬规则、还没有 AI 结果的帖（AI 协程拉批）
 func (r *Repo) FetchPassedWithoutAI(limit int) ([]models.RentPost, error) {
 	rows, err := r.DB.Query(`SELECT p.id, p.source, p.external_id, p.url, p.title, p.content, p.author, p.author_url,
-	    p.published_at, p.collected_at, p.status, p.address_tags, p.raw
+	    p.published_at, p.collected_at, p.status, p.address_tags, p.raw, p.price, p.contact
 	    FROM posts p
 	    LEFT JOIN filter_results fr ON fr.post_id = p.id
 	    WHERE p.status = 'passed' AND (fr.ai_result IS NULL OR fr.ai_result = '')
@@ -93,7 +94,7 @@ func (r *Repo) FetchPassedWithoutAI(limit int) ([]models.RentPost, error) {
 		var published sql.NullTime
 		var tagsJSON string
 		if err := rows.Scan(&p.ID, &p.Source, &p.ExternalID, &p.URL, &p.Title, &p.Content,
-			&p.Author, &p.AuthorURL, &published, &p.CollectedAt, &p.Status, &tagsJSON, &p.Raw); err != nil {
+			&p.Author, &p.AuthorURL, &published, &p.CollectedAt, &p.Status, &tagsJSON, &p.Raw, &p.Price, &p.Contact); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(tagsJSON), &p.AddressTags); err != nil {
@@ -113,7 +114,7 @@ func (r *Repo) ListPublishedBetween(from, to time.Time, limit int) ([]models.Ren
 		limit = 2000
 	}
 	rows, err := r.DB.Query(`SELECT id, source, external_id, url, title, content, author, author_url,
-	    published_at, collected_at, status, address_tags, raw FROM posts
+	    published_at, collected_at, status, address_tags, raw, price, contact FROM posts
 	    WHERE published_at >= ? AND published_at <= ? ORDER BY id LIMIT ?`, from, to, limit)
 	if err != nil {
 		return nil, fmt.Errorf("按发布时间拉帖: %w", err)
@@ -125,7 +126,7 @@ func (r *Repo) ListPublishedBetween(from, to time.Time, limit int) ([]models.Ren
 		var published sql.NullTime
 		var tagsJSON string
 		if err := rows.Scan(&p.ID, &p.Source, &p.ExternalID, &p.URL, &p.Title, &p.Content,
-			&p.Author, &p.AuthorURL, &published, &p.CollectedAt, &p.Status, &tagsJSON, &p.Raw); err != nil {
+			&p.Author, &p.AuthorURL, &published, &p.CollectedAt, &p.Status, &tagsJSON, &p.Raw, &p.Price, &p.Contact); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(tagsJSON), &p.AddressTags); err != nil {
@@ -137,6 +138,28 @@ func (r *Repo) ListPublishedBetween(from, to time.Time, limit int) ([]models.Ren
 		posts = append(posts, p)
 	}
 	return posts, rows.Err()
+}
+
+// UpdatePostPrice 把 AI 抽出的月租金写回 posts；yuan<=0 不改（保留正则结果或暂无）
+func (r *Repo) UpdatePostPrice(postID int64, yuan int) error {
+	if yuan <= 0 {
+		return nil
+	}
+	if _, err := r.DB.Exec(`UPDATE posts SET price=? WHERE id=?`, models.FormatPriceYuan(yuan), postID); err != nil {
+		return fmt.Errorf("更新帖子价格: %w", err)
+	}
+	return nil
+}
+
+// UpdatePostContact AI 抽出联系方式后写回；空或暂无不改
+func (r *Repo) UpdatePostContact(postID int64, contact string) error {
+	if !models.HasContact(contact) {
+		return nil
+	}
+	if _, err := r.DB.Exec(`UPDATE posts SET contact=? WHERE id=?`, strings.TrimSpace(contact), postID); err != nil {
+		return fmt.Errorf("更新帖子联系方式: %w", err)
+	}
+	return nil
 }
 
 // MarkStatus 原子更新一批帖子的主状态（仅四态，Spec 09 §1）

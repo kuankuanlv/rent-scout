@@ -23,6 +23,17 @@ func TestParseAIResults(t *testing.T) {
 	}
 }
 
+func TestParseAIResultsWrappedVerdicts(t *testing.T) {
+	raw := `{"verdicts":[{"index":0,"passed":true,"price":"月租3800","reason":"ok"}]}`
+	results, err := ParseAIResults(raw, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if results[0].Price != 3800 || !results[0].Passed {
+		t.Errorf("解包 verdicts 失败: %+v", results[0])
+	}
+}
+
 // 解析容错：LLM 常带 ```json 代码块围栏，需剥离
 func TestParseAIResultsWithFence(t *testing.T) {
 	raw := "```json\n[{\"index\":0,\"passed\":true}]\n```"

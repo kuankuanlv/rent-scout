@@ -69,6 +69,8 @@ func (s *Store) migrate() error {
 		    published_at DATETIME,
 		    collected_at DATETIME NOT NULL,
 		    status       TEXT    NOT NULL DEFAULT 'collected',
+		    price        TEXT    NOT NULL DEFAULT '暂无',
+		    contact      TEXT    NOT NULL DEFAULT '暂无',
 		    raw          TEXT    NOT NULL DEFAULT '',
 		    UNIQUE(source, external_id)
 		)`,
@@ -156,6 +158,24 @@ func (s *Store) migrate() error {
 	if !handledExists {
 		if _, err := s.db.Exec(`ALTER TABLE posts ADD COLUMN handled_at DATETIME NULL`); err != nil {
 			return fmt.Errorf("追加 handled_at 列: %w", err)
+		}
+	}
+	priceExists, err := s.columnExists("posts", "price")
+	if err != nil {
+		return err
+	}
+	if !priceExists {
+		if _, err := s.db.Exec(`ALTER TABLE posts ADD COLUMN price TEXT NOT NULL DEFAULT '暂无'`); err != nil {
+			return fmt.Errorf("追加 price 列: %w", err)
+		}
+	}
+	contactExists, err := s.columnExists("posts", "contact")
+	if err != nil {
+		return err
+	}
+	if !contactExists {
+		if _, err := s.db.Exec(`ALTER TABLE posts ADD COLUMN contact TEXT NOT NULL DEFAULT '暂无'`); err != nil {
+			return fmt.Errorf("追加 contact 列: %w", err)
 		}
 	}
 	// 规则 type：旧 hard_* / hard_keyword+mode → whitelist|blacklist|ai_natural（Spec 09 §2.2）

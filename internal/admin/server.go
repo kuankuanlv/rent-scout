@@ -18,10 +18,11 @@ func changedRestartKeys(before, updates map[string]string) []string {
 
 // Server 管理面 HTTP 服务
 type Server struct {
-	db   *store.Store
-	rt   *config.HotConfig
-	ctrl SourceController
-	tmpl *template.Template
+	db             *store.Store
+	rt             *config.HotConfig
+	ctrl           SourceController
+	tmpl           *template.Template
+	onRulesChanged func()
 }
 
 // NewServer 创建管理面服务
@@ -42,6 +43,17 @@ func NewServer(db *store.Store, rt *config.HotConfig, ctrl SourceController) *Se
 	})
 	t = template.Must(t.ParseFS(templatesFS, "templates/*.html"))
 	return &Server{db: db, rt: rt, ctrl: ctrl, tmpl: t}
+}
+
+// SetOnRulesChanged 规则增删改后回调（规则 replay，不重置采集进度）
+func (s *Server) SetOnRulesChanged(fn func()) {
+	s.onRulesChanged = fn
+}
+
+func (s *Server) notifyRulesChanged() {
+	if s.onRulesChanged != nil {
+		s.onRulesChanged()
+	}
 }
 
 // Handler 路由装配

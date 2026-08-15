@@ -221,10 +221,9 @@ func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[stri
 				Items: sourceBase(models.SourceDouban.String(), "douban"),
 			},
 			{
-				Title: "按发布时间筛选", Hint: "豆瓣用这项当帖子时效：只抓这个时间窗里发布的帖。单位是天，相对现在：-10 = 10 天前，now = 此刻。支持小数（-1.5 = 一天半前）。微博才用「帖子时效(天)」。", Class: "bg-sky-50 border-sky-200", Group: "douban",
+				Title: "按发布时间筛选", Hint: "只抓这个时刻之后发布的帖，截止日期永远是现在（不单独配置，也不参与采集进度指纹）。单位是天，相对现在：-10 = 10 天前。支持小数。改这个值会重置该源采集进度。", Class: "bg-sky-50 border-sky-200", Group: "douban",
 				Items: []configField{
-					{Key: "collector.douban.range_from", Label: "起始（几天前）", Value: config.CanonicalDayOffset(get("collector.douban.range_from", app.Collector.Douban.RangeFrom)), Type: "text", Group: "douban", DayOffset: true, Hint: "只采集这个时刻之后发布的帖。必须为负数，例如 -10"},
-					{Key: "collector.douban.range_to", Label: "截止（几天后/前）", Value: config.CanonicalDayOffset(get("collector.douban.range_to", app.Collector.Douban.RangeTo)), Type: "text", Group: "douban", DayOffset: true, Hint: "只采集这个时刻之前发布的帖。now = 现在；可正可负"},
+					{Key: "collector.douban.range_from", Label: "起始（几天前）", Value: config.CanonicalDayOffset(get("collector.douban.range_from", app.Collector.Douban.RangeFrom)), Type: "text", Group: "douban", DayOffset: true, Wide: true, Hint: "只采集这个时刻之后发布的帖。必须为负数，例如 -10；改了会重置采集进度"},
 				},
 			},
 			{
@@ -331,14 +330,10 @@ func ParseSectionForm(form url.Values, section string, keepSecrets map[string]st
 			v = joinFormValues(values)
 		}
 		v = config.NormalizeValue(v)
-		if key == "collector.douban.range_from" || key == "collector.douban.range_to" {
+		if key == "collector.douban.range_from" {
 			v = config.CanonicalDayOffset(v)
 			if v == "" {
-				if key == "collector.douban.range_from" {
-					v = "-10"
-				} else {
-					v = "now"
-				}
+				v = "-10"
 			}
 		}
 		if key == "secret.filter.llm.api_style" {

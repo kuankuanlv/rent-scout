@@ -35,6 +35,7 @@ func postListFilterFromQuery(q url.Values) store.PostListFilter {
 		Status:  q.Get("status"),
 		Tag:     q.Get("tag"),
 		Handled: q.Get("handled"),
+		AI:      q.Get("ai"),
 	}
 }
 
@@ -42,7 +43,7 @@ func postListFilterFromQuery(q url.Values) store.PostListFilter {
 func adminPostsQuery(r *http.Request) url.Values {
 	src := r.URL.Query()
 	out := url.Values{}
-	for _, k := range []string{"q", "status", "tag", "handled", "token"} {
+	for _, k := range []string{"q", "status", "tag", "handled", "ai", "token"} {
 		if v := src.Get(k); v != "" {
 			out.Set(k, v)
 		}
@@ -70,6 +71,9 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "查询失败", http.StatusInternalServerError)
 		return
 	}
+	if err := s.db.AttachHitTags(posts); err != nil {
+		pkglog.Component(pkglog.Admin).Warn("命中标签加载失败", "err", err)
+	}
 	tagOpts, err := s.db.ListFilterTags()
 	if err != nil {
 		pkglog.Component(pkglog.Admin).Warn("标签下拉加载失败", "err", err)
@@ -84,6 +88,7 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
 		"Tag":         f.Tag,
 		"TagOptions":  tagOpts,
 		"Handled":     f.Handled,
+		"AI":          f.AI,
 		"FilterQuery": template.URL(fq), // 避免 action 里 = 被 html/template 编成 %3d
 	})); err != nil {
 		pkglog.Component(pkglog.Admin).Error("模板渲染失败", "err", err)
@@ -170,6 +175,9 @@ func (s *Server) handlePosts(w http.ResponseWriter, r *http.Request) {
 		pkglog.Component(pkglog.Admin).Error("帖子列表失败", "err", err)
 		http.Error(w, "查询失败", http.StatusInternalServerError)
 		return
+	}
+	if err := s.db.AttachHitTags(list); err != nil {
+		pkglog.Component(pkglog.Admin).Warn("命中标签加载失败", "err", err)
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(map[string]any{"posts": list})

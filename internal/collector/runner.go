@@ -154,9 +154,9 @@ func (r *Runner) runSource(ctx context.Context, src Source) {
 		log.Info("本轮结束，等待下一轮",
 			"耗时", time.Since(t0).Round(time.Millisecond).String(),
 			"新帖", res.NewPosts,
-			"phase", res.Phase,
 			"offset", emptyDash(res.Offset),
-			"watermark", formatWatermark(res.Watermark),
+			"seen_newest", formatWatermark(res.SeenNewest),
+			"pages", res.Pages,
 			"wait_s", int(wait.Seconds()),
 		)
 		if !waitRound(ctx, r.manual[src.Name()], wait) {
@@ -177,10 +177,10 @@ func waitRound(ctx context.Context, manual <-chan struct{}, wait time.Duration) 
 }
 
 type roundResult struct {
-	NewPosts  int
-	Phase     string
-	Offset    string
-	Watermark string
+	NewPosts   int
+	Offset     string
+	SeenNewest string
+	Pages      int
 }
 
 // RunOnce 跑一轮采集（测试与手动触发共用）
@@ -189,7 +189,9 @@ func (r *Runner) RunOnce(ctx context.Context, src Source, trigger chan<- struct{
 	return err
 }
 
-// runSourceOnce 单轮采集（可测：测试直接调用它）
+const maxPagesPerRound = 10
+
+// runSourceOnce 单轮采集：最多翻 10 页，进度写回 offset（page + seen_newest）
 func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- struct{}) (roundResult, error) {
 	log := pkglog.Component(pkglog.SourceCollector(src.Name()))
 	cfg := r.rt.Get()
@@ -199,41 +201,42 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 		return roundResult{}, err
 	}
 
-	// 源维度进度：backfill 跟 Page 翻页；incremental 跟 Watermark，每轮从列表头抓新帖
 	prog, _, err := r.store.GetProgress(src.Name())
 	if err != nil {
 		return roundResult{}, err
 	}
-	rangeKey := sourceRangeKey(src.Name(), cfg)
-	if prog.RangeKey != "" && prog.RangeKey != rangeKey {
-		log.Info("源配置或时间窗变了，重置 offset", "source", src.Name(), "old", prog.RangeKey, "new", rangeKey)
-		prog = store.SourceProgress{Phase: store.ProgressBackfill}
+	fp := sourceFingerprint(src.Name(), cfg)
+	if prog.Fingerprint != "" && prog.Fingerprint != fp {
+		log.Info("源配置变了，重置采集进度", "source", src.Name(), "old", prog.Fingerprint, "new", fp)
+		prog = store.SourceProgress{}
 	}
-	prog.RangeKey = rangeKey
-	if prog.Phase == "" {
-		prog.Phase = store.ProgressBackfill
-	}
+	prog.Fingerprint = fp
 
+	catchUp := prog.CatchingUp()
 	listCursor := ""
-	if prog.Phase == store.ProgressBackfill {
+	if !catchUp {
 		listCursor = prog.Page
 	}
 	log.Info("开始本轮采集",
-		"phase", prog.Phase,
 		"offset", emptyDash(listCursor),
-		"watermark", formatWatermark(prog.Watermark),
+		"seen_newest", formatWatermark(prog.SeenNewest),
 		"窗从", start.Format("01-02 15:04"),
 		"窗至", end.Format("01-02 15:04"),
 	)
 
 	var wm time.Time
-	if prog.Watermark != "" {
-		wm = parseWatermark(prog.Watermark)
+	if prog.SeenNewest != "" {
+		wm = parseWatermark(prog.SeenNewest)
 	}
 	persist := func() error {
+		prog.Fingerprint = fp
+		if !wm.IsZero() {
+			prog.SeenNewest = wm.Format(time.RFC3339Nano)
+		}
 		return r.store.SetProgress(src.Name(), prog)
 	}
 	newPosts := 0
+	pages := 0
 	firstHTTP := true
 	pace := func() {
 		if firstHTTP {
@@ -247,21 +250,24 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 			}
 		}
 	}
-	for {
+	out := func() roundResult {
+		return roundResult{NewPosts: newPosts, Offset: prog.Page, SeenNewest: prog.SeenNewest, Pages: pages}
+	}
+	for pages < maxPagesPerRound {
 		pace()
 		items, next, err := src.List(ctx, listCursor)
 		if err != nil {
 			if cookieDead(err) {
 				log.Error("cookie 失效，本轮结束", "err", err)
-				return roundResult{NewPosts: newPosts, Phase: prog.Phase, Offset: listCursor, Watermark: prog.Watermark}, nil
+				return out(), nil
 			}
 			return roundResult{}, fmt.Errorf("列表页: %w", err)
 		}
-		// 时间窗过滤：早于 from 或晚于 to 丢弃；倒序超 from 可停翻页
+		pages++
 		var fresh []ListItem
 		stop := false
 		for _, it := range items {
-			if prog.Phase == store.ProgressIncremental && !wm.IsZero() && !it.PublishedAt.After(wm) {
+			if catchUp && !wm.IsZero() && !it.PublishedAt.After(wm) {
 				stop = true
 				break
 			}
@@ -278,11 +284,9 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 			}
 		}
 		if len(fresh) == 0 {
-			// 空页/超窗页：本页无新帖。跟随源协议推进游标（douban 空组 next 指向下一组），
-			// 避免多组配置下卡死在空组（P2-9 审查发现）；next=="" 表示已到末尾
 			if stop {
 				if ng := skipGroup(src, listCursor); ng != "" {
-					if prog.Phase == store.ProgressBackfill {
+					if !catchUp {
 						prog.Page = ng
 						if err := persist(); err != nil {
 							return roundResult{}, err
@@ -308,7 +312,7 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 				}
 				break
 			}
-			if prog.Phase == store.ProgressBackfill {
+			if !catchUp {
 				prog.Page = next
 				if err := persist(); err != nil {
 					return roundResult{}, err
@@ -318,7 +322,6 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 			listCursor = next
 			continue
 		}
-		// 列表页先行批量查重：已存在的零详情页请求（调整规格 E）
 		ids := make([]string, 0, len(fresh))
 		for _, it := range fresh {
 			ids = append(ids, it.ExternalID)
@@ -329,19 +332,19 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 		}
 		for _, it := range fresh {
 			if existing[it.ExternalID] {
-				continue // 已抓过：跳过详情页
+				continue
 			}
 			pace()
 			post, err := src.Detail(ctx, it)
 			if err != nil {
 				if cookieDead(err) {
 					log.Error("cookie 失效，本轮结束", "id", it.ExternalID, "err", err)
-					return roundResult{NewPosts: newPosts, Phase: prog.Phase, Offset: listCursor, Watermark: prog.Watermark}, nil
+					_ = persist()
+					return out(), nil
 				}
 				log.Warn("详情拉取失败已跳过", "id", it.ExternalID, "err", err)
 				continue
 			}
-			// P2-7 审查：douban Detail 未设 CollectedAt，而 posts 表 collected_at NOT NULL
 			if post.CollectedAt.IsZero() {
 				post.CollectedAt = time.Now()
 			}
@@ -353,13 +356,10 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 				newPosts++
 			}
 		}
-		if !wm.IsZero() {
-			prog.Watermark = wm.Format(time.RFC3339Nano)
-		}
 
 		if stop {
 			if ng := skipGroup(src, listCursor); ng != "" {
-				if prog.Phase == store.ProgressBackfill {
+				if !catchUp {
 					prog.Page = ng
 					if err := persist(); err != nil {
 						return roundResult{}, err
@@ -386,30 +386,28 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 			break
 		}
 		listCursor = next
-		if prog.Phase == store.ProgressBackfill {
+		if !catchUp {
 			prog.Page = next
 		}
 		if err := persist(); err != nil {
 			return roundResult{}, err
 		}
 	}
-	// 新帖触发下游（filter）信号；空批不发（规格 2.3 协议）
 	if newPosts > 0 && trigger != nil {
 		select {
 		case trigger <- struct{}{}:
 		default:
 		}
 	}
-	return roundResult{NewPosts: newPosts, Phase: prog.Phase, Offset: prog.Page, Watermark: prog.Watermark}, nil
+	return out(), nil
 }
 
 func sealProgress(p store.SourceProgress, wm, end time.Time) store.SourceProgress {
-	p.Phase = store.ProgressIncremental
 	p.Page = ""
 	if !wm.IsZero() {
-		p.Watermark = wm.Format(time.RFC3339Nano)
-	} else if p.Watermark == "" {
-		p.Watermark = end.Format(time.RFC3339Nano)
+		p.SeenNewest = wm.Format(time.RFC3339Nano)
+	} else if p.SeenNewest == "" {
+		p.SeenNewest = end.Format(time.RFC3339Nano)
 	}
 	return p
 }
@@ -422,20 +420,20 @@ func parseWatermark(s string) time.Time {
 	return t
 }
 
-func sourceRangeKey(name string, cfg *config.AppConfig) string {
+func sourceFingerprint(name string, cfg *config.AppConfig) string {
 	if cfg == nil {
 		return name
 	}
 	if name == models.SourceDouban.String() {
-		return cfg.Collector.Douban.RangeFrom + "|" + cfg.Collector.Douban.RangeTo + "|" + strings.Join(cfg.Collector.Douban.Groups, ",")
+		return name + "|" + cfg.Collector.Douban.RangeFrom + "|" + strings.Join(cfg.Collector.Douban.Groups, ",")
 	}
-	return name + "|max_age=" + strconv.Itoa(cfg.Collector.MaxAgeDays)
+	return name + "|from=" + strconv.Itoa(cfg.Collector.MaxAgeDays)
 }
 
-// sourceTimeWindow 豆瓣用 range_from/to；其它源仍用 MaxAgeDays → [now-N天, now]
+// sourceTimeWindow 起点用相对天数（如 -10）；终点永远是 now，不进指纹
 func sourceTimeWindow(name string, cfg *config.AppConfig, now time.Time) (time.Time, time.Time, error) {
 	if name == models.SourceDouban.String() {
-		start, end, err := config.ResolveTimeRange(cfg.Collector.Douban.RangeFrom, cfg.Collector.Douban.RangeTo, now)
+		start, end, err := config.ResolveTimeRange(cfg.Collector.Douban.RangeFrom, "now", now)
 		if err != nil {
 			return time.Time{}, time.Time{}, fmt.Errorf("豆瓣拉取范围: %w", err)
 		}

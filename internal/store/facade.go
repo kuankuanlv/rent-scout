@@ -3,6 +3,7 @@ package store
 import (
 	"rent-scout/internal/models"
 	"rent-scout/internal/store/posts"
+	"time"
 )
 
 // 导出类型别名：调用方仍可用 store.PostListFilter
@@ -16,6 +17,14 @@ func (s *Store) InsertPost(p models.RentPost) (bool, error) {
 
 func (s *Store) FetchPendingByStatus(status string, limit int) ([]models.RentPost, error) {
 	return s.posts.FetchPendingByStatus(status, limit)
+}
+
+func (s *Store) FetchPassedWithoutAI(limit int) ([]models.RentPost, error) {
+	return s.posts.FetchPassedWithoutAI(limit)
+}
+
+func (s *Store) ListPublishedBetween(from, to time.Time, limit int) ([]models.RentPost, error) {
+	return s.posts.ListPublishedBetween(from, to, limit)
 }
 
 func (s *Store) MarkStatus(ids []int64, status string) error {
@@ -88,8 +97,8 @@ func (s *Store) ResetNotification(postID int64, channel string) (bool, error) {
 	return s.notify.ResetNotification(postID, channel)
 }
 
-func (s *Store) FetchNotifyBatch(channels []string, limit int) ([]models.RentPost, error) {
-	return s.notify.FetchNotifyBatch(channels, limit)
+func (s *Store) FetchNotifyBatch(channels []string, limit int, requireAIPassed bool) ([]models.RentPost, error) {
+	return s.notify.FetchNotifyBatch(channels, limit, requireAIPassed)
 }
 
 func (s *Store) NotificationStatuses(postIDs []int64, channels []string) (map[int64]map[string]string, error) {

@@ -109,8 +109,8 @@ func TestRunnerCollectsNewPosts(t *testing.T) {
 	if err != nil || !ok {
 		t.Errorf("进度未保存: ok=%v err=%v", ok, err)
 	}
-	if prog.Phase != store.ProgressIncremental || prog.Watermark == "" {
-		t.Errorf("进度 = %+v, want incremental 且带 watermark", prog)
+	if !prog.CatchingUp() || prog.SeenNewest == "" {
+		t.Errorf("进度 = %+v, want 已追新且带 seen_newest", prog)
 	}
 }
 
@@ -160,8 +160,8 @@ func TestRunnerAdvancesPastEmptyPage(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("进度未保存: ok=%v err=%v", ok, err)
 	}
-	if prog.Page != "1:0" || prog.Phase != store.ProgressBackfill {
-		t.Errorf("进度 = %+v, want backfill page=1:0", prog)
+	if prog.Page != "1:0" || prog.CatchingUp() {
+		t.Errorf("进度 = %+v, want page=1:0 未追新", prog)
 	}
 	// 空页无新帖 → 不调 Detail
 	if src.detailCalls != 0 {
@@ -301,8 +301,8 @@ func TestRunnerIncrementalSkipsOldPages(t *testing.T) {
 		t.Fatalf("回填 List = %d, want 2 页", src.listCalls.Load())
 	}
 	prog, ok, err := st.GetProgress("fake")
-	if err != nil || !ok || prog.Phase != store.ProgressIncremental {
-		t.Fatalf("回填后进度 = %+v ok=%v err=%v, want incremental", prog, ok, err)
+	if err != nil || !ok || !prog.CatchingUp() {
+		t.Fatalf("回填后进度 = %+v ok=%v err=%v, want 已追新", prog, ok, err)
 	}
 
 	src.cursors = nil
@@ -333,7 +333,7 @@ func TestRunnerResetsWhenRangeChanges(t *testing.T) {
 	r, st := testRunner(t)
 	defer st.Close()
 	if err := st.SetProgress("fake", store.SourceProgress{
-		Phase: store.ProgressBackfill, Page: "1:0", RangeKey: "old-range",
+		Page: "1:0", Fingerprint: "old-range",
 	}); err != nil {
 		t.Fatal(err)
 	}

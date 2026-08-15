@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"rent-scout/internal/config"
 	"rent-scout/internal/models"
@@ -41,6 +42,12 @@ func TestAdminPage(t *testing.T) {
 			if !strings.Contains(body, title) {
 				t.Errorf("页面缺标题 %q", title)
 			}
+		}
+		if !strings.Contains(body, "爬取过滤规则") || !strings.Contains(body, "/admin/config?tab=rules") {
+			t.Errorf("全览应有跳转规则页的按钮")
+		}
+		if !strings.Contains(body, ">标签<") {
+			t.Errorf("列表应有标签列")
 		}
 	}
 
@@ -77,6 +84,16 @@ func TestAdminPageFilters(t *testing.T) {
 	if _, err := s.InsertPost(models.RentPost{Source: "douban", ExternalID: "chip2", Title: "其它帖", Status: models.PostStatusPassed}); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := s.InsertPost(models.RentPost{Source: "douban", ExternalID: "blk1", Title: "中介房源", Status: models.PostStatusRejected}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveFilterResult(models.FilterResult{
+		PostID: postID(t, s, "blk1"), Status: models.PostStatusRejected, Stage: models.StageHardRule,
+		RejectedBy: "黑名单命中:中介", DecidedAt: time.Now(),
+		HardRules: []models.RuleHit{{Reason: "中介"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := s.CreateRule(models.Rule{Name: "地点", Type: models.RuleTypeWhitelist, Value: "朝阳门", Enabled: true, Priority: 1}); err != nil {
 		t.Fatal(err)
 	}
@@ -97,6 +114,12 @@ func TestAdminPageFilters(t *testing.T) {
 	}
 	if !strings.Contains(body, "望京") || !strings.Contains(body, "14号线") {
 		t.Errorf("页面缺 AddressTags chips")
+	}
+
+	if code, body := get("/admin?status=rejected"); code != http.StatusOK {
+		t.Fatalf("rejected 列表 status = %d", code)
+	} else if !strings.Contains(body, "中介") || !strings.Contains(body, "bg-red-50") {
+		t.Errorf("拒绝帖应展示黑名单命中词: %s", body)
 	}
 	if !strings.Contains(body, `name="handled"`) || !strings.Contains(body, "/admin/handled") {
 		t.Errorf("页面缺已查看表单")

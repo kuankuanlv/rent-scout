@@ -94,6 +94,14 @@ func (s *Store) CountEnabledRules() (int, error) {
 	return n, nil
 }
 
+func (s *Store) CountEnabledAIRules() (int, error) {
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM rules WHERE enabled = 1 AND type = ?`, models.RuleTypeAINatural).Scan(&n); err != nil {
+		return 0, fmt.Errorf("统计启用 AI 规则: %w", err)
+	}
+	return n, nil
+}
+
 // EnsureDefaultRule 启用规则数为 0 时写入默认黑名单和白名单
 func (s *Store) EnsureDefaultRule() error {
 	n, err := s.CountEnabledRules()

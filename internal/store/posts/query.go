@@ -16,6 +16,7 @@ type PostListFilter struct {
 	Status  string
 	Tag     string // address_tags 文本包含
 	Handled string // "0"=NULL，"1"=非空，其它/空=不限
+	AI      string // reviewed / unreviewed
 }
 
 // ListPosts 帖子列表（/api/posts，规格 7.1 + §6）；id 倒序分页
@@ -35,12 +36,18 @@ func (r *Repo) ListPosts(f PostListFilter, limit, offset int) ([]models.RentPost
 		where = append(where, "address_tags LIKE ?")
 		args = append(args, "%"+f.Tag+"%")
 	}
-	switch f.Handled {
-	case "0":
-		where = append(where, "handled_at IS NULL")
-	case "1":
-		where = append(where, "handled_at IS NOT NULL")
-	}
+		switch f.Handled {
+		case "0":
+			where = append(where, "handled_at IS NULL")
+		case "1":
+			where = append(where, "handled_at IS NOT NULL")
+		}
+		switch f.AI {
+		case "reviewed":
+			where = append(where, `EXISTS (SELECT 1 FROM filter_results fr WHERE fr.post_id = posts.id AND fr.ai_result != '')`)
+		case "unreviewed":
+			where = append(where, `NOT EXISTS (SELECT 1 FROM filter_results fr WHERE fr.post_id = posts.id AND fr.ai_result != '')`)
+		}
 	sqlStr := `SELECT id, source, external_id, url, title, content, author, author_url,
 	    published_at, collected_at, status, address_tags, handled_at, raw FROM posts`
 	if len(where) > 0 {

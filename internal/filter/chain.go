@@ -11,7 +11,7 @@ import (
 // AIEvaluator AI 规则链评估接口（批量）：llm 客户端注入，便于测试替换
 type AIEvaluator interface {
 	// EvaluateBatch 批量判定；返回每帖结果（index 与输入对齐）。
-	// 返回 error = 整批瞬时失败（调用方保持 pending 下轮重试，规格 5.6）
+	// 返回 error = 整批瞬时失败（调用方不写 ai_result，下轮再捞）
 	EvaluateBatch(ctx context.Context, posts []models.RentPost, aiRules []models.Rule) (map[int64]*models.AIResult, error)
 }
 
@@ -21,27 +21,23 @@ type RuleChain struct {
 	ai AIEvaluator // nil = AI 未启用
 }
 
-// NewRuleChain 创建规则链；ai 为 nil 时只走硬编码（未定案默认放行）
+// NewRuleChain 创建规则链；ai 为 nil 时 AI 协程空捞，硬规则仍独立定案
 func NewRuleChain(ai AIEvaluator) *RuleChain {
 	return &RuleChain{ai: ai}
 }
 
-// HasAI 是否有 AI 链（Consumer 判断未定案帖子走 AI 批还是默认放行）
+// HasAI 是否注入了 LLM 客户端（仅 AI 协程用来决定能不能审）
 func (c *RuleChain) HasAI() bool {
 	return c.ai != nil
 }
 
-// EvaluateHard 硬编码链（Spec 09 §2.3）：白名单短路 → 黑名单拒绝 → 未定案交 AI。
-// 返回结果 + 白名单命中的地点标签（Consumer 负责写库 posts.address_tags）+ 是否定案。
-// decided=false = 未定案，需 AI 批或默认放行
-func (c *RuleChain) EvaluateHard(ctx context.Context, post models.RentPost, rules []models.Rule) (models.FilterResult, []string, bool, error) {
+// EvaluateHard 硬编码链：先黑后白，总会定案。
+// 返回结果 + 白名单地点标签（Consumer 写 posts.address_tags）。
+func (c *RuleChain) EvaluateHard(ctx context.Context, post models.RentPost, rules []models.Rule) (models.FilterResult, []string, error) {
 	now := time.Now()
 	v, tags, hits, rejectedBy, err := EvaluateHard(post, rules)
 	if err != nil {
-		return models.FilterResult{}, nil, false, err
-	}
-	if !v.Decided {
-		return models.FilterResult{}, nil, false, nil
+		return models.FilterResult{}, nil, err
 	}
 	status := models.PostStatusPassed
 	if !v.Passed {
@@ -50,7 +46,7 @@ func (c *RuleChain) EvaluateHard(ctx context.Context, post models.RentPost, rule
 	return models.FilterResult{
 		PostID: post.ID, Status: status, Stage: models.StageHardRule,
 		RejectedBy: rejectedBy, DecidedAt: now, HardRules: hits,
-	}, tags, true, nil
+	}, tags, nil
 }
 
 // EvaluateAIBatch 批量 AI 判定（规格 5.4 + 调整 C）：未定案的帖子一次 LLM 调用。

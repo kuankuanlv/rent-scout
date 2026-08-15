@@ -58,7 +58,7 @@ func TestRulesPage(t *testing.T) {
 		t.Fatalf("GET /admin/config?tab=rules status = %d, want 200", rec2.Code)
 	}
 	body := rec2.Body.String()
-	for _, want := range []string{"规则管理", "黑中介", "地铁近", "白名单 → 黑名单 → AI", "「或」", "Tag",
+	for _, want := range []string{"规则管理", "黑中介", "地铁近", "白名单 → 黑名单 → AI", "「或」", "留存规则", "地点标签",
 		`value="whitelist"`, `value="blacklist"`, `value="ai_natural"`, "白名单", "黑名单", "AI审核"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("页面缺 %q", want)

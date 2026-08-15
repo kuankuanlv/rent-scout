@@ -2,13 +2,12 @@ package models
 
 import "time"
 
-// 帖子主状态：仅四态 collected|pending|passed|rejected（Spec 09 §1）
+// 帖子主状态：仅三态 collected|passed|rejected
 // 渠道是否发出 → notifications；有用/无用 → feedbacks；运营已处理 → handled_at；禁止写 sent/acked。
 const (
 	PostStatusCollected = "collected" // 已采集入库，待硬规则筛选
-	PostStatusPending   = "pending"   // 硬规则未定案，待 AI 审核 / AI 瞬时失败待重试
-	PostStatusPassed    = "passed"    // 筛选通过，待通知
-	PostStatusRejected  = "rejected"  // 筛选拒绝
+	PostStatusPassed    = "passed"    // 硬规则通过（白名单命中）
+	PostStatusRejected  = "rejected"  // 硬规则拒绝（黑名单命中或未命中白名单）
 )
 
 // 筛选阶段（FilterResult.Stage）
@@ -50,8 +49,10 @@ type RentPost struct {
 	AuthorURL   string
 	PublishedAt time.Time  // 源发布时间
 	CollectedAt time.Time  // 采集时间
-	Status      string     // 主状态：仅 collected|pending|passed|rejected
+	Status      string     // 主状态：仅 collected|passed|rejected
 	AddressTags []string   `json:"addressTags"` // 地址标签（调整规格 2.3）：白名单命中地点，多值；分组主键 = [0]
+	HitTags     []HitTag   `json:"hitTags,omitempty"` // 全览展示用，不落 posts 表
+	AIReason    string     `json:"aiReason,omitempty"` // 全览展示 AI 原因，不落 posts 表
 	HandledAt   *time.Time // 已处理时间；nil=未处理（独立于 useful/useless 反馈）
 	Raw         string     // 源适配器完整原始输出（JSON，供重放/排查）
 }
@@ -59,6 +60,12 @@ type RentPost struct {
 // DedupKey 去重键：源 + 源内 ID（posts 唯一索引同构）
 func (p RentPost) DedupKey() string {
 	return p.Source + ":" + p.ExternalID
+}
+
+// HitTag 全览「标签」列：白名单地点、黑名单拦截词、或 AI 摘要
+type HitTag struct {
+	Text string `json:"text"`
+	Kind string `json:"kind"` // whitelist / blacklist / ai
 }
 
 // RuleHit 硬编码规则命中详情（规格 3.2）
@@ -83,7 +90,7 @@ type AIResult struct {
 // FilterResult 筛选结果（规格 3.2，1:1 posts）
 type FilterResult struct {
 	PostID     int64
-	Status     string // pending / passed / rejected
+	Status     string // passed / rejected
 	Stage      string // 拒绝阶段：hard_rule / ai_rule
 	RejectedBy string // 拒绝原因摘要（人类可读）
 	DecidedAt  time.Time

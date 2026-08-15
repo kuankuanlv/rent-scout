@@ -1,0 +1,35 @@
+{{define "config_history"}}
+<!DOCTYPE html>
+<html lang="zh">
+<head><title>历史配置 - rent-scout</title>{{template "head" .}}</head>
+<body class="bg-gradient-to-br from-slate-50 via-white to-brand-50 min-h-screen text-gray-800">
+{{template "nav" .}}
+<main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
+  <div class="mb-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 px-4 py-3 text-sm">
+    只读快照 · 变更 #{{.Entry.ID}}（{{.Entry.Key}}）落地后的全量配置 · {{.Entry.CreatedAt.Format "2006-01-02 15:04:05"}}
+    <span class="block text-xs text-amber-800/80 mt-1">由当前配置倒放后续变更还原，不是当时存的整包快照。敏感项已打码。</span>
+  </div>
+  <div class="mb-4">
+    <a href="/admin/config?tab=general{{if .Token}}&token={{.Token}}{{end}}" class="text-sm text-brand-600 hover:underline">← 返回变更历史</a>
+  </div>
+  {{range .Sections}}
+  <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 sm:p-6 mb-6">
+    <h2 class="text-lg font-bold text-gray-900 mb-1">{{.Title}}</h2>
+    <p class="text-sm text-gray-500 mb-4">{{.Desc}}</p>
+    <div class="space-y-4">
+      {{range .Blocks}}
+      <div class="rounded-xl border p-4 {{.Class}}">
+        {{if .Title}}<h3 class="text-sm font-semibold text-gray-800">{{.Title}}</h3>{{end}}
+        {{if .Hint}}<p class="text-xs text-gray-500 mt-0.5 mb-3">{{.Hint}}</p>{{else}}<div class="mb-3"></div>{{end}}
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {{range .Items}}{{template "config_field" .}}{{end}}
+        </div>
+      </div>
+      {{end}}
+    </div>
+  </div>
+  {{end}}
+</main>
+<footer class="text-center text-xs text-gray-400 py-6">rent-scout</footer>
+</body></html>
+{{end}}

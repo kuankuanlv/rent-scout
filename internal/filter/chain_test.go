@@ -13,12 +13,12 @@ func TestRuleChainWhitelistDecided(t *testing.T) {
 	chain := NewRuleChain(nil)
 	post := models.RentPost{ID: 1, Title: "望京整租", Content: "近14号线", CollectedAt: time.Now()}
 	rules := []models.Rule{{ID: 1, Type: models.RuleTypeWhitelist, Value: "望京", Priority: 10}}
-	res, tags, decided, err := chain.EvaluateHard(context.Background(), post, rules)
+	res, tags, err := chain.EvaluateHard(context.Background(), post, rules)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !decided || res.Status != models.PostStatusPassed || res.Stage != models.StageHardRule {
-		t.Errorf("白名单应定案 passed: decided=%v %+v", decided, res)
+	if res.Status != models.PostStatusPassed || res.Stage != models.StageHardRule {
+		t.Errorf("白名单应 passed: %+v", res)
 	}
 	if len(tags) != 1 || tags[0] != "望京" {
 		t.Errorf("tags = %v, want [望京]（Consumer 负责写库）", tags)
@@ -29,16 +29,16 @@ func TestRuleChainWhitelistDecided(t *testing.T) {
 }
 
 // 硬编码链：未命中任何规则 → 未定案（decided=false），交由 AI 批/默认放行
-func TestRuleChainUndecided(t *testing.T) {
+func TestRuleChainMissRejects(t *testing.T) {
 	chain := NewRuleChain(nil)
 	post := models.RentPost{ID: 2, Title: "普通帖子", Content: "x", CollectedAt: time.Now()}
 	rules := []models.Rule{{ID: 1, Type: models.RuleTypeBlacklist, Value: "中介", Priority: 10}}
-	res, _, decided, err := chain.EvaluateHard(context.Background(), post, rules)
+	res, _, err := chain.EvaluateHard(context.Background(), post, rules)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decided {
-		t.Errorf("黑名单未命中不应定案: %+v", res)
+	if res.Status != models.PostStatusRejected {
+		t.Errorf("未命中应拒绝: %+v", res)
 	}
 }
 

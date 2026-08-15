@@ -56,8 +56,6 @@ func statusLabel(s string) string {
 	switch s {
 	case "collected":
 		return "已采集"
-	case "pending":
-		return "待审"
 	case "passed":
 		return "通过"
 	case "rejected":

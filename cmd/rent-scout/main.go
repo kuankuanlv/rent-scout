@@ -92,7 +92,6 @@ func main() {
 	defer stopReload()
 
 	trigger := make(chan struct{}, 64)
-	notifyTrigger := make(chan struct{}, 64)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -103,8 +102,7 @@ func main() {
 	}
 	go cookie.NewSyncer(rt, db, cookie.DefaultSyncInterval).Run(ctx)
 
-	aiTrigger := make(chan struct{}, 64)
-	filterPipe, aiPipe := newFilterPipelines(rt, db, notifyTrigger, aiTrigger)
+	filterPipe, aiPipe, filterC := newFilterPipelines(rt, db)
 	if filterPipe != nil {
 		go func() {
 			for {
@@ -119,34 +117,22 @@ func main() {
 		go filterPipe.Run(ctx)
 	}
 	if aiPipe != nil {
-		go func() {
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-aiTrigger:
-					aiPipe.Signal()
-				}
-			}
-		}()
 		go aiPipe.Run(ctx)
 	}
 
-	if nc := newNotifierConsumer(rt, db, notifyTrigger); nc != nil {
-		go func() {
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-notifyTrigger:
-					nc.Signal()
-				}
-			}
-		}()
+	if nc := newNotifierConsumer(rt, db); nc != nil {
 		go nc.Run(ctx)
 	}
 
 	srv := admin.NewServer(db, rt, runner)
+	replayCh := make(chan struct{}, 1)
+	srv.SetOnRulesChanged(func() {
+		select {
+		case replayCh <- struct{}{}:
+		default:
+		}
+	})
+	go runRuleReplay(ctx, rt, db, filterC, replayCh)
 	httpSrv := &http.Server{Addr: cfg.Server.Addr, Handler: srv.Handler()}
 	go func() {
 		boot.Info("HTTP 开始监听", "addr", cfg.Server.Addr)
@@ -199,8 +185,8 @@ func newCollectorRunner(rt *config.HotConfig, db *store.Store, trigger chan<- st
 	return collector.NewRunner(rt, db, sources, trigger)
 }
 
-func newFilterPipelines(rt *config.HotConfig, db *store.Store, notifyTrigger, aiTrigger chan<- struct{}) (
-	*pipeline.Consumer[models.RentPost], *pipeline.Consumer[models.RentPost],
+func newFilterPipelines(rt *config.HotConfig, db *store.Store) (
+	*pipeline.Consumer[models.RentPost], *pipeline.Consumer[models.RentPost], *filter.Consumer,
 ) {
 	log := pkglog.Component(pkglog.Main)
 	cfg := rt.Get()
@@ -226,8 +212,7 @@ func newFilterPipelines(rt *config.HotConfig, db *store.Store, notifyTrigger, ai
 		log.Warn("筛选 AI 已关闭")
 	}
 	chain := filter.NewRuleChain(ai)
-	fc := filter.NewConsumerWithOptions(chain, db, notifyTrigger, filter.DefaultTrimLimit,
-		filter.ConsumerOptions{AIBatchSize: cfg.Filter.AIBatchSize, AITrigger: aiTrigger})
+	fc := filter.NewConsumerWithOptions(chain, db, filter.ConsumerOptions{AIBatchSize: cfg.Filter.AIBatchSize})
 	filterPipe := pipeline.New(
 		fc.FetchCollected,
 		fc.ProcessHard,
@@ -238,7 +223,7 @@ func newFilterPipelines(rt *config.HotConfig, db *store.Store, notifyTrigger, ai
 		},
 	)
 	aiPipe := pipeline.New(
-		fc.FetchPending,
+		fc.FetchAwaitingAI,
 		fc.ProcessAI,
 		pipeline.Options{
 			BatchSize: cfg.Filter.AIBatchSize,
@@ -247,10 +232,39 @@ func newFilterPipelines(rt *config.HotConfig, db *store.Store, notifyTrigger, ai
 			WaitFull:  true,
 		},
 	)
-	return filterPipe, aiPipe
+	return filterPipe, aiPipe, fc
 }
 
-func newNotifierConsumer(rt *config.HotConfig, db *store.Store, notifyTrigger <-chan struct{}) *pipeline.Consumer[models.RentPost] {
+func runRuleReplay(ctx context.Context, rt *config.HotConfig, db *store.Store, c *filter.Consumer, ch <-chan struct{}) {
+	log := pkglog.Component(pkglog.Filter)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ch:
+			if c == nil {
+				continue
+			}
+			cfg := rt.Get()
+			now := time.Now()
+			start, end, err := config.ResolveTimeRange(cfg.Collector.Douban.RangeFrom, "now", now)
+			if err != nil {
+				log.Warn("规则 replay 时间窗无效", "err", err)
+				continue
+			}
+			posts, err := db.ListPublishedBetween(start, end, 2000)
+			if err != nil {
+				log.Error("规则 replay 拉帖失败", "err", err)
+				continue
+			}
+			if err := c.ReplayHard(ctx, posts); err != nil {
+				log.Error("规则 replay 失败", "err", err)
+			}
+		}
+	}
+}
+
+func newNotifierConsumer(rt *config.HotConfig, db *store.Store) *pipeline.Consumer[models.RentPost] {
 	log := pkglog.Component(pkglog.Main)
 	cfg := rt.Get()
 	env := rt.Secrets()
@@ -294,7 +308,17 @@ func newNotifierConsumer(rt *config.HotConfig, db *store.Store, notifyTrigger <-
 		chs...)
 	return pipeline.New(
 		func(ctx context.Context, limit int) ([]models.RentPost, error) {
-			return db.FetchNotifyBatch(channelNames(chs), limit)
+			requireAI := false
+			cfg := rt.Get()
+			env := rt.Secrets()
+			if cfg.Filter.AIEnabled != nil && *cfg.Filter.AIEnabled && env.Filter.LLM.APIKey != "" {
+				n, err := db.CountEnabledAIRules()
+				if err != nil {
+					return nil, err
+				}
+				requireAI = n > 0
+			}
+			return db.FetchNotifyBatch(channelNames(chs), limit, requireAI)
 		},
 		n.ProcessBatch,
 		pipeline.Options{

@@ -24,7 +24,7 @@ func TestFetchNotifyBatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	channels := []string{"feishu", "wecom"}
-	batch, err := s.FetchNotifyBatch(channels, 10)
+	batch, err := s.FetchNotifyBatch(channels, 10, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestFetchNotifyBatchTerminalExcluded(t *testing.T) {
 	if err := s.MarkNotificationFailed(p3.ID, "wecom", "网络超时", 1); err != nil {
 		t.Fatal(err)
 	}
-	batch, err := s.FetchNotifyBatch([]string{"feishu", "wecom"}, 10)
+	batch, err := s.FetchNotifyBatch([]string{"feishu", "wecom"}, 10, false)
 	if err != nil {
 		t.Fatal(err)
 	}

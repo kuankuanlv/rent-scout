@@ -43,3 +43,23 @@ type LLMProbe interface {
 	ListModels(ctx context.Context, baseURL, apiKey, model string) ([]string, error)
 	Chat(ctx context.Context, baseURL, apiKey, model, system, user string) (string, error)
 }
+
+// NotifyProbeItem 试发用的通知条目（不引用 notifier 包）
+type NotifyProbeItem struct {
+	PostID             int64
+	Title              string
+	URL                string
+	Price              int
+	Contact            string
+	Commuting          string
+	Reason             string
+	AddressTag         string
+	FeedbackURL        string
+	FeedbackUselessURL string
+	HandledURL         string
+}
+
+// NotifyProbe 管理台飞书/PushPlus 试发
+type NotifyProbe interface {
+	Send(ctx context.Context, channel, webhook, token, topic string, items []NotifyProbeItem) error
+}

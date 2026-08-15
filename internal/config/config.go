@@ -15,7 +15,8 @@ type AppConfig struct {
 
 // ServerConfig HTTP 监听
 type ServerConfig struct {
-	Addr string
+	Addr       string // 监听，如 :7777
+	PublicBase string // 对外根地址，如 http://192.168.1.8:7777；空则发通知时自动用局域网 IP
 }
 
 // 控制台内存日志条数：默认 1000；探测 raw 单条可到数 KB，调太大占内存

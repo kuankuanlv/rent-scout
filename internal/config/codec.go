@@ -47,6 +47,7 @@ func AppToKV(cfg *AppConfig) map[string]string {
 	}
 	kv := map[string]string{
 		"server.addr":                  cfg.Server.Addr,
+		"server.public_base":           cfg.Server.PublicBase,
 		"log.level":                    cfg.Log.Level,
 		"log.format":                   cfg.Log.Format,
 		"log.path":                     cfg.Log.Path,
@@ -112,7 +113,7 @@ func SecretsToKV(sec *Secrets) map[string]string {
 // SectionKeys 各配置分区包含的 key（分块 submit 用）
 var SectionKeys = map[string][]string{
 	"general": {
-		"server.addr", "log.level", "log.format", "log.path", "log.memory_lines",
+		"server.addr", "server.public_base", "log.level", "log.format", "log.path", "log.memory_lines",
 	},
 	"collector": {
 		"collector.sources", "collector.interval", "collector.jitter_ratio", "collector.max_age_days",
@@ -148,6 +149,7 @@ func KVToApp(kv map[string]string) *AppConfig {
 	if v := kv["server.addr"]; v != "" {
 		cfg.Server.Addr = v
 	}
+	cfg.Server.PublicBase = kv["server.public_base"]
 	if v := kv["log.level"]; v != "" {
 		cfg.Log.Level = v
 	}

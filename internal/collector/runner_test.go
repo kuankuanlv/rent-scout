@@ -368,3 +368,15 @@ func TestFormatPageCursor(t *testing.T) {
 		t.Errorf("同组翻页不应打串行日志, got %s", got)
 	}
 }
+
+func TestSourceEnabledFollowsConfig(t *testing.T) {
+	r, st := testRunner(t)
+	defer st.Close()
+	if !r.SourceEnabled("fake") {
+		t.Fatal("配置含 fake 时应启用")
+	}
+	r.rt.Get().Collector.Sources = nil
+	if r.SourceEnabled("fake") {
+		t.Fatal("配置去掉源后应视为未启用")
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"rent-scout/internal/collector"
+	"rent-scout/internal/config"
 )
 
 // 豆瓣讨论列表页 fixture（参照参考仓库 service_test.go 结构）
@@ -200,5 +201,21 @@ func TestTopicIDFromURLWithQuery(t *testing.T) {
 	id := topicIDFromURL("https://www.douban.com/group/topic/496325305/?_spm_id=MTk3MDc1NDk3")
 	if id != "496325305" {
 		t.Errorf("topicIDFromURL = %q, want 496325305", id)
+	}
+}
+
+func TestGroupsFollowHotConfig(t *testing.T) {
+	app := &config.AppConfig{Collector: config.CollectorConfig{Douban: config.DoubanConfig{Groups: []string{"http://g/a"}}}}
+	rt := config.NewHotConfigWithSnapshot(app, nil)
+	d, err := NewDouban(DoubanOptions{Config: rt})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := d.groups(); len(got) != 1 || got[0] != "http://g/a" {
+		t.Fatalf("got %v", got)
+	}
+	app.Collector.Douban.Groups = []string{"http://g/b", "http://g/c"}
+	if len(d.groups()) != 2 {
+		t.Fatalf("热更新后 %v", d.groups())
 	}
 }

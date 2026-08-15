@@ -52,6 +52,12 @@ func TestConfigTabs(t *testing.T) {
 	if !strings.Contains(body, `name="server.addr"`) {
 		t.Errorf("general 应渲染服务配置表单")
 	}
+	if !strings.Contains(body, `name="server.public_base"`) {
+		t.Errorf("general 应渲染对外访问地址")
+	}
+	if !strings.Contains(body, "修改后需重启") {
+		t.Errorf("监听地址等启动钉死项应在标签旁提示需重启")
+	}
 	if strings.Contains(body, "信息源与 Cookie") || strings.Contains(body, "本配置当前版本仅用于审核帖子") {
 		t.Errorf("默认 general 不应渲染其他分区表单")
 	}
@@ -237,6 +243,9 @@ func TestConfigTabs(t *testing.T) {
 	if strings.Contains(body, "secret.notifier.serverchan") {
 		t.Errorf("notifier UI 本期不应露出 Server酱")
 	}
+	if strings.Count(body, "检测连通性") < 2 {
+		t.Errorf("飞书和 PushPlus 都应有检测连通性")
+	}
 
 	code, body = get("/admin/config?tab=rules")
 	if code != http.StatusOK {
@@ -318,9 +327,19 @@ func TestRestartKeysExcludesAdminToken(t *testing.T) {
 	if RestartKeys["admin.token"] || RestartKeys["admin.auth_required"] {
 		t.Fatal("admin.token / auth_required 应热生效，不得列入 RestartKeys")
 	}
-	for _, k := range []string{"server.addr", "log.path", "collector.sources", "notifier.channels", "secret.filter.llm.api_key", "secret.notifier.feishu.webhook"} {
+	for _, k := range []string{"server.addr", "log.path", "log.level"} {
 		if !RestartKeys[k] {
 			t.Errorf("RestartKeys 缺 %q", k)
+		}
+	}
+	for _, k := range []string{
+		"server.public_base", "log.memory_lines", "collector.interval",
+		"collector.sources", "collector.douban.groups",
+		"filter.ai_enabled", "secret.filter.llm.api_key",
+		"notifier.channels", "secret.notifier.feishu.webhook",
+	} {
+		if RestartKeys[k] {
+			t.Errorf("%s 应热生效，不应列入 RestartKeys", k)
 		}
 	}
 }
@@ -330,8 +349,8 @@ func TestChangedRestartKeys(t *testing.T) {
 	before := map[string]string{"server.addr": ":7777", "log.level": "info", "admin.token": "a"}
 	updates := map[string]string{"server.addr": ":8888", "log.level": "debug", "admin.token": "b"}
 	got := changedRestartKeys(before, updates)
-	if len(got) != 1 || got[0] != "server.addr" {
-		t.Errorf("changedRestartKeys = %v, want [server.addr]", got)
+	if len(got) != 2 || got[0] != "log.level" || got[1] != "server.addr" {
+		t.Errorf("changedRestartKeys = %v, want [log.level server.addr]", got)
 	}
 }
 

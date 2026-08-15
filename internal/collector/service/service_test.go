@@ -7,10 +7,11 @@ import (
 	"time"
 
 	"rent-scout/internal/config"
+	"rent-scout/internal/models"
 	"rent-scout/internal/store"
 )
 
-func TestNewWithoutSources(t *testing.T) {
+func TestNewAlwaysHasRunner(t *testing.T) {
 	s, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -23,8 +24,11 @@ func TestNewWithoutSources(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if svc.Controller() != nil {
-		t.Fatal("无源时 Controller 应为 nil")
+	if svc.Controller() == nil {
+		t.Fatal("源全关也应有调度协程")
+	}
+	if svc.SourceEnabled(models.SourceDouban.String()) {
+		t.Fatal("配置未勾选时不应视为启用")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)

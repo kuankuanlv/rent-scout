@@ -15,8 +15,9 @@ import (
 type NotifierOptions struct {
 	MaxAttempts       int               // 单渠道失败重试次数（超过进死信）；<=0 用 3
 	RetryBaseInterval int               // 重试退避基础间隔（秒）；<=0 用 300
-	HotConfig         *config.HotConfig // 签名密钥每次从 HotConfig 读；优先于 FeedbackSecret
-	FeedbackSecret    string            // 仅测试兜底；生产应注入 HotConfig
+	HotConfig         *config.HotConfig // 签名密钥、对外地址、最大重试
+	FeedbackSecret    string
+	LiveChannels      func() []Channel // 生产每轮读热配置；测试不设则用构造注入的 channels
 }
 
 // Notifier 通知消费器：按渠道过滤未 sent → 地址分组 → 每组 Send → 状态写库（规格 6.5/6.6）
@@ -45,10 +46,37 @@ func (n *Notifier) currentFeedbackSecret() string {
 	return n.opts.FeedbackSecret
 }
 
+func (n *Notifier) publicOrigin() string {
+	if n.opts.HotConfig != nil {
+		return config.ResolvePublicOrigin(n.opts.HotConfig.Get())
+	}
+	return config.ResolvePublicOrigin(nil)
+}
+
 // ProcessBatch 处理一批 passed 帖子（pipeline.BatchFunc）：
 // 拉批内渠道状态 → 按渠道过滤 → 地址分组 → 每组 Send → 写状态（sent/failed/dead）
+func (n *Notifier) liveChannels() []Channel {
+	if n.opts.LiveChannels != nil {
+		return n.opts.LiveChannels()
+	}
+	return n.channels
+}
+
+func (n *Notifier) maxAttempts() int {
+	if n.opts.HotConfig != nil {
+		if v := n.opts.HotConfig.Get().Notifier.MaxAttempts; v > 0 {
+			return v
+		}
+	}
+	if n.opts.MaxAttempts <= 0 {
+		return 3
+	}
+	return n.opts.MaxAttempts
+}
+
 func (n *Notifier) ProcessBatch(ctx context.Context, batch []models.RentPost) error {
-	if len(batch) == 0 || len(n.channels) == 0 {
+	chs := n.liveChannels()
+	if len(batch) == 0 || len(chs) == 0 {
 		return nil
 	}
 	log := pkglog.Component(pkglog.Notifier)
@@ -57,8 +85,8 @@ func (n *Notifier) ProcessBatch(ctx context.Context, batch []models.RentPost) er
 	for i, p := range batch {
 		ids[i] = p.ID
 	}
-	chanNames := make([]string, len(n.channels))
-	for i, c := range n.channels {
+	chanNames := make([]string, len(chs))
+	for i, c := range chs {
 		chanNames[i] = c.Name()
 	}
 	statuses, err := n.st.NotificationStatuses(ids, chanNames)
@@ -67,7 +95,7 @@ func (n *Notifier) ProcessBatch(ctx context.Context, batch []models.RentPost) er
 	}
 
 	var firstErr error
-	for _, ch := range n.channels {
+	for _, ch := range chs {
 		if err := n.sendChannel(ctx, ch, batch, statuses); err != nil && firstErr == nil {
 			firstErr = err
 		}
@@ -118,14 +146,15 @@ func (n *Notifier) sendGroup(ctx context.Context, ch Channel, tag string, posts 
 			continue
 		}
 		secret := n.currentFeedbackSecret()
+		origin := n.publicOrigin()
 		item := NotifyItem{
 			PostID:             p.ID,
 			Title:              p.Title,
 			URL:                p.URL,
 			AddressTag:         tag,
-			FeedbackURL:        BuildFeedbackURL(p.ID, "useful", secret),
-			FeedbackUselessURL: BuildFeedbackURL(p.ID, "useless", secret),
-			HandledURL:         BuildFeedbackURL(p.ID, "handled", secret),
+			FeedbackURL:        absActionURL(origin, BuildFeedbackURL(p.ID, "useful", secret)),
+			FeedbackUselessURL: absActionURL(origin, BuildFeedbackURL(p.ID, "useless", secret)),
+			HandledURL:         absActionURL(origin, BuildFeedbackURL(p.ID, "handled", secret)),
 		}
 		// 展示字段来自 filter_results（价格/联系人/通勤/理由）
 		if fr, ok, err := n.st.FilterResultByPostID(p.ID); err == nil && ok && fr.AI != nil {
@@ -181,7 +210,7 @@ func (n *Notifier) recordOutcome(postID int64, channel string, sendErr error) {
 	if sendErr != nil {
 		msg = sendErr.Error()
 	}
-	if attempt >= n.opts.MaxAttempts {
+	if attempt >= n.maxAttempts() {
 		if err := n.st.MarkNotificationDead(postID, channel, msg); err != nil {
 			log.Error("标记死信失败", "post_id", postID, "channel", channel, "err", err)
 		}

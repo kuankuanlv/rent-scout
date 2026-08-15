@@ -6,7 +6,6 @@ import (
 
 	"rent-scout/internal/config"
 	"rent-scout/internal/filter"
-	"rent-scout/internal/filter/llm"
 	"rent-scout/internal/models"
 	"rent-scout/internal/pipeline"
 	"rent-scout/internal/pkglog"
@@ -37,37 +36,21 @@ type Service struct {
 }
 
 func New(opts Options) (*Service, error) {
-	log := pkglog.Component(pkglog.Main)
 	rt, db := opts.Config, opts.Store
-	cfg := rt.Get()
-	env := rt.Secrets()
-	var ai filter.AIEvaluator
-	if cfg.Filter.AIEnabled != nil && *cfg.Filter.AIEnabled && env.Filter.LLM.APIKey != "" {
-		baseURL := env.Filter.LLM.BaseURL
-		if baseURL == "" {
-			baseURL = "https://api.openai.com/v1"
-		}
-		model := env.Filter.LLM.Model
-		if model == "" {
-			model = "deepseek-chat"
-		}
-		llmOpts := []llm.ClientOptions{{BaseURL: baseURL, APIKey: env.Filter.LLM.APIKey, Model: model}}
-		for _, m := range env.Filter.LLM.FallbackModels {
-			llmOpts = append(llmOpts, llm.ClientOptions{BaseURL: baseURL, APIKey: env.Filter.LLM.APIKey, Model: m})
-		}
-		pool := llm.NewPool(llmOpts, llm.PoolOptions{})
-		ai = filter.NewAIBatchEvaluator(pool)
-		log.Info("筛选 AI 已启用", "model", model)
-	} else {
-		log.Warn("筛选 AI 已关闭")
-	}
-	chain := filter.NewRuleChain(ai)
-	fc := filter.NewConsumerWithOptions(chain, db, filter.ConsumerOptions{AIBatchSize: cfg.Filter.AIBatchSize})
+	chain := filter.NewRuleChain(nil)
+	fc := filter.NewConsumerWithOptions(chain, db, filter.ConsumerOptions{HotConfig: rt})
 	hardPipe := pipeline.New(
-		fc.FetchCollected,
+		func(ctx context.Context, limit int) ([]models.RentPost, error) {
+			if rt != nil {
+				if n := rt.Get().Filter.BatchSize; n > 0 {
+					limit = n
+				}
+			}
+			return fc.FetchCollected(ctx, limit)
+		},
 		fc.ProcessHard,
 		pipeline.Options{
-			BatchSize: cfg.Filter.BatchSize,
+			BatchSize: 20,
 			Linger:    pipeline.DefaultLinger,
 			Component: pkglog.Filter,
 		},
@@ -76,7 +59,7 @@ func New(opts Options) (*Service, error) {
 		fc.FetchAwaitingAI,
 		fc.ProcessAI,
 		pipeline.Options{
-			BatchSize: cfg.Filter.AIBatchSize,
+			BatchSize: 20,
 			Linger:    pipeline.DefaultLinger,
 			Component: pkglog.AIReview,
 			WaitFull:  true,

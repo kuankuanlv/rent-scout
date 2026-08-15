@@ -14,6 +14,7 @@ import (
 
 	"rent-scout/internal/collector"
 	"rent-scout/internal/collector/cookie"
+	"rent-scout/internal/config"
 	"rent-scout/internal/models"
 	"rent-scout/internal/pkglog"
 )
@@ -26,30 +27,41 @@ const listPageSize = 25 // 豆瓣小组讨论列表每页条数
 
 // DoubanOptions douban 适配器参数
 type DoubanOptions struct {
-	GroupURLs []string        // 小组讨论列表 URL（config [collector.douban].groups）
-	Cookie    cookie.Provider // cookie 来源（可为 none）
-	Client    *http.Client    // HTTP 客户端（测试注入 httptest 客户端）
+	Config    *config.HotConfig // 生产每轮读小组 URL；测试可空
+	GroupURLs []string          // 仅测试钉死 URL；生产留空
+	Cookie    cookie.Provider
+	Client    *http.Client
 }
 
 // Douban 豆瓣小组适配器（规格 4.3）：List 列表页 → Detail 详情页
 type Douban struct {
-	groupURLs []string
-	cookie    cookie.Provider
-	client    *http.Client
+	rt          *config.HotConfig
+	fixedGroups []string // 测试用
+	cookie      cookie.Provider
+	client      *http.Client
 }
 
-// NewDouban 创建适配器；至少一个小组 URL
+// NewDouban 创建适配器。小组 URL 不在这里钉死，List 时再读。
 func NewDouban(opts DoubanOptions) (*Douban, error) {
-	if len(opts.GroupURLs) == 0 {
-		return nil, fmt.Errorf("douban 需要至少一个小组 URL")
-	}
 	if opts.Cookie == nil {
 		opts.Cookie = noopCookie{}
 	}
 	if opts.Client == nil {
 		opts.Client = &http.Client{Timeout: 30 * time.Second}
 	}
-	return &Douban{groupURLs: opts.GroupURLs, cookie: opts.Cookie, client: opts.Client}, nil
+	return &Douban{rt: opts.Config, fixedGroups: append([]string(nil), opts.GroupURLs...), cookie: opts.Cookie, client: opts.Client}, nil
+}
+
+func (d *Douban) groups() []string {
+	if len(d.fixedGroups) > 0 {
+		return d.fixedGroups
+	}
+	if d.rt != nil {
+		if app := d.rt.Get(); app != nil {
+			return app.Collector.Douban.Groups
+		}
+	}
+	return nil
 }
 
 func (d *Douban) Name() string { return models.SourceDouban.String() }
@@ -93,12 +105,17 @@ func (d *Douban) Detail(ctx context.Context, item collector.ListItem) (models.Re
 // 当前组该页有条目 → 同组下一页 "gi:offset+25"；空页 → 推进到下一组 "gi+1:0"；
 // 最后一组结束或下标越界 → ""（无更多页）。多小组按配置 groups 轮转
 func (d *Douban) List(ctx context.Context, cursor string) ([]collector.ListItem, string, error) {
+	groups := d.groups()
+	if len(groups) == 0 {
+		pkglog.Component(pkglog.SourceCollector(d.Name())).Info("当前配置豆瓣小组 URL 为空，无需执行")
+		return nil, "", nil
+	}
 	gi, offset := parseListCursor(cursor)
-	if gi >= len(d.groupURLs) {
+	if gi >= len(groups) {
 		return nil, "", nil // 已遍历全部小组：结束
 	}
 	// 组 URL 拼接 start 参数（豆瓣分页 start=0, pageSize, 2*pageSize...）
-	u, err := url.Parse(d.groupURLs[gi])
+	u, err := url.Parse(groups[gi])
 	if err != nil {
 		return nil, "", fmt.Errorf("小组 URL 非法: %w", err)
 	}
@@ -143,7 +160,7 @@ func (d *Douban) List(ctx context.Context, cursor string) ([]collector.ListItem,
 	next := ""
 	if len(items) > 0 {
 		next = strconv.Itoa(gi) + ":" + strconv.Itoa(offset+listPageSize)
-	} else if gi+1 < len(d.groupURLs) {
+	} else if gi+1 < len(groups) {
 		next = strconv.Itoa(gi+1) + ":0"
 	}
 	return items, next, nil
@@ -152,7 +169,7 @@ func (d *Douban) List(ctx context.Context, cursor string) ([]collector.ListItem,
 // SkipGroup 本组不用再翻了（撞水位/时间窗），直接下一组开头；没有下一组返回空
 func (d *Douban) SkipGroup(cursor string) string {
 	gi, _ := parseListCursor(cursor)
-	if gi+1 >= len(d.groupURLs) {
+	if gi+1 >= len(d.groups()) {
 		return ""
 	}
 	return strconv.Itoa(gi+1) + ":0"

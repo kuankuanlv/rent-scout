@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"time"
 
 	"rent-scout/internal/config"
 	"rent-scout/internal/models"
@@ -19,39 +18,97 @@ type Options struct {
 	Store  *store.Store
 }
 
-// Service 通知 pipeline
+// Service 通知 pipeline；协程常驻，每轮自己读热配置
 type Service struct {
-	pipe     *pipeline.Consumer[models.RentPost]
-	channels []string
+	rt   *config.HotConfig
+	db   *store.Store
+	pipe *pipeline.Consumer[models.RentPost]
 }
 
 func New(opts Options) (*Service, error) {
-	log := pkglog.Component(pkglog.Main)
 	rt, db := opts.Config, opts.Store
-	cfg := rt.Get()
-	env := rt.Secrets()
-	chs := buildChannels(cfg.Notifier.Channels, env.Notifier)
-	if len(chs) == 0 {
-		log.Warn("通知未启动")
-		return &Service{}, nil
+	live := func() []notifier.Channel {
+		if rt == nil {
+			return nil
+		}
+		return liveChannels(rt.Get(), rt.Secrets())
 	}
-	n := notifier.NewNotifier(db,
-		notifier.NotifierOptions{MaxAttempts: cfg.Notifier.MaxAttempts, RetryBaseInterval: cfg.Notifier.RetryBaseInterval, HotConfig: rt},
-		chs...)
-	names := channelNames(chs)
-	pipe := pipeline.New(
-		func(ctx context.Context, limit int) ([]models.RentPost, error) {
-			return db.FetchNotifyBatch(names, limit)
-		},
+	n := notifier.NewNotifier(db, notifier.NotifierOptions{HotConfig: rt, LiveChannels: live})
+	s := &Service{rt: rt, db: db}
+	s.pipe = pipeline.New(
+		s.fetch,
 		n.ProcessBatch,
 		pipeline.Options{
-			BatchSize: cfg.Notifier.BatchSize,
-			Linger:    time.Duration(cfg.Notifier.RetryBaseInterval) * time.Second,
+			BatchSize: 20,
+			Linger:    pipeline.DefaultLinger,
 			Component: pkglog.Notifier,
 			WaitFull:  true,
 		},
 	)
-	return &Service{pipe: pipe, channels: names}, nil
+	return s, nil
+}
+
+func (s *Service) fetch(ctx context.Context, limit int) ([]models.RentPost, error) {
+	log := pkglog.Component(pkglog.Notifier)
+	if s.rt == nil {
+		log.Info("当前配置通知未启用，无需执行")
+		return nil, nil
+	}
+	app := s.rt.Get()
+	if app == nil || len(app.Notifier.Channels) == 0 {
+		log.Info("当前配置通知未启用，无需执行")
+		return nil, nil
+	}
+	chs := liveChannels(app, s.rt.Secrets())
+	if len(chs) == 0 {
+		log.Info("当前配置通知渠道密钥为空，无需执行")
+		return nil, nil
+	}
+	if n := app.Notifier.BatchSize; n > 0 {
+		limit = n
+	}
+	names := make([]string, len(chs))
+	for i, c := range chs {
+		names[i] = c.Name()
+	}
+	return s.db.FetchNotifyBatch(names, limit)
+}
+
+func liveChannels(app *config.AppConfig, env *config.Secrets) []notifier.Channel {
+	if app == nil || env == nil {
+		return nil
+	}
+	n := env.Notifier
+	var chs []notifier.Channel
+	for _, name := range app.Notifier.Channels {
+		switch name {
+		case notifier.ChannelFeishu:
+			if n.Feishu.Webhook != "" {
+				chs = append(chs, channels.NewFeishuChannel(n.Feishu.Webhook))
+			}
+		case notifier.ChannelDingtalk:
+			if n.Dingtalk.Webhook != "" {
+				chs = append(chs, channels.NewDingtalkChannel(n.Dingtalk.Webhook, n.Dingtalk.Secret))
+			}
+		case notifier.ChannelWecom:
+			if n.Wecom.Webhook != "" {
+				chs = append(chs, channels.NewWecomChannel(n.Wecom.Webhook))
+			}
+		case notifier.ChannelPushplus:
+			if n.Pushplus.Token != "" {
+				chs = append(chs, channels.NewPushplusChannel("", n.Pushplus.Token, n.Pushplus.Topic))
+			}
+		case notifier.ChannelServerchan:
+			if n.Serverchan.Sendkey != "" {
+				chs = append(chs, channels.NewServerchanChannel(n.Serverchan.Sendkey))
+			}
+		case notifier.ChannelWebhook:
+			if n.Webhook.URL != "" {
+				chs = append(chs, channels.NewWebhookChannel(n.Webhook.URL, n.Webhook.Template))
+			}
+		}
+	}
+	return chs
 }
 
 func (s *Service) Enabled() bool {
@@ -65,69 +122,4 @@ func (s *Service) Run(ctx context.Context) error {
 	}
 	s.pipe.Run(ctx)
 	return nil
-}
-
-func buildChannels(enabled []string, env config.SecretsNotifier) []notifier.Channel {
-	var chs []notifier.Channel
-	for _, name := range enabled {
-		switch name {
-		case notifier.ChannelFeishu:
-			if env.Feishu.Webhook != "" {
-				chs = append(chs, channels.NewFeishuChannel(env.Feishu.Webhook))
-			}
-		case notifier.ChannelDingtalk:
-			if env.Dingtalk.Webhook != "" {
-				chs = append(chs, channels.NewDingtalkChannel(env.Dingtalk.Webhook, env.Dingtalk.Secret))
-			}
-		case notifier.ChannelWecom:
-			if env.Wecom.Webhook != "" {
-				chs = append(chs, channels.NewWecomChannel(env.Wecom.Webhook))
-			}
-		case notifier.ChannelPushplus:
-			if env.Pushplus.Token != "" {
-				chs = append(chs, channels.NewPushplusChannel("", env.Pushplus.Token, env.Pushplus.Topic))
-			}
-		case notifier.ChannelServerchan:
-			if env.Serverchan.Sendkey != "" {
-				chs = append(chs, channels.NewServerchanChannel(env.Serverchan.Sendkey))
-			}
-		case notifier.ChannelWebhook:
-			if env.Webhook.URL != "" {
-				chs = append(chs, channels.NewWebhookChannel(env.Webhook.URL, env.Webhook.Template))
-			}
-		}
-	}
-	return chs
-}
-
-func channelNames(chs []notifier.Channel) []string {
-	names := make([]string, len(chs))
-	for i, c := range chs {
-		names[i] = c.Name()
-	}
-	return names
-}
-
-// configuredChannelNames 已配密钥的渠道名，顺序与常量清单一致（原 EnabledChannels）
-func configuredChannelNames(env config.SecretsNotifier) []string {
-	var names []string
-	if env.Feishu.Webhook != "" {
-		names = append(names, notifier.ChannelFeishu)
-	}
-	if env.Dingtalk.Webhook != "" {
-		names = append(names, notifier.ChannelDingtalk)
-	}
-	if env.Wecom.Webhook != "" {
-		names = append(names, notifier.ChannelWecom)
-	}
-	if env.Pushplus.Token != "" {
-		names = append(names, notifier.ChannelPushplus)
-	}
-	if env.Serverchan.Sendkey != "" {
-		names = append(names, notifier.ChannelServerchan)
-	}
-	if env.Webhook.URL != "" {
-		names = append(names, notifier.ChannelWebhook)
-	}
-	return names
 }

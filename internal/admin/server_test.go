@@ -88,7 +88,20 @@ func newTestServerWithStore(t *testing.T, s *store.Store, app *config.AppConfig,
 	srv := NewServer(s, rt, ctrl)
 	srv.SetCookieProbe(testCookieProbe{})
 	srv.SetLLMProbe(testLLMProbe{})
+	srv.SetNotifyProbe(&stubNotifyProbe{})
 	return srv
+}
+
+type stubNotifyProbe struct {
+	channel string
+	items   []NotifyProbeItem
+	err     error
+}
+
+func (s *stubNotifyProbe) Send(ctx context.Context, channel, webhook, token, topic string, items []NotifyProbeItem) error {
+	s.channel = channel
+	s.items = items
+	return s.err
 }
 
 // TestHealthzNoAuth：健康检查豁免鉴权，无 token 直接 200 "ok"
@@ -107,7 +120,6 @@ func TestHealthzNoAuth(t *testing.T) {
 }
 
 // TestAuthRequired：auth_required=true + token="t" → 无 token 401、Bearer/URL 正确 200、错 token 401。
-// 目前除 healthz/metrics 外无实际路由，直接测鉴权中间件（包 200 的下游 handler）
 func TestAuthRequired(t *testing.T) {
 	srv := newTestServer(t, &config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}}, "t", nil)
 
@@ -138,13 +150,36 @@ func TestAuthRequired(t *testing.T) {
 		})
 	}
 
-	// 豁免：/healthz、/metrics 即使鉴权开启也无 token 200
-	for _, path := range []string{"/healthz", "/metrics"} {
+	// 豁免：/healthz 探活、/f /h 通知回调不带 token 也可进
+	for _, path := range []string{"/healthz"} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		rec := httptest.NewRecorder()
 		srv.Handler().ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK {
 			t.Errorf("%s 应豁免鉴权, status = %d, want 200", path, rec.Code)
+		}
+	}
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("/metrics 属于管理数据，应鉴权, status = %d, want 401", rec.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/admin", nil)
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("/admin 应鉴权, status = %d, want 401", rec.Code)
+	}
+
+	// 回调不带管理 token：进 handler 后因缺参数 400，而不是 401
+	for _, path := range []string{"/f", "/h"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, req)
+		if rec.Code == http.StatusUnauthorized {
+			t.Errorf("%s 不应被鉴权中间件拦, status = 401", path)
 		}
 	}
 }

@@ -3,6 +3,7 @@ package filter
 import (
 	"context"
 
+	"rent-scout/internal/config"
 	"rent-scout/internal/models"
 	"rent-scout/internal/pkglog"
 	"rent-scout/internal/store"
@@ -12,15 +13,17 @@ import (
 type Consumer struct {
 	chain       *RuleChain
 	store       *store.Store
+	rt          *config.HotConfig
 	aiBatchSize int
 }
 
 type ConsumerOptions struct {
 	AIBatchSize int
+	HotConfig   *config.HotConfig
 }
 
 func NewConsumerWithOptions(chain *RuleChain, st *store.Store, opts ConsumerOptions) *Consumer {
-	return &Consumer{chain: chain, store: st, aiBatchSize: opts.AIBatchSize}
+	return &Consumer{chain: chain, store: st, rt: opts.HotConfig, aiBatchSize: opts.AIBatchSize}
 }
 
 func (c *Consumer) FetchCollected(ctx context.Context, limit int) ([]models.RentPost, error) {
@@ -29,12 +32,22 @@ func (c *Consumer) FetchCollected(ctx context.Context, limit int) ([]models.Rent
 
 // FetchAwaitingAI 仅 AI 协程调用：没开 AI 或没有启用的 AI 规则就空捞；否则捞已通过且还没 ai_result 的帖。
 func (c *Consumer) FetchAwaitingAI(ctx context.Context, limit int) ([]models.RentPost, error) {
-	rules, err := c.rules()
-	if err != nil {
-		pkglog.Component(pkglog.AIReview).Error("规则读取失败", "err", err)
+	log := pkglog.Component(pkglog.AIReview)
+	if c.rt != nil {
+		if ev, reason := LiveAIEvaluator(c.rt); ev == nil {
+			log.Info(reason)
+			return nil, nil
+		}
+	} else if c.chain == nil || !c.chain.HasAI() {
 		return nil, nil
 	}
-	if !c.chain.HasAI() || len(enabledAIRules(rules)) == 0 {
+	rules, err := c.rules()
+	if err != nil {
+		log.Error("规则读取失败", "err", err)
+		return nil, nil
+	}
+	if len(enabledAIRules(rules)) == 0 {
+		log.Info("当前配置没有启用的 AI 规则，无需执行")
 		return nil, nil
 	}
 	return c.store.FetchPassedWithoutAI(limit)
@@ -121,10 +134,21 @@ func (c *Consumer) processAI(ctx context.Context, batch []models.RentPost) error
 		log.Error("规则读取失败", "count", len(batch), "err", err)
 		return nil
 	}
-	if !c.chain.HasAI() || len(enabledAIRules(rules)) == 0 {
+	if c.rt != nil {
+		if ev, reason := LiveAIEvaluator(c.rt); ev == nil {
+			log.Info(reason)
+			return nil
+		} else {
+			c.chain.ai = ev
+		}
+	} else if !c.chain.HasAI() {
 		return nil
 	}
-	for _, sub := range splitBatches(batch, c.aiBatchSize) {
+	if len(enabledAIRules(rules)) == 0 {
+		log.Info("当前配置没有启用的 AI 规则，无需执行")
+		return nil
+	}
+	for _, sub := range splitBatches(batch, c.aiSize()) {
 		results, err := c.chain.EvaluateAIBatch(ctx, sub, rules)
 		if err != nil {
 			log.Warn("AI 批处理失败", "count", len(sub), "err", err)
@@ -138,6 +162,15 @@ func (c *Consumer) processAI(ctx context.Context, batch []models.RentPost) error
 		log.Info("AI 批处理完成", "count", len(sub))
 	}
 	return nil
+}
+
+func (c *Consumer) aiSize() int {
+	if c.rt != nil {
+		if n := c.rt.Get().Filter.AIBatchSize; n > 0 {
+			return n
+		}
+	}
+	return c.aiBatchSize
 }
 
 func splitBatches(posts []models.RentPost, size int) [][]models.RentPost {

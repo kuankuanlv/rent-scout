@@ -8,15 +8,14 @@ import (
 	"rent-scout/internal/store"
 )
 
-// auth 鉴权中间件：setup 未完成时 /admin/setup 豁免；healthz/metrics/f/h 豁免
+// auth 全局鉴权：管理台与 API 走 token；回调 /f /h 和探活 /healthz 放行。
 func (s *Server) auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		path := r.URL.Path
-		if path == "/healthz" || path == "/metrics" || path == "/f" || path == "/h" {
+		if publicNoAuth(r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if !store.IsSetupComplete(s.db) && (path == "/admin/setup" || path == CookieTestPath || path == CookieCloudTestPath) {
+		if !store.IsSetupComplete(s.db) && setupExempt(r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -26,6 +25,19 @@ func (s *Server) auth(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func publicNoAuth(path string) bool {
+	switch path {
+	case "/f", "/h", "/healthz":
+		return true
+	default:
+		return false
+	}
+}
+
+func setupExempt(path string) bool {
+	return path == "/admin/setup" || path == CookieTestPath || path == CookieCloudTestPath
 }
 
 // validToken 校验 token：URL ?token= 或 Bearer，与 HotConfig 中 admin.token 比较

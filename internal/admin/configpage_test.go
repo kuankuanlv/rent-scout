@@ -201,7 +201,7 @@ func TestConfigTabs(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("GET tab=notifier status = %d", code)
 	}
-	if !strings.Contains(body, "PushPlus") || !strings.Contains(body, "secret.notifier.pushplus.token") {
+	if !strings.Contains(body, "PushPlus") || !strings.Contains(body, "secret.notifier.pushplus.token") || !strings.Contains(body, "secret.notifier.pushplus.topic") {
 		t.Errorf("notifier 应含飞书/PushPlus 子 tab")
 	}
 	if strings.Contains(body, `data-notify-tab="common"`) {

@@ -80,13 +80,16 @@ func TestPushplusChannelSend(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	ch := NewPushplusChannel(srv.URL, "tok")
+	ch := NewPushplusChannel(srv.URL, "tok", "doubanzufang")
 	_, _, err := ch.Send(context.Background(), []notifier.NotifyItem{{PostID: 1, Title: "t", AddressTag: "望京"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got["token"] != "tok" {
 		t.Errorf("token: %v", got["token"])
+	}
+	if got["topic"] != "doubanzufang" {
+		t.Errorf("topic: %v", got["topic"])
 	}
 	if !strings.Contains(got["title"], "望京") {
 		t.Errorf("title: %v", got["title"])

@@ -139,6 +139,7 @@ type DingtalkConfig struct {
 // PushplusConfig 微信推送
 type PushplusConfig struct {
 	Token string
+	Topic string // 一对多群组编码；空则一对一
 }
 
 // ServerchanConfig Server酱

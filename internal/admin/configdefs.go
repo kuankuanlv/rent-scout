@@ -24,6 +24,9 @@ const LLMTestPath = "/admin/config/llm/test"
 // LLMModelsPath 拉取 OpenAI 兼容模型列表（草稿不写库）
 const LLMModelsPath = "/admin/config/llm/models"
 
+// NotifyTestPath 飞书/PushPlus 草稿试发（不写通知账本）
+const NotifyTestPath = "/admin/config/notify/test"
+
 type configSection struct {
 	ID     string
 	Title  string
@@ -37,7 +40,7 @@ type configBlock struct {
 	Hint  string
 	Class string // 色块：bg/border
 	Group string // 子 tab：common/douban/weibo/feishu/pushplus
-	Tools string // cookie / llm：检测按钮放块内，不跟保存挤
+	Tools string // cookie / llm / notify：检测按钮放块内
 	Items []configField
 }
 
@@ -56,30 +59,16 @@ type configField struct {
 	Wide         bool     // 单独占满一行
 	DayOffset    bool     // 天数偏移，支持小数；小字 tip 显示换算时间
 	Readonly     bool     // 历史快照只读，控件 disabled
+	NeedRestart  bool     // 启动时钉死，保存后要重启才吃进
 }
 
-// RestartKeys 改后需重启才生效（与 Spec 热加载矩阵一致）；admin.token 热生效不在此列
+// RestartKeys 进程启动时读进对象、运行中不再跟 HotConfig 的项。
+// 采集间隔/Cookie/鉴权 token/对外地址/内存日志条数不在此列（保存后 ReloadOnce 即生效）。
 var RestartKeys = map[string]bool{
-	"server.addr":                        true,
-	"log.path":                           true,
-	"collector.sources":                  true,
-	"collector.douban.groups":            true, // 与 sources 同级启动冻结
-	"secret.filter.llm.api_key":          true,
-	"secret.filter.llm.base_url":         true,
-	"secret.filter.llm.model":            true,
-	"secret.filter.llm.api_style":        true,
-	"secret.notifier.feishu.webhook":     true,
-	"notifier.channels":                  true,
-	"notifier.batch_size":                true,
-	"notifier.retry_base_interval":       true,
-	"secret.notifier.dingtalk.webhook":   true,
-	"secret.notifier.dingtalk.secret":    true,
-	"secret.notifier.wecom.webhook":      true,
-	"secret.notifier.pushplus.token":     true,
-	"secret.notifier.pushplus.topic":     true,
-	"secret.notifier.serverchan.sendkey": true,
-	"secret.notifier.webhook.url":        true,
-	"secret.notifier.webhook.template":   true,
+	"server.addr": true, // ListenAndServe 绑死
+	"log.path":    true, // pkglog.New 只跑一次
+	"log.level":   true, // slog Handler 级别启动钉死
+	"log.format":  true,
 }
 
 // ChangedRestartKeys 返回 updates 相对 before 实际变更的需重启 key（已排序）
@@ -185,7 +174,7 @@ func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[stri
 	channelsVal := get("notifier.channels", strings.Join(app.Notifier.Channels, ","))
 	sourceBase := func(source, group string) []configField {
 		items := []configField{
-			{Key: "collector.sources", Label: "启用", Value: sourcesVal, Type: "sources", Options: []string{source}, Group: group, Wide: true, Hint: "勾选纳入采集；修改后需重启"},
+			{Key: "collector.sources", Label: "启用", Value: sourcesVal, Type: "sources", Options: []string{source}, Group: group, Wide: true, Hint: "勾选纳入采集"},
 			{Key: "collector.interval", Label: "采集间隔(秒)", Value: get("collector.interval", strconv.Itoa(app.Collector.Interval)), Type: "number", Hint: "跑完一轮后等多久再开下一轮，默认 300（5 分钟）", Group: group},
 			{Key: "collector.jitter_ratio", Label: "抖动比例", Value: get("collector.jitter_ratio", fmt.Sprintf("%g", app.Collector.JitterRatio)), Type: "text", Group: group},
 		}
@@ -196,10 +185,10 @@ func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[stri
 	}
 	notifyBase := func(channel, group string) []configField {
 		return []configField{
-			{Key: "notifier.channels", Label: "启用", Value: channelsVal, Type: "sources", Options: []string{channel}, Group: group, Wide: true, Hint: "勾选后该渠道才会发通知；修改后需重启"},
-			{Key: "notifier.batch_size", Label: "组批大小", Value: get("notifier.batch_size", strconv.Itoa(app.Notifier.BatchSize)), Type: "number", Hint: "凑满这个条数就发；没凑满则等到「重试间隔」也发。两个条件满足其一即执行发送。修改后需重启", Group: group},
+			{Key: "notifier.channels", Label: "启用", Value: channelsVal, Type: "sources", Options: []string{channel}, Group: group, Wide: true, Hint: "勾选后该渠道才会发通知"},
+			{Key: "notifier.batch_size", Label: "组批大小", Value: get("notifier.batch_size", strconv.Itoa(app.Notifier.BatchSize)), Type: "number", Hint: "凑满这个条数就发；没凑满则等到「重试间隔」也发。两个条件满足其一即执行发送", Group: group},
 			{Key: "notifier.max_attempts", Label: "最大重试", Value: get("notifier.max_attempts", strconv.Itoa(app.Notifier.MaxAttempts)), Type: "number", Group: group},
-			{Key: "notifier.retry_base_interval", Label: "重试间隔(秒)", Value: get("notifier.retry_base_interval", strconv.Itoa(app.Notifier.RetryBaseInterval)), Type: "number", Group: group, Wide: true, Hint: "没凑满组批大小时，最多等这么久也发；和组批大小满足其一即执行发送。失败帖也按这个间隔再扫。修改后需重启"},
+			{Key: "notifier.retry_base_interval", Label: "重试间隔(秒)", Value: get("notifier.retry_base_interval", strconv.Itoa(app.Notifier.RetryBaseInterval)), Type: "number", Group: group, Wide: true, Hint: "没凑满组批大小时，最多等这么久也发；和组批大小满足其一即执行发送。失败帖也按这个间隔再扫"},
 		}
 	}
 	return []configSection{
@@ -207,15 +196,16 @@ func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[stri
 			{
 				Title: "服务", Hint: "进程监听", Class: "bg-slate-50 border-slate-200",
 				Items: []configField{
-					{Key: "server.addr", Label: "监听地址", Value: get("server.addr", app.Server.Addr), Type: "text", Hint: "如 :7777；修改后需重启"},
+					{Key: "server.addr", Label: "监听地址", Value: get("server.addr", app.Server.Addr), Type: "text", Hint: "进程绑定，默认 :7777（所有网卡）。不要填局域网 IP，否则本机 127.0.0.1 会连不上"},
+					{Key: "server.public_base", Label: "对外访问地址", Value: get("server.public_base", app.Server.PublicBase), Type: "text", Wide: true, Hint: "通知里「有用/无用/已处理」三条链接的前缀。留空则发送时自动用本机局域网 IPv4 + 监听端口，例如 http://192.168.1.8:7777。手机点开卡片需要这个"},
 				},
 			},
 			{
 				Title: "日志", Hint: "级别、落盘、控制台滚动缓冲", Class: "bg-indigo-50/70 border-indigo-100",
 				Items: []configField{
-					{Key: "log.level", Label: "日志级别", Value: strings.ToLower(get("log.level", app.Log.Level)), Type: "select", Options: []string{"debug", "info", "warn", "error"}, OptionLabels: []string{"DEBUG", "INFO", "WARN", "ERROR"}, Hint: "低于此级的日志不输出；改完立即生效"},
-					{Key: "log.path", Label: "日志文件", Value: get("log.path", app.Log.Path), Type: "text", Hint: "留空=stdout；修改后需重启"},
-					{Key: "log.memory_lines", Label: "内存日志条数", Value: get("log.memory_lines", strconv.Itoa(app.Log.MemoryLines)), Type: "number", Wide: true, Hint: "控制台「日志」页在内存里保留的条数，默认 1000。探测类 raw 单条可到数 KB，1000 条约 1–8MB；调大更占内存，调小历史翻得少。范围 100–10000，保存后立即生效。"},
+					{Key: "log.level", Label: "日志级别", Value: strings.ToLower(get("log.level", app.Log.Level)), Type: "select", Options: []string{"debug", "info", "warn", "error"}, OptionLabels: []string{"DEBUG", "INFO", "WARN", "ERROR"}, Hint: "低于此级的日志不输出"},
+					{Key: "log.path", Label: "日志文件", Value: get("log.path", app.Log.Path), Type: "text", Hint: "留空=stdout"},
+					{Key: "log.memory_lines", Label: "内存日志条数", Value: get("log.memory_lines", strconv.Itoa(app.Log.MemoryLines)), Type: "number", Wide: true, Hint: "控制台「日志」页在内存里保留的条数，默认 1000。探测类 raw 单条可到数 KB，1000 条约 1–8MB；调大更占内存，调小历史翻得少。范围 100–10000"},
 				},
 			},
 		}),
@@ -233,7 +223,7 @@ func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[stri
 			{
 				Title: "豆瓣小组与请求节奏", Hint: "抓哪些小组；同一轮里两次访问豆瓣停几秒，用来降风控。", Class: "bg-emerald-50/80 border-emerald-200", Group: "douban",
 				Items: []configField{
-					{Key: "collector.douban.groups", Label: "豆瓣小组 URL", Value: get("collector.douban.groups", strings.Join(app.Collector.Douban.Groups, "\n")), Type: "textarea", Hint: "每行一个；修改后需重启", Group: "douban"},
+					{Key: "collector.douban.groups", Label: "豆瓣小组 URL", Value: get("collector.douban.groups", strings.Join(app.Collector.Douban.Groups, "\n")), Type: "textarea", Hint: "每行一个", Group: "douban"},
 					{Key: "collector.douban.interval", Label: "请求间隔(秒)", Value: get("collector.douban.interval", strconv.Itoa(app.Collector.Douban.Interval)), Type: "number", Group: "douban", Wide: true, Hint: "同一轮里两次访问豆瓣停几秒，默认 3，用来降风控。不是上面的采集间隔。"},
 				},
 			},
@@ -256,10 +246,10 @@ func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[stri
 			{
 				Title: "AI 审核", Class: "bg-violet-50/80 border-violet-200", Tools: "llm",
 				Items: []configField{
-					{Key: "filter.ai_enabled", Label: "启用", Value: ai, Type: "checkbox", Wide: true, Hint: "关闭后跳过 AI 审核；修改后需重启"},
+					{Key: "filter.ai_enabled", Label: "启用", Value: ai, Type: "checkbox", Wide: true, Hint: "关闭后跳过 AI 审核"},
 					{Key: "secret.filter.llm.api_style", Label: "LLM 提供方", Value: apiStyle, Type: "readonly", OptionLabels: []string{"OpenAI"}},
-					{Key: "secret.filter.llm.base_url", Label: "Base URL", Value: llmBase, Type: "text", CanClear: true, Hint: "默认 https://api.deepseek.com；修改后需重启"},
-					{Key: "secret.filter.llm.api_key", Label: "API Key", Value: llmKey, Type: "text", CanClear: true, Hint: "修改后需重启"},
+					{Key: "secret.filter.llm.base_url", Label: "Base URL", Value: llmBase, Type: "text", CanClear: true, Hint: "默认 https://api.deepseek.com"},
+					{Key: "secret.filter.llm.api_key", Label: "API Key", Value: llmKey, Type: "text", CanClear: true},
 					{Key: "secret.filter.llm.model", Label: "主模型", Value: llmModel, Type: "model_select", Options: modelOpts, Wide: true, Hint: "先填 Base URL 与 Key，再拉取列表"},
 				},
 			},
@@ -273,19 +263,19 @@ func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[stri
 		}),
 		makeSection("notifier", "通知", "按渠道切换；各渠道独立配置页，保存仍写入整分区", []configBlock{
 			{
-				Title: "飞书", Hint: "发送节奏与 Webhook", Class: "bg-sky-50 border-sky-200", Group: "feishu",
+				Title: "飞书", Hint: "发送节奏与 Webhook", Class: "bg-sky-50 border-sky-200", Group: "feishu", Tools: "notify",
 				Items: append(notifyBase("feishu", "feishu"), configField{
-					Key: "secret.notifier.feishu.webhook", Label: "飞书 Webhook", Value: "", Type: "password", CanClear: true, Hint: "修改后需重启服务", Group: "feishu", Wide: true,
+					Key: "secret.notifier.feishu.webhook", Label: "飞书 Webhook", Value: "", Type: "password", CanClear: true, Group: "feishu", Wide: true,
 				}),
 			},
 			{
-				Title: "PushPlus", Hint: "发送节奏与 Token；一对多填群组编码，空则一对一", Class: "bg-orange-50 border-orange-200", Group: "pushplus",
+				Title: "PushPlus", Hint: "发送节奏与 Token；一对多填群组编码，空则一对一", Class: "bg-orange-50 border-orange-200", Group: "pushplus", Tools: "notify",
 				Items: append(notifyBase("pushplus", "pushplus"),
 					configField{
-						Key: "secret.notifier.pushplus.token", Label: "PushPlus Token", Value: ppToken, Type: "text", CanClear: true, Hint: "明文回显；修改后需重启服务", Group: "pushplus", Wide: true,
+						Key: "secret.notifier.pushplus.token", Label: "PushPlus Token", Value: ppToken, Type: "text", CanClear: true, Hint: "明文回显", Group: "pushplus", Wide: true,
 					},
 					configField{
-						Key: "secret.notifier.pushplus.topic", Label: "群组编码", Value: get("secret.notifier.pushplus.topic", env.Notifier.Pushplus.Topic), Type: "text", CanClear: true, Hint: "一对多 topic，如 doubanzufang；留空走一对一。修改后需重启", Group: "pushplus", Wide: true,
+						Key: "secret.notifier.pushplus.topic", Label: "群组编码", Value: get("secret.notifier.pushplus.topic", env.Notifier.Pushplus.Topic), Type: "text", CanClear: true, Hint: "一对多 topic，如 doubanzufang；留空走一对一", Group: "pushplus", Wide: true,
 					},
 				),
 			},
@@ -304,8 +294,13 @@ func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[stri
 
 func makeSection(id, title, desc string, blocks []configBlock) configSection {
 	var items []configField
-	for _, b := range blocks {
-		items = append(items, b.Items...)
+	for i := range blocks {
+		for j := range blocks[i].Items {
+			if RestartKeys[blocks[i].Items[j].Key] {
+				blocks[i].Items[j].NeedRestart = true
+			}
+			items = append(items, blocks[i].Items[j])
+		}
 	}
 	return configSection{ID: id, Title: title, Desc: desc, Items: items, Blocks: blocks}
 }

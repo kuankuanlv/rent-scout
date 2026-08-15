@@ -39,6 +39,7 @@ func New(opts Options) (*Service, error) {
 	srv.SetOnRulesChanged(opts.OnRulesChanged)
 	srv.SetCookieProbe(NewCookieProbe())
 	srv.SetLLMProbe(NewLLMProbe())
+	srv.SetNotifyProbe(NewNotifyProbe())
 	return &Service{
 		addr:   addr,
 		server: srv,

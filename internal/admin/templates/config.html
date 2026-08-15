@@ -84,6 +84,13 @@
             </div>
           </div>
           {{end}}
+          {{if eq .Tools "notify"}}
+          <div class="mt-3 space-y-2">
+            <button type="button" class="notify-probe-btn px-4 py-2 border border-sky-300 text-sky-900 hover:bg-sky-100 rounded-xl text-sm font-medium bg-white" data-channel="{{.Group}}">检测连通性</button>
+            <p class="notify-probe-hint text-xs text-gray-500">用当前草稿发最近一批帖（不限筛选状态）；库空则发内置样例。不写通知账本。</p>
+            <p class="notify-probe-summary text-sm font-medium text-gray-600"></p>
+          </div>
+          {{end}}
         </div>
         {{else}}
         <div class="rounded-xl border p-4 {{.Class}}"
@@ -113,6 +120,13 @@
               <p class="text-xs text-gray-400">请求应答原文见 <a href="/admin/logs{{if $.Token}}?token={{$.Token}}{{end}}" class="text-brand-600 hover:underline" target="_blank" rel="noopener">系统日志</a></p>
               <pre id="llm-probe-json" class="hidden text-xs overflow-x-auto whitespace-pre-wrap text-gray-500"></pre>
             </div>
+          </div>
+          {{end}}
+          {{if eq .Tools "notify"}}
+          <div class="mt-3 space-y-2">
+            <button type="button" class="notify-probe-btn px-4 py-2 border border-sky-300 text-sky-900 hover:bg-sky-100 rounded-xl text-sm font-medium bg-white" data-channel="{{.Group}}">检测连通性</button>
+            <p class="notify-probe-hint text-xs text-gray-500">用当前草稿发最近一批帖（不限筛选状态）；库空则发内置样例。不写通知账本。</p>
+            <p class="notify-probe-summary text-sm font-medium text-gray-600"></p>
           </div>
           {{end}}
         </div>
@@ -415,6 +429,29 @@
       btn.addEventListener('click', function(){ showGroup(btn.getAttribute('data-notify-tab')); });
     });
     showGroup('feishu');
+    var form = document.getElementById('config-section-form');
+    document.querySelectorAll('.notify-probe-btn').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var channel = btn.getAttribute('data-channel');
+        var box = btn.parentElement.querySelector('.notify-probe-summary');
+        if (box) { box.textContent = '发送中…'; box.className = 'notify-probe-summary text-sm font-medium text-gray-600'; }
+        var fd = new FormData(form);
+        fd.set('channel', channel);
+        fetch('/admin/config/notify/test{{if $.Token}}?token={{$.Token}}{{end}}', {method:'POST', body: fd, credentials:'same-origin'})
+          .then(function(r){ return r.json().then(function(j){ return {ok:r.ok, j:j}; }); })
+          .then(function(x){
+            var j = x.j || {};
+            var ok = !!j.ok;
+            if (box) {
+              box.textContent = j.summary || (ok ? '已发送' : '失败');
+              box.className = 'notify-probe-summary text-sm font-medium ' + (ok ? 'text-green-700' : 'text-red-700');
+            }
+          })
+          .catch(function(e){
+            if (box) { box.textContent = '请求失败: ' + e; box.className = 'notify-probe-summary text-sm font-medium text-red-700'; }
+          });
+      });
+    });
   })();
   </script>
   {{end}}
@@ -439,7 +476,7 @@
         <div class="{{if or (eq .Type "textarea") (eq .Type "select") (eq .Type "sources") .Wide}}md:col-span-2{{end}}"
              {{if .ShowWhen}}data-show-when="{{.ShowWhen}}"{{end}}
              {{if .Group}}data-source-group="{{.Group}}" data-notify-group="{{.Group}}"{{end}}>
-          <label class="block text-sm font-medium text-gray-700 mb-1">{{.Label}}</label>
+          <label class="block text-sm font-medium text-gray-700 mb-1">{{.Label}}{{if .NeedRestart}}<span class="ml-2 text-xs font-normal text-amber-700">修改后需重启</span>{{end}}</label>
           {{if eq .Type "textarea"}}
           <textarea name="{{.Key}}" rows="4" class="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white{{if .Readonly}} bg-gray-50{{end}}" {{if .Readonly}}disabled{{end}} {{if and .CanClear (eq .Value "")}}placeholder="留空不修改"{{end}} autocomplete="off">{{.Value}}</textarea>
           {{if and .CanClear (not .Readonly)}}<label class="inline-flex items-center gap-1 mt-1 text-xs text-gray-500"><input type="checkbox" name="clear_{{.Key}}" value="on"> 清空此项</label>{{end}}

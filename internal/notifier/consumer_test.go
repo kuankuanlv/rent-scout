@@ -196,6 +196,9 @@ func TestDualFeedbackLinksPresent(t *testing.T) {
 	if !strings.Contains(capturedText, "已处理:") {
 		t.Error("消息应包含「已处理」链接")
 	}
+	if !strings.Contains(capturedText, "http://") {
+		t.Error("三条动作链接应带可点击的 http 前缀")
+	}
 }
 
 // 双链接协议：feedbackSecret 非空时，两个 URL 都包含 exp 和 sig 参数

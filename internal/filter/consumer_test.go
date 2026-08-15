@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"rent-scout/internal/config"
 	"rent-scout/internal/models"
 	"rent-scout/internal/store"
 )
@@ -281,4 +282,22 @@ func containsIdx(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+func TestFetchAwaitingAISkipsWhenDisabled(t *testing.T) {
+	st, err := store.Open(t.TempDir() + "/t.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	off := false
+	rt := config.NewHotConfigWithSnapshot(&config.AppConfig{Filter: config.FilterConfig{AIEnabled: &off}}, nil)
+	c := NewConsumerWithOptions(NewRuleChain(nil), st, ConsumerOptions{HotConfig: rt})
+	got, err := c.FetchAwaitingAI(context.Background(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("未启用应空捞, got %d", len(got))
+	}
 }

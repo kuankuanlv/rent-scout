@@ -7,8 +7,6 @@ import (
 	"rent-scout/internal/collector/cookie"
 	"rent-scout/internal/collector/sources/douban"
 	"rent-scout/internal/config"
-	"rent-scout/internal/models"
-	"rent-scout/internal/pkglog"
 	"rent-scout/internal/store"
 )
 
@@ -32,39 +30,14 @@ type Service struct {
 }
 
 func New(opts Options) (*Service, error) {
-	log := pkglog.Component(pkglog.Main)
 	rt, db := opts.Config, opts.Store
-	cfg := rt.Get()
-	var sources []collector.Source
-	for _, name := range cfg.Collector.Sources {
-		src, ok := models.ParseSource(name)
-		if !ok {
-			log.Warn("未知采集源", "source", name)
-			continue
-		}
-		switch src {
-		case models.SourceDouban:
-			cp := cookie.NewHotConfigProvider(rt)
-			d, err := douban.NewDouban(douban.DoubanOptions{
-				GroupURLs: cfg.Collector.Douban.Groups,
-				Cookie:    cp,
-			})
-			if err != nil {
-				log.Error("源初始化失败", "source", name, "err", err)
-				continue
-			}
-			sources = append(sources, d)
-		default:
-			log.Warn("未知采集源", "source", name)
-		}
+	cp := cookie.NewHotConfigProvider(rt)
+	d, err := douban.NewDouban(douban.DoubanOptions{Config: rt, Cookie: cp})
+	if err != nil {
+		return nil, err
 	}
 	trigger := make(chan struct{}, postCreatedCap)
-	var runner *collector.Runner
-	if len(sources) == 0 {
-		log.Warn("采集未启动")
-	} else {
-		runner = collector.NewRunner(rt, db, sources, trigger)
-	}
+	runner := collector.NewRunner(rt, db, []collector.Source{d}, trigger)
 	return &Service{
 		rt:            rt,
 		db:            db,
@@ -75,7 +48,7 @@ func New(opts Options) (*Service, error) {
 	}, nil
 }
 
-// Controller 无可用源时返回 nil，管理台按采集未启动处理
+// Controller 管理台源控制；协程常驻，即使配置里源全关也返回自身
 func (s *Service) Controller() *Service {
 	if s == nil || s.runner == nil {
 		return nil

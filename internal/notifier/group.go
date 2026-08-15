@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"rent-scout/internal/actionref"
@@ -64,4 +65,14 @@ func hmacSHA256(secret, data string) string {
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write([]byte(data))
 	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func absActionURL(origin, path string) string {
+	if origin == "" || path == "" || strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
+		return path
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	return strings.TrimRight(origin, "/") + path
 }

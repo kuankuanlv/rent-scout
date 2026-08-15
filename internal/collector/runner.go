@@ -88,11 +88,34 @@ func (r *Runner) Trigger(name string) error {
 	return nil
 }
 
-// SourceEnabled 源当前启用态（SourceController 接口实现）
+func (r *Runner) configEnabled(name string) bool {
+	if r.rt == nil {
+		return true
+	}
+	app := r.rt.Get()
+	if app == nil {
+		return false
+	}
+	for _, s := range app.Collector.Sources {
+		if s == name {
+			return true
+		}
+	}
+	return false
+}
+
+// SourceEnabled 源当前启用态：热配置勾选 ∩ 管理台内存开关（默认开）
 func (r *Runner) SourceEnabled(name string) bool {
+	if !r.configEnabled(name) {
+		return false
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.enabled[name]
+	on, ok := r.enabled[name]
+	if !ok {
+		return true
+	}
+	return on
 }
 
 // hasSource 源名是否在调度清单内
@@ -117,23 +140,31 @@ func (r *Runner) runSource(ctx context.Context, src Source) {
 		interval := time.Duration(cfg.Collector.SourceInterval(src.Name())) * time.Second
 		jitter := cfg.Collector.JitterRatio
 		if !r.SourceEnabled(src.Name()) {
-			// 仅状态迁移时打一次日志，避免 1s 轮询刷屏
-			if prevEnabled {
-				log.Info("源已暂停", "source", src.Name())
+			if r.configEnabled(src.Name()) {
+				if prevEnabled {
+					log.Info("源已暂停", "source", src.Name())
+				}
+			} else {
+				log.Info("当前配置采集源未启用，无需执行", "source", src.Name())
 			}
 			prevEnabled = false
+			wait := time.Duration(cfg.Collector.SourceInterval(src.Name())) * time.Second
+			if wait > 30*time.Second {
+				wait = 30 * time.Second
+			}
+			if wait <= 0 {
+				wait = time.Second
+			}
 			select {
 			case <-ctx.Done():
 				return
 			case <-r.manual[src.Name()]:
-				// 手动触发：即使停用也跑一轮（规格 7.1 手动触发抓取）
 				if _, err := r.runSourceOnce(ctx, src, r.trigger); err != nil {
 					log.Warn("手动触发失败", "err", err)
 				} else {
 					failStreak = 0
 				}
-			case <-time.After(time.Second):
-				// 周期轮询：仅用于恢复判定，不执行轮次
+			case <-time.After(wait):
 			}
 			continue
 		}

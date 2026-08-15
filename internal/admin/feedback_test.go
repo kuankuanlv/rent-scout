@@ -13,7 +13,28 @@ import (
 
 	"rent-scout/internal/config"
 	"rent-scout/internal/models"
+	"rent-scout/internal/notifier"
 )
+
+func pref(id int64, secret string) string {
+	return notifier.SealPostRef(id, secret)
+}
+
+func fRef(id int64, action, secret, extra string) string {
+	u := "/f?p=" + pref(id, secret) + "&action=" + action
+	if extra != "" {
+		u += extra
+	}
+	return u
+}
+
+func hRef(id int64, secret, extra string) string {
+	u := "/h?p=" + pref(id, secret)
+	if extra != "" {
+		u += extra
+	}
+	return u
+}
 
 // feedbackSig 生成反馈链接签名（与 notifier.BuildFeedbackURL 同算法，供测试构造合法链接）
 func feedbackSig(postID int64, action string, exp int64, secret string) string {
@@ -28,7 +49,7 @@ func TestFeedbackNoToken(t *testing.T) {
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}}, "", nil)
 
-	req := httptest.NewRequest(http.MethodGet, "/f?post=1&action=useful", nil)
+	req := httptest.NewRequest(http.MethodGet, fRef(1, "useful", "", ""), nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -46,7 +67,7 @@ func TestFeedbackSigned(t *testing.T) {
 	srv := newTestServerWithStore(t, s, &config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}}, "secret", nil)
 
 	// 无 sig → 失败页
-	req := httptest.NewRequest(http.MethodGet, "/f?post=1&action=useful", nil)
+	req := httptest.NewRequest(http.MethodGet, fRef(1, "useful", "secret", ""), nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -59,7 +80,7 @@ func TestFeedbackSigned(t *testing.T) {
 	// 过期 exp（过去时间戳）→ 失败页
 	expired := time.Now().Add(-time.Hour).Unix()
 	req = httptest.NewRequest(http.MethodGet,
-		fmt.Sprintf("/f?post=1&action=useful&exp=%d&sig=%s", expired, feedbackSig(1, "useful", expired, "secret")), nil)
+		fRef(1, "useful", "secret", fmt.Sprintf("&exp=%d&sig=%s", expired, feedbackSig(1, "useful", expired, "secret"))), nil)
 	rec = httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "无效或已过期") {
@@ -69,7 +90,7 @@ func TestFeedbackSigned(t *testing.T) {
 	// 错误 sig（exp 未来有效，排除过期干扰）→ 失败页
 	future := time.Now().Add(time.Hour).Unix()
 	req = httptest.NewRequest(http.MethodGet,
-		fmt.Sprintf("/f?post=1&action=useful&exp=%d&sig=deadbeef", future), nil)
+		fRef(1, "useful", "secret", fmt.Sprintf("&exp=%d&sig=deadbeef", future)), nil)
 	rec = httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "无效或已过期") {
@@ -78,7 +99,7 @@ func TestFeedbackSigned(t *testing.T) {
 
 	// 正确签名 → 200 + 成功文案 + DB 有记录
 	sig := feedbackSig(1, "useful", future, "secret")
-	url := fmt.Sprintf("/f?post=1&action=useful&exp=%d&sig=%s", future, sig)
+	url := fRef(1, "useful", "secret", fmt.Sprintf("&exp=%d&sig=%s", future, sig))
 	req = httptest.NewRequest(http.MethodGet, url, nil)
 	rec = httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
@@ -110,7 +131,7 @@ func TestFeedbackBadAction(t *testing.T) {
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}}, "secret", nil)
 
-	req := httptest.NewRequest(http.MethodGet, "/f?post=1&action=bad", nil)
+	req := httptest.NewRequest(http.MethodGet, fRef(1, "bad", "secret", ""), nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
@@ -129,7 +150,7 @@ func TestFeedbackAuthDisabled(t *testing.T) {
 	// 无效签名 → 应放行（开关为准）
 	future := time.Now().Add(time.Hour).Unix()
 	req := httptest.NewRequest(http.MethodGet,
-		fmt.Sprintf("/f?post=1&action=useful&exp=%d&sig=invalid", future), nil)
+		fRef(1, "useful", "secret", fmt.Sprintf("&exp=%d&sig=invalid", future)), nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -140,7 +161,7 @@ func TestFeedbackAuthDisabled(t *testing.T) {
 	}
 
 	// 完全无 sig → 也应放行
-	req = httptest.NewRequest(http.MethodGet, "/f?post=2&action=useless", nil)
+	req = httptest.NewRequest(http.MethodGet, fRef(2, "useless", "secret", ""), nil)
 	rec = httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -158,7 +179,7 @@ func TestFeedbackAuthEnabledInvalidSig(t *testing.T) {
 	// 无效签名 → 应拒绝
 	future := time.Now().Add(time.Hour).Unix()
 	req := httptest.NewRequest(http.MethodGet,
-		fmt.Sprintf("/f?post=1&action=useful&exp=%d&sig=invalid", future), nil)
+		fRef(1, "useful", "secret", fmt.Sprintf("&exp=%d&sig=invalid", future)), nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -183,7 +204,7 @@ func TestHandledLinkSigned(t *testing.T) {
 
 	// 错签 → 失败页，HandledAt 仍空，无反馈
 	req := httptest.NewRequest(http.MethodGet,
-		fmt.Sprintf("/h?post=%d&exp=%d&sig=deadbeef", id, future), nil)
+		hRef(id, "secret", fmt.Sprintf("&exp=%d&sig=deadbeef", future)), nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "无效或已过期") {
@@ -204,7 +225,7 @@ func TestHandledLinkSigned(t *testing.T) {
 	// 正确签名 → 成功 + HandledAt + 仍无 feedbacks
 	sig := feedbackSig(id, "handled", future, "secret")
 	req = httptest.NewRequest(http.MethodGet,
-		fmt.Sprintf("/h?post=%d&exp=%d&sig=%s", id, future, sig), nil)
+		hRef(id, "secret", fmt.Sprintf("&exp=%d&sig=%s", future, sig)), nil)
 	rec = httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "已标记为已处理") {
@@ -233,7 +254,7 @@ func TestHandledLinkAuthDisabled(t *testing.T) {
 	id := postID(t, s, "h2")
 	srv := newTestServerWithStore(t, s, &config.AppConfig{Admin: config.AdminConfig{AuthRequired: false}}, "secret", nil)
 
-	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/h?post=%d", id), nil)
+	req := httptest.NewRequest(http.MethodGet, hRef(id, "secret", ""), nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "已标记为已处理") {

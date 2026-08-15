@@ -220,7 +220,7 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 	winTo := end.Format("01-02 15:04")
 	round := r.nextRound(src.Name())
 	mode := roundMode(catchUp)
-	log.Info(fmt.Sprintf("==== %s 第%d轮开始 %s 时间窗=%s~%s 水位=%s ====",
+	log.Info(fmt.Sprintf("============ %s 第%d轮开始 %s 时间窗=%s~%s 水位=%s ============",
 		src.Name(), round, mode, winFrom, winTo, formatWatermark(prog.SeenNewest)))
 
 	var wm time.Time
@@ -260,7 +260,7 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 		}
 	}
 	endRound := func() {
-		log.Info(fmt.Sprintf("==== %s 第%d轮结束 共%d页 列表%d条 新帖%d条 下次=%s ====",
+		log.Info(fmt.Sprintf("============ %s 第%d轮结束 共%d页 列表%d条 新帖%d条 下次=%s ============",
 			src.Name(), round, len(fetched), listCount, newPosts, formatNextPos(prog)))
 	}
 	noteGroup := func(to string) {

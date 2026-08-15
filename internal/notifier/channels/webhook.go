@@ -13,7 +13,7 @@ type webhookChannel struct {
 	name    string
 	url     string
 	build   func(items []notifier.NotifyItem) ([]byte, error) // 构造载荷
-	signURL func(rawURL string) (string, error)              // 可选 URL 签名（钉钉加签）
+	signURL func(rawURL string) (string, error)               // 可选 URL 签名（钉钉加签）
 }
 
 func (c *webhookChannel) Name() string { return c.name }
@@ -69,9 +69,11 @@ func textPayload(items []notifier.NotifyItem) string {
 		if it.Commuting != "" {
 			fmt.Fprintf(&sb, "通勤: %s\n", it.Commuting)
 		}
-		if it.Reason != "" {
-			fmt.Fprintf(&sb, "推荐理由: %s\n", it.Reason)
+		reason := strings.TrimSpace(it.Reason)
+		if reason == "" {
+			reason = "暂无"
 		}
+		fmt.Fprintf(&sb, "AI审核原因:%s\n", reason)
 		if it.FeedbackURL != "" {
 			fmt.Fprintf(&sb, "反馈: 有用 %s\n", it.FeedbackURL)
 		}

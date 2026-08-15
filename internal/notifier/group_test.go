@@ -43,36 +43,35 @@ func TestGroupSorting(t *testing.T) {
 // 反馈链接：HMAC 签名格式（规格 7.1）
 func TestBuildFeedbackURL(t *testing.T) {
 	u := BuildFeedbackURL(123, "useful", "mysecret")
-	if !strings.Contains(u, "/f?post=123") {
-		t.Errorf("链接: %s", u)
+	if strings.Contains(u, "123") || strings.Contains(u, "post=") {
+		t.Errorf("链接不应出现帖子 id: %s", u)
 	}
-	if !strings.Contains(u, "action=useful") || !strings.Contains(u, "exp=") || !strings.Contains(u, "sig=") {
+	if !strings.Contains(u, "/f?p=") || !strings.Contains(u, "action=useful") || !strings.Contains(u, "sig=") {
 		t.Errorf("链接缺字段: %s", u)
+	}
+	id, err := OpenPostRef(strings.Split(strings.TrimPrefix(u, "/f?p="), "&")[0], "mysecret")
+	if err != nil || id != 123 {
+		t.Errorf("解开引用: id=%d err=%v", id, err)
 	}
 }
 
-// 已处理链接：走 /h，签名载荷含 handled
 func TestBuildHandledURL(t *testing.T) {
 	u := BuildFeedbackURL(123, "handled", "mysecret")
-	if !strings.HasPrefix(u, "/h?post=123") {
-		t.Errorf("已处理链接应走 /h: %s", u)
+	if !strings.HasPrefix(u, "/h?p=") || strings.Contains(u, "123") {
+		t.Errorf("已处理链接: %s", u)
 	}
 	if strings.Contains(u, "action=") {
 		t.Errorf("/h 不应带 action 查询参数: %s", u)
 	}
-	if !strings.Contains(u, "exp=") || !strings.Contains(u, "sig=") {
-		t.Errorf("已处理链接缺签名字段: %s", u)
-	}
 }
 
-// 无 secret：不签名（auth_required=false 全开放场景）
 func TestBuildFeedbackURLNoSecret(t *testing.T) {
 	u := BuildFeedbackURL(123, "useless", "")
-	if strings.Contains(u, "sig=") {
-		t.Errorf("无 secret 不应签名: %s", u)
+	if strings.Contains(u, "sig=") || strings.Contains(u, "123") {
+		t.Errorf("无 secret: %s", u)
 	}
 	h := BuildFeedbackURL(123, "handled", "")
-	if h != "/h?post=123" {
+	if !strings.HasPrefix(h, "/h?p=") || strings.Contains(h, "123") {
 		t.Errorf("无 secret 已处理: %s", h)
 	}
 }

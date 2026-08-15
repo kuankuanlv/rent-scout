@@ -43,50 +43,81 @@ func (s *Store) SaveFilterResult(fr models.FilterResult) error {
 	return nil
 }
 
-// ListFilterTags 帖子页标签下拉：已写过的 address_tags ∪ 启用白名单词，去重排序
+// ListFilterTags 帖子页标签下拉：硬规则 HitTags（白名单/黑名单/默认拒绝），全状态帖一并分组；AI 徽章不纳入
 func (s *Store) ListFilterTags() ([]string, error) {
-	seen := map[string]struct{}{}
-	var out []string
-	add := func(raw string) {
-		t := strings.TrimSpace(raw)
-		if t == "" {
-			return
-		}
-		if _, ok := seen[t]; ok {
-			return
-		}
-		seen[t] = struct{}{}
-		out = append(out, t)
-	}
-	rows, err := s.db.Query(`SELECT DISTINCT j.value FROM posts, json_each(posts.address_tags) AS j
-		WHERE typeof(j.value) = 'text' AND TRIM(j.value) != ''`)
+	rows, err := s.db.Query(`SELECT p.status, p.address_tags,
+		fr.status, fr.rejected_by, fr.hard_rules, fr.ai_result,
+		CASE WHEN fr.post_id IS NULL THEN 0 ELSE 1 END
+		FROM posts p
+		LEFT JOIN filter_results fr ON fr.post_id = p.id`)
 	if err != nil {
-		return nil, fmt.Errorf("列举地址标签: %w", err)
+		return nil, fmt.Errorf("列举命中标签: %w", err)
 	}
 	defer rows.Close()
+
+	counts := map[string]int{}
 	for rows.Next() {
-		var v string
-		if err := rows.Scan(&v); err != nil {
+		var p models.RentPost
+		var tagsJSON string
+		var frStatus, rejectedBy, hardJSON, aiJSON sql.NullString
+		var hasFR int
+		if err := rows.Scan(&p.Status, &tagsJSON, &frStatus, &rejectedBy, &hardJSON, &aiJSON, &hasFR); err != nil {
 			return nil, err
 		}
-		add(v)
+		if tagsJSON != "" {
+			if err := json.Unmarshal([]byte(tagsJSON), &p.AddressTags); err != nil {
+				return nil, fmt.Errorf("解析地址标签: %w", err)
+			}
+		}
+		var fr models.FilterResult
+		ok := hasFR == 1
+		if ok {
+			fr.Status = frStatus.String
+			fr.RejectedBy = rejectedBy.String
+			if hardJSON.Valid && hardJSON.String != "" {
+				if err := json.Unmarshal([]byte(hardJSON.String), &fr.HardRules); err != nil {
+					return nil, fmt.Errorf("解析命中规则: %w", err)
+				}
+			}
+			if aiJSON.Valid && aiJSON.String != "" {
+				fr.AI = &models.AIResult{}
+				if err := json.Unmarshal([]byte(aiJSON.String), fr.AI); err != nil {
+					return nil, fmt.Errorf("解析 AI 结果: %w", err)
+				}
+			}
+		}
+		for _, t := range hitTagsFrom(&p, fr, ok) {
+			if t.Kind == "ai" {
+				continue // AI 徽章走独立筛选条件，不进标签下拉
+			}
+			counts[t.Text]++
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	rules, err := s.ListRules(true)
-	if err != nil {
-		return nil, err
+
+	type pair struct {
+		tag   string
+		count int
 	}
-	for _, r := range rules {
-		if r.Type != models.RuleTypeWhitelist {
-			continue
-		}
-		for _, kw := range strings.FieldsFunc(r.Value, isTagSep) {
-			add(kw)
-		}
+	pairs := make([]pair, 0, len(counts))
+	for tag, n := range counts {
+		pairs = append(pairs, pair{tag, n})
 	}
-	sort.Strings(out)
+	sort.Slice(pairs, func(i, j int) bool {
+		if pairs[i].count != pairs[j].count {
+			return pairs[i].count > pairs[j].count
+		}
+		return strings.ToLower(pairs[i].tag) < strings.ToLower(pairs[j].tag)
+	})
+	out := make([]string, len(pairs))
+	for i, p := range pairs {
+		out[i] = p.tag
+	}
+	if out == nil {
+		out = []string{}
+	}
 	return out, nil
 }
 
@@ -170,13 +201,13 @@ func (s *Store) AttachHitTags(list []models.RentPost) error {
 	if err := rows.Err(); err != nil {
 		return err
 	}
-		for i := range list {
-			fr, ok := byID[list[i].ID]
-			list[i].HitTags = hitTagsFrom(&list[i], fr, ok)
-			if ok && fr.AI != nil {
-				list[i].AIReason = fr.AI.Reason
-			}
+	for i := range list {
+		fr, ok := byID[list[i].ID]
+		list[i].HitTags = hitTagsFrom(&list[i], fr, ok)
+		if ok && fr.AI != nil {
+			list[i].AIReason = fr.AI.Reason
 		}
+	}
 	return nil
 }
 
@@ -198,39 +229,31 @@ func hitTagsFrom(p *models.RentPost, fr models.FilterResult, hasFR bool) []model
 	for _, t := range p.AddressTags {
 		add("whitelist", t)
 	}
-		if !hasFR {
-			if p.Status == models.PostStatusRejected {
-				add("blacklist", "默认拒绝")
-			}
-			return out
-		}
-		hardKind := "whitelist"
-		if p.Status == models.PostStatusRejected || fr.Status == models.PostStatusRejected {
-			hardKind = "blacklist"
-		}
-		for _, h := range fr.HardRules {
-			for _, part := range strings.FieldsFunc(h.Reason, isTagSep) {
-				add(hardKind, part)
-			}
-		}
-		if (p.Status == models.PostStatusRejected || fr.Status == models.PostStatusRejected) &&
-			len(fr.HardRules) == 0 && fr.AI == nil {
+	if !hasFR {
+		if p.Status == models.PostStatusRejected {
 			add("blacklist", "默认拒绝")
 		}
-	if fr.AI != nil {
-		text := "AI"
-		if strings.TrimSpace(fr.AI.Reason) != "" {
-			text = truncateRunes(strings.TrimSpace(fr.AI.Reason), 20)
+		return out
+	}
+	hardKind := "whitelist"
+	if p.Status == models.PostStatusRejected || fr.Status == models.PostStatusRejected {
+		hardKind = "blacklist"
+	}
+	for _, h := range fr.HardRules {
+		for _, part := range strings.FieldsFunc(h.Reason, isTagSep) {
+			add(hardKind, part)
 		}
-		add("ai", text)
+	}
+	if (p.Status == models.PostStatusRejected || fr.Status == models.PostStatusRejected) &&
+		len(fr.HardRules) == 0 && fr.AI == nil {
+		add("blacklist", "默认拒绝")
+	}
+	if fr.AI != nil {
+		if fr.AI.Passed {
+			add("ai", "AI通过")
+		} else {
+			add("ai", "AI未通过")
+		}
 	}
 	return out
-}
-
-func truncateRunes(s string, n int) string {
-	rs := []rune(s)
-	if len(rs) <= n {
-		return s
-	}
-	return string(rs[:n]) + "…"
 }

@@ -51,7 +51,7 @@
 {{end}}
 
 {{define "nav_links"}}
-<a href="/admin{{if .Token}}?token={{.Token}}{{end}}" class="block md:inline-block px-3 py-2 rounded-lg text-sm {{if eq .Active "posts"}}bg-brand-50 text-brand-700 font-semibold{{else}}text-gray-600 hover:bg-gray-50{{end}}">📋 帖子</a>
+<a href="/admin/posts{{if .Token}}?token={{.Token}}{{end}}" class="block md:inline-block px-3 py-2 rounded-lg text-sm {{if eq .Active "posts"}}bg-brand-50 text-brand-700 font-semibold{{else}}text-gray-600 hover:bg-gray-50{{end}}">📋 帖子</a>
 <a href="/admin/stats{{if .Token}}?token={{.Token}}{{end}}" class="block md:inline-block px-3 py-2 rounded-lg text-sm {{if eq .Active "stats"}}bg-brand-50 text-brand-700 font-semibold{{else}}text-gray-600 hover:bg-gray-50{{end}}">📊 统计</a>
 <a href="/admin/config{{if .Token}}?token={{.Token}}{{end}}" class="block md:inline-block px-3 py-2 rounded-lg text-sm {{if eq .Active "config"}}bg-brand-50 text-brand-700 font-semibold{{else}}text-gray-600 hover:bg-gray-50{{end}}">⚙️ 配置</a>
 <a href="/admin/logs{{if .Token}}?token={{.Token}}{{end}}" class="block md:inline-block px-3 py-2 rounded-lg text-sm {{if eq .Active "logs"}}bg-brand-50 text-brand-700 font-semibold{{else}}text-gray-600 hover:bg-gray-50{{end}}">📜 日志</a>

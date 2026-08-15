@@ -96,13 +96,49 @@ func TestListFilterTags(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.CreateRule(models.Rule{
-		Name: "地点", Type: models.RuleTypeWhitelist, Value: "朝阳门,望京", Enabled: true, Priority: 1,
+	rej := models.RentPost{
+		Source: "douban", ExternalID: "t2", Title: "中介房", CollectedAt: time.Now(),
+		Status: models.PostStatusRejected,
+	}
+	if _, err := s.InsertPost(rej); err != nil {
+		t.Fatal(err)
+	}
+	id := int64(0)
+	_ = s.db.QueryRow(`SELECT id FROM posts WHERE external_id='t2'`).Scan(&id)
+	if err := s.SaveFilterResult(models.FilterResult{
+		PostID: id, Status: models.PostStatusRejected, Stage: models.StageHardRule,
+		RejectedBy: "黑名单命中:中介", HardRules: []models.RuleHit{{RuleID: 1, Reason: "中介"}},
+		DecidedAt: time.Now(),
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.CreateRule(models.Rule{
-		Name: "黑", Type: models.RuleTypeBlacklist, Value: "中介", Enabled: true, Priority: 2,
+	def := models.RentPost{
+		Source: "douban", ExternalID: "t3", Title: "无关", CollectedAt: time.Now(),
+		Status: models.PostStatusRejected,
+	}
+	if _, err := s.InsertPost(def); err != nil {
+		t.Fatal(err)
+	}
+	var defID int64
+	_ = s.db.QueryRow(`SELECT id FROM posts WHERE external_id='t3'`).Scan(&defID)
+	if err := s.SaveFilterResult(models.FilterResult{
+		PostID: defID, Status: models.PostStatusRejected, Stage: models.StageHardRule,
+		RejectedBy: "默认拒绝", DecidedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	passAI := models.RentPost{
+		Source: "douban", ExternalID: "t4", Title: "ai", CollectedAt: time.Now(),
+		Status: models.PostStatusPassed, AddressTags: []string{"望京"},
+	}
+	if _, err := s.InsertPost(passAI); err != nil {
+		t.Fatal(err)
+	}
+	var aiID int64
+	_ = s.db.QueryRow(`SELECT id FROM posts WHERE external_id='t4'`).Scan(&aiID)
+	if err := s.SaveFilterResult(models.FilterResult{
+		PostID: aiID, Status: models.PostStatusPassed, Stage: models.StageAIRule,
+		DecidedAt: time.Now(), AI: &models.AIResult{Passed: true, Reason: "合适"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -111,14 +147,29 @@ func TestListFilterTags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]bool{"望京": true, "14号线": true, "朝阳门": true}
-	if len(got) != 3 {
-		t.Fatalf("tags = %v, want 3 个（不含黑名单）", got)
+	want := map[string]bool{"望京": true, "14号线": true, "中介": true, "默认拒绝": true}
+	if len(got) != len(want) {
+		t.Fatalf("tags = %v, want %v（不含 AI 徽章）", got, want)
 	}
 	for _, tname := range got {
 		if !want[tname] {
 			t.Errorf("多余标签 %q", tname)
 		}
+	}
+
+	byBlack, err := s.ListPosts(PostListFilter{Tag: "中介"}, 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(byBlack) != 1 || byBlack[0].ExternalID != "t2" {
+		t.Fatalf("按黑名单标签筛选 = %+v", byBlack)
+	}
+	byAI, err := s.ListPosts(PostListFilter{AI: "pass"}, 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(byAI) != 1 || byAI[0].ExternalID != "t4" {
+		t.Fatalf("按 AI 独立条件筛选 = %+v", byAI)
 	}
 }
 
@@ -708,7 +759,7 @@ func TestListPosts(t *testing.T) {
 		t.Errorf("全量 = %d, want 3", len(all))
 	}
 	if all[0].Status != models.PostStatusRejected {
-		t.Errorf("倒序错误: 首帖状态 = %s, want rejected（id 最大）", all[0].Status)
+		t.Errorf("倒序错误: 首帖状态 = %s, want rejected（时间/id 最大）", all[0].Status)
 	}
 
 	passed, err := s.ListPosts(PostListFilter{Status: models.PostStatusPassed}, 10, 0)
@@ -725,6 +776,46 @@ func TestListPosts(t *testing.T) {
 	}
 	if len(page) != 1 || page[0].Status != models.PostStatusPassed {
 		t.Errorf("分页 = %+v, want 1 帖 passed", page)
+	}
+}
+
+// ListPosts 按发布时间倒序：id 更大但发布时间更早的帖应排在后面（回归 datetime() 解不了 Go 时间格式）
+func TestListPostsOrderByPublishedAt(t *testing.T) {
+	s := newTestStore(t)
+	defer s.Close()
+
+	olderPub := time.Date(2026, 8, 6, 0, 36, 0, 0, time.Local)
+	newerPub := time.Date(2026, 8, 11, 22, 35, 0, 0, time.Local)
+	collected := time.Date(2026, 8, 15, 20, 0, 0, 0, time.Local)
+
+	// 先插发布时间更新、id 会更小
+	if _, err := s.InsertPost(models.RentPost{
+		Source: "douban", ExternalID: "ord-early-id", Title: "晚发",
+		PublishedAt: newerPub, CollectedAt: collected, Status: models.PostStatusPassed,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// 后插发布时间更早、id 会更大
+	if _, err := s.InsertPost(models.RentPost{
+		Source: "douban", ExternalID: "ord-late-id", Title: "早发",
+		PublishedAt: olderPub, CollectedAt: collected, Status: models.PostStatusPassed,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	list, err := s.ListPosts(PostListFilter{}, 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("len = %d, want 2", len(list))
+	}
+	if list[0].ExternalID != "ord-early-id" || list[1].ExternalID != "ord-late-id" {
+		t.Fatalf("顺序 = [%s, %s], want [ord-early-id, ord-late-id]（按发布时间，不是 id）",
+			list[0].ExternalID, list[1].ExternalID)
+	}
+	if list[0].ID > list[1].ID {
+		t.Fatalf("回归场景：首帖 id=%d > 次帖 id=%d，说明仍在按 id 排", list[0].ID, list[1].ID)
 	}
 }
 

@@ -39,6 +39,10 @@ func (s *Store) ListPosts(f PostListFilter, limit, offset int) ([]models.RentPos
 	return s.posts.ListPosts(f, limit, offset)
 }
 
+func (s *Store) CountPosts(f PostListFilter) (int, error) {
+	return s.posts.CountPosts(f)
+}
+
 func (s *Store) GetPost(id int64) (models.RentPost, bool, error) {
 	return s.posts.GetPost(id)
 }
@@ -97,8 +101,8 @@ func (s *Store) ResetNotification(postID int64, channel string) (bool, error) {
 	return s.notify.ResetNotification(postID, channel)
 }
 
-func (s *Store) FetchNotifyBatch(channels []string, limit int, requireAIPassed bool) ([]models.RentPost, error) {
-	return s.notify.FetchNotifyBatch(channels, limit, requireAIPassed)
+func (s *Store) FetchNotifyBatch(channels []string, limit int) ([]models.RentPost, error) {
+	return s.notify.FetchNotifyBatch(channels, limit)
 }
 
 func (s *Store) NotificationStatuses(postIDs []int64, channels []string) (map[int64]map[string]string, error) {

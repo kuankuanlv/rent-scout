@@ -308,17 +308,7 @@ func newNotifierConsumer(rt *config.HotConfig, db *store.Store) *pipeline.Consum
 		chs...)
 	return pipeline.New(
 		func(ctx context.Context, limit int) ([]models.RentPost, error) {
-			requireAI := false
-			cfg := rt.Get()
-			env := rt.Secrets()
-			if cfg.Filter.AIEnabled != nil && *cfg.Filter.AIEnabled && env.Filter.LLM.APIKey != "" {
-				n, err := db.CountEnabledAIRules()
-				if err != nil {
-					return nil, err
-				}
-				requireAI = n > 0
-			}
-			return db.FetchNotifyBatch(channelNames(chs), limit, requireAI)
+			return db.FetchNotifyBatch(channelNames(chs), limit)
 		},
 		n.ProcessBatch,
 		pipeline.Options{

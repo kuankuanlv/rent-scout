@@ -17,6 +17,12 @@ func TestConfigTabs(t *testing.T) {
 	s := newAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
+	if err := store.SetConfig(s, "secret.notifier.pushplus.token", "pp-token-plain"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetConfig(s, config.KeyDoubanCookieCloudPwd, "cc-pass-plain"); err != nil {
+		t.Fatal(err)
+	}
 
 	get := func(path string) (int, string) {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
@@ -107,6 +113,12 @@ func TestConfigTabs(t *testing.T) {
 	}
 	if !strings.Contains(body, "检测 Cookie") || !strings.Contains(body, "检测 CookieCloud") {
 		t.Errorf("Cookie 检测应放在 Cookie 配置块内")
+	}
+	if strings.Contains(body, `type="password" name="secret.collector.douban.cookiecloud_password"`) {
+		t.Errorf("CookieCloud 密码应为明文 text")
+	}
+	if !strings.Contains(body, "cc-pass-plain") {
+		t.Errorf("CookieCloud 密码应明文回显")
 	}
 	if !strings.Contains(body, "采集暂未实现") {
 		t.Errorf("微博子 tab 应有暂未实现提示")
@@ -209,6 +221,15 @@ func TestConfigTabs(t *testing.T) {
 	}
 	if !strings.Contains(body, "notifier.batch_size") {
 		t.Errorf("notifier 各渠道应含组批大小")
+	}
+	if !strings.Contains(body, "两者满足其一即执行发送") && !strings.Contains(body, "满足其一即执行发送") {
+		t.Errorf("重试间隔/组批大小应提示二者满足其一即发送")
+	}
+	if strings.Contains(body, `type="password" name="secret.notifier.pushplus.token"`) {
+		t.Errorf("PushPlus Token 应为明文 text")
+	}
+	if !strings.Contains(body, "pp-token-plain") {
+		t.Errorf("PushPlus Token 应明文回显")
 	}
 	if !strings.Contains(body, `name="notifier.channels"`) || !strings.Contains(body, `>启用<`) {
 		t.Errorf("各通知渠道应有独立启用勾选")

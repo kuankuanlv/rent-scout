@@ -346,16 +346,25 @@ func TestRunnerResetsWhenRangeChanges(t *testing.T) {
 }
 
 func TestFormatPageCursor(t *testing.T) {
-	if got := formatPageCursor(""); got != "组0 offset=0" {
+	if got := formatPageCursor(""); got != "组1第1页" {
 		t.Errorf("空游标 = %s", got)
 	}
-	if got := formatPageCursor("1:50"); got != "组1 offset=50" {
+	if got := formatPageCursor("1:50"); got != "组2第3页" {
 		t.Errorf("1:50 = %s", got)
 	}
-	if got := formatStartPos(true, ""); got != "追新·首页" {
+	if got := formatStartPos(true, ""); got != "追新·组1第1页" {
 		t.Errorf("追新起点 = %s", got)
 	}
-	if got := formatNextPos(store.SourceProgress{SeenNewest: "x"}); got != "追新·首页" {
+	if got := formatNextPos(store.SourceProgress{SeenNewest: "x"}); got != "追新·组1第1页" {
 		t.Errorf("追新下次 = %s", got)
+	}
+	if got := formatSkipSummary(8, 2, true, false); got != "已存在8 超窗新2 撞水位" {
+		t.Errorf("跳过摘要 = %s", got)
+	}
+	if got := nextGroupMsg("douban", 3, "0:0", "1:0"); !strings.Contains(got, "小组串行") || !strings.Contains(got, "组2") {
+		t.Errorf("换组日志 = %s", got)
+	}
+	if got := nextGroupMsg("douban", 3, "0:0", "0:25"); got != "" {
+		t.Errorf("同组翻页不应打串行日志, got %s", got)
 	}
 }

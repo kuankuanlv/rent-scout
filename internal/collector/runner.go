@@ -31,6 +31,7 @@ type Runner struct {
 	mu      sync.Mutex
 	enabled map[string]bool
 	manual  map[string]chan struct{}
+	roundNo map[string]int // 进程内按源累加，重启从 1
 }
 
 // NewRunner 创建调度器
@@ -42,7 +43,7 @@ func NewRunner(rt *config.HotConfig, st *store.Store, sources []Source, trigger 
 		manual[src.Name()] = make(chan struct{}, 1)
 	}
 	return &Runner{rt: rt, store: st, sources: sources, trigger: trigger,
-		enabled: enabled, manual: manual}
+		enabled: enabled, manual: manual, roundNo: make(map[string]int, len(sources))}
 }
 
 // Run 启动全部源的独立 goroutine（源间并发，互不阻塞）；ctx 取消即全部停止
@@ -138,7 +139,7 @@ func (r *Runner) runSource(ctx context.Context, src Source) {
 		}
 		prevEnabled = true
 		t0 := time.Now()
-		res, err := r.runSourceOnce(ctx, src, r.trigger)
+		_, err := r.runSourceOnce(ctx, src, r.trigger)
 		if err != nil {
 			failStreak++
 			wait := time.Duration(1<<min(failStreak-1, 5)) * time.Minute
@@ -151,16 +152,7 @@ func (r *Runner) runSource(ctx context.Context, src Source) {
 		}
 		failStreak = 0
 		wait := jittered(interval, jitter)
-		log.Info("本轮结束，等待下一轮",
-			"source", src.Name(),
-			"窗从", res.WindowFrom,
-			"窗至", res.WindowTo,
-			"本轮页", joinPages(res.Fetched),
-			"新帖", res.NewPosts,
-			"下次", res.NextPos,
-			"seen_newest", formatWatermark(res.SeenNewest),
-			"wait_s", int(wait.Seconds()),
-		)
+		log.Info("等待下一轮", "wait_s", int(wait.Seconds()))
 		if !waitRound(ctx, r.manual[src.Name()], wait) {
 			return
 		}
@@ -179,7 +171,9 @@ func waitRound(ctx context.Context, manual <-chan struct{}, wait time.Duration) 
 }
 
 type roundResult struct {
+	Round      int
 	NewPosts   int
+	ListCount  int
 	Fetched    []string
 	NextPos    string
 	SeenNewest string
@@ -194,6 +188,7 @@ func (r *Runner) RunOnce(ctx context.Context, src Source, trigger chan<- struct{
 }
 
 const maxPagesPerRound = 10
+const listPageSize = 25 // 和豆瓣小组讨论列表每页条数一致
 
 // runSourceOnce 单轮采集：最多翻 10 页，进度写回 offset（page + seen_newest）
 func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- struct{}) (roundResult, error) {
@@ -223,13 +218,10 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 	}
 	winFrom := start.Format("01-02 15:04")
 	winTo := end.Format("01-02 15:04")
-	log.Info("开始本轮采集",
-		"source", src.Name(),
-		"窗从", winFrom,
-		"窗至", winTo,
-		"起点", formatStartPos(catchUp, listCursor),
-		"seen_newest", formatWatermark(prog.SeenNewest),
-	)
+	round := r.nextRound(src.Name())
+	mode := roundMode(catchUp)
+	log.Info(fmt.Sprintf("==== %s 第%d轮开始 %s 时间窗=%s~%s 水位=%s ====",
+		src.Name(), round, mode, winFrom, winTo, formatWatermark(prog.SeenNewest)))
 
 	var wm time.Time
 	if prog.SeenNewest != "" {
@@ -243,6 +235,7 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 		return r.store.SetProgress(src.Name(), prog)
 	}
 	newPosts := 0
+	listCount := 0
 	pages := 0
 	fetched := make([]string, 0, maxPagesPerRound)
 	firstHTTP := true
@@ -260,51 +253,73 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 	}
 	out := func() roundResult {
 		return roundResult{
-			NewPosts: newPosts, Fetched: append([]string(nil), fetched...),
+			Round: round, NewPosts: newPosts, ListCount: listCount,
+			Fetched: append([]string(nil), fetched...),
 			NextPos: formatNextPos(prog), SeenNewest: prog.SeenNewest,
 			WindowFrom: winFrom, WindowTo: winTo,
 		}
 	}
+	endRound := func() {
+		log.Info(fmt.Sprintf("==== %s 第%d轮结束 共%d页 列表%d条 新帖%d条 下次=%s ====",
+			src.Name(), round, len(fetched), listCount, newPosts, formatNextPos(prog)))
+	}
+	noteGroup := func(to string) {
+		if m := nextGroupMsg(src.Name(), round, listCursor, to); m != "" {
+			log.Info(m)
+		}
+	}
+	type numbered struct {
+		idx int
+		it  ListItem
+	}
 	for pages < maxPagesPerRound {
 		pace()
-		pageLabel := formatFetchedPage(catchUp, listCursor)
+		pageLabel := formatPageCursor(listCursor)
 		items, next, err := src.List(ctx, listCursor)
 		if err != nil {
 			if cookieDead(err) {
 				log.Error("cookie 失效，本轮结束", "err", err)
+				endRound()
 				return out(), nil
 			}
 			return roundResult{}, fmt.Errorf("列表页: %w", err)
 		}
 		pages++
+		listCount += len(items)
 		fetched = append(fetched, pageLabel)
-		log.Info("本轮拉页",
-			"source", src.Name(),
-			"页", pageLabel,
-			"条目", len(items),
-		)
-		var fresh []ListItem
+		log.Info(fmt.Sprintf("【%s 第%d轮 %s %s 本页%d条】",
+			src.Name(), round, mode, pageLabel, len(items)))
+		var fresh []numbered
 		stop := false
-		for _, it := range items {
+		hitWm, hitOld := false, false
+		tooNew := 0
+		for i, it := range items {
 			if catchUp && !wm.IsZero() && !it.PublishedAt.After(wm) {
 				stop = true
+				hitWm = true
 				break
 			}
 			if it.PublishedAt.Before(start) {
 				stop = true
+				hitOld = true
 				break
 			}
 			if it.PublishedAt.After(end) {
+				tooNew++
 				continue
 			}
-			fresh = append(fresh, it)
+			fresh = append(fresh, numbered{idx: i + 1, it: it})
 			if it.PublishedAt.After(wm) {
 				wm = it.PublishedAt
 			}
 		}
 		if len(fresh) == 0 {
+			if skip := formatSkipSummary(0, tooNew, hitWm, hitOld); skip != "" {
+				log.Info(fmt.Sprintf("【%s 第%d轮 %s 跳过 %s】", src.Name(), round, pageLabel, skip))
+			}
 			if stop {
 				if ng := skipGroup(src, listCursor); ng != "" {
+					noteGroup(ng)
 					if !catchUp {
 						prog.Page = ng
 						if err := persist(); err != nil {
@@ -332,25 +347,30 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 				break
 			}
 			if !catchUp {
+				noteGroup(next)
 				prog.Page = next
 				if err := persist(); err != nil {
 					return roundResult{}, err
 				}
 				break
 			}
+			noteGroup(next)
 			listCursor = next
 			continue
 		}
 		ids := make([]string, 0, len(fresh))
-		for _, it := range fresh {
-			ids = append(ids, it.ExternalID)
+		for _, n := range fresh {
+			ids = append(ids, n.it.ExternalID)
 		}
 		existing, err := r.store.ExistsByExternalIDs(src.Name(), ids)
 		if err != nil {
 			return roundResult{}, err
 		}
-		for _, it := range fresh {
+		existN := 0
+		for _, n := range fresh {
+			it := n.it
 			if existing[it.ExternalID] {
+				existN++
 				continue
 			}
 			pace()
@@ -359,11 +379,14 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 				if cookieDead(err) {
 					log.Error("cookie 失效，本轮结束", "id", it.ExternalID, "err", err)
 					_ = persist()
+					endRound()
 					return out(), nil
 				}
 				log.Warn("详情拉取失败已跳过", "id", it.ExternalID, "err", err)
 				continue
 			}
+			log.Info(fmt.Sprintf("【%s 第%d轮 %s 第%d条 新帖 %s】",
+				src.Name(), round, pageLabel, n.idx, strings.TrimSpace(it.Title)))
 			if post.CollectedAt.IsZero() {
 				post.CollectedAt = time.Now()
 			}
@@ -375,9 +398,13 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 				newPosts++
 			}
 		}
+		if skip := formatSkipSummary(existN, tooNew, hitWm, hitOld); skip != "" {
+			log.Info(fmt.Sprintf("【%s 第%d轮 %s 跳过 %s】", src.Name(), round, pageLabel, skip))
+		}
 
 		if stop {
 			if ng := skipGroup(src, listCursor); ng != "" {
+				noteGroup(ng)
 				if !catchUp {
 					prog.Page = ng
 					if err := persist(); err != nil {
@@ -404,6 +431,7 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 			}
 			break
 		}
+		noteGroup(next)
 		listCursor = next
 		if !catchUp {
 			prog.Page = next
@@ -418,6 +446,7 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 		default:
 		}
 	}
+	endRound()
 	return out(), nil
 }
 
@@ -507,8 +536,13 @@ func formatWatermark(s string) string {
 	return t.Format("01-02 15:04")
 }
 
-// formatPageCursor 豆瓣游标 组下标:offset 转成人话；空游标就是第一组第一页
+// formatPageCursor 豆瓣游标转成人话：组从 1 数，页=offset/25+1
 func formatPageCursor(cursor string) string {
+	g, p := parsePageCursor(cursor)
+	return fmt.Sprintf("组%d第%d页", g, p)
+}
+
+func parsePageCursor(cursor string) (group1, page int) {
 	gi, off := 0, 0
 	c := strings.TrimSpace(cursor)
 	if c != "" {
@@ -518,36 +552,68 @@ func formatPageCursor(cursor string) string {
 			off, _ = strconv.Atoi(parts[1])
 		}
 	}
-	return fmt.Sprintf("组%d offset=%d", gi, off)
+	if off < 0 {
+		off = 0
+	}
+	return gi + 1, off/listPageSize + 1
+}
+
+func roundMode(catchUp bool) string {
+	if catchUp {
+		return "追新"
+	}
+	return "翻历史"
+}
+
+func (r *Runner) nextRound(name string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.roundNo == nil {
+		r.roundNo = map[string]int{}
+	}
+	r.roundNo[name]++
+	return r.roundNo[name]
+}
+
+func nextGroupMsg(src string, round int, from, to string) string {
+	if strings.TrimSpace(to) == "" {
+		return ""
+	}
+	g1, _ := parsePageCursor(from)
+	g2, _ := parsePageCursor(to)
+	if g1 == g2 {
+		return ""
+	}
+	return fmt.Sprintf("【%s 第%d轮 小组串行 %s完，接着%s】", src, round, formatPageCursor(from), formatPageCursor(to))
+}
+
+func formatSkipSummary(exist, tooNew int, hitWm, hitOld bool) string {
+	var parts []string
+	if exist > 0 {
+		parts = append(parts, fmt.Sprintf("已存在%d", exist))
+	}
+	if tooNew > 0 {
+		parts = append(parts, fmt.Sprintf("超窗新%d", tooNew))
+	}
+	if hitOld {
+		parts = append(parts, "超窗旧")
+	}
+	if hitWm {
+		parts = append(parts, "撞水位")
+	}
+	return strings.Join(parts, " ")
 }
 
 func formatStartPos(catchUp bool, cursor string) string {
 	if catchUp {
-		return "追新·首页"
+		return "追新·" + formatPageCursor("")
 	}
 	return "翻历史·" + formatPageCursor(cursor)
 }
 
-func formatFetchedPage(catchUp bool, cursor string) string {
-	if catchUp {
-		if strings.TrimSpace(cursor) == "" {
-			return "追新·首页"
-		}
-		return "追新·" + formatPageCursor(cursor)
-	}
-	return formatPageCursor(cursor)
-}
-
 func formatNextPos(p store.SourceProgress) string {
 	if p.CatchingUp() {
-		return "追新·首页"
+		return "追新·" + formatPageCursor("")
 	}
 	return "翻历史·" + formatPageCursor(p.Page)
-}
-
-func joinPages(pages []string) string {
-	if len(pages) == 0 {
-		return "无"
-	}
-	return strings.Join(pages, ", ")
 }

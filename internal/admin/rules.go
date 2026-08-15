@@ -141,13 +141,33 @@ func (s *Server) updateRule(w http.ResponseWriter, r *http.Request, id int64) {
 		s.replyRule(w, r, http.StatusBadRequest, "bad form")
 		return
 	}
-	rtype := r.PostFormValue("type")
-	mode := r.PostFormValue("mode") // 废弃：不校验
-	value := r.PostFormValue("value")
-	name := r.PostFormValue("name")
-	priority, err := strconv.Atoi(r.PostFormValue("priority"))
+	existing, ok, err := s.db.GetRule(id)
+	if err != nil {
+		pkglog.Component(pkglog.Admin).Error("规则读取失败", "id", id, "err", err)
+		s.replyRule(w, r, http.StatusInternalServerError, "读取失败")
+		return
+	}
+	if !ok {
+		s.replyRule(w, r, http.StatusBadRequest, "参数无效")
+		return
+	}
+	rtype := firstNonEmpty(r.PostFormValue("rule_type"), r.PostFormValue("type"), existing.Type)
+	mode := r.PostFormValue("mode")
+	if mode == "" {
+		mode = existing.Mode
+	}
+	value := firstNonEmpty(r.PostFormValue("value"), existing.Value)
+	name := firstNonEmpty(r.PostFormValue("name"), existing.Name)
+	priority := existing.Priority
+	if raw := strings.TrimSpace(r.PostFormValue("priority")); raw != "" {
+		priority, err = strconv.Atoi(raw)
+		if err != nil {
+			s.replyRule(w, r, http.StatusBadRequest, "参数无效")
+			return
+		}
+	}
 	enabled := r.PostFormValue("enabled") != ""
-	if err != nil || name == "" || !ruleTypes[rtype] || value == "" {
+	if name == "" || !ruleTypes[rtype] || value == "" {
 		s.replyRule(w, r, http.StatusBadRequest, "参数无效")
 		return
 	}

@@ -13,8 +13,8 @@ func TestDefaultValues(t *testing.T) {
 	if cfg.Server.Addr != ":7777" {
 		t.Errorf("默认 Addr = %q, want :7777", cfg.Server.Addr)
 	}
-	if cfg.Collector.Interval != 1800 {
-		t.Errorf("默认 Interval = %d, want 1800", cfg.Collector.Interval)
+	if cfg.Collector.Interval != 300 {
+		t.Errorf("默认 Interval = %d, want 300", cfg.Collector.Interval)
 	}
 	if cfg.Filter.AIEnabled == nil || !*cfg.Filter.AIEnabled {
 		t.Error("默认 AIEnabled 应为 true")
@@ -34,8 +34,8 @@ func TestDefaultValues(t *testing.T) {
 	if cfg.Collector.Douban.Interval != 3 {
 		t.Errorf("默认豆瓣间隔 = %d, want 3", cfg.Collector.Douban.Interval)
 	}
-	if cfg.Collector.SourceInterval(models.SourceDouban.String()) != 1800 {
-		t.Errorf("豆瓣轮次间隔应走全局 1800，不应被请求间隔 3 覆盖")
+	if cfg.Collector.SourceInterval(models.SourceDouban.String()) != 300 {
+		t.Errorf("豆瓣采集间隔应走全局 300，不应被请求间隔 3 覆盖")
 	}
 	if len(cfg.Collector.Douban.Groups) < 5 {
 		t.Error("内置豆瓣小组应至少 5 个")

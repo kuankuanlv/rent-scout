@@ -1,9 +1,12 @@
 package admin
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
+	"strconv"
 
 	"rent-scout/internal/config"
 	"rent-scout/internal/pkglog"
@@ -110,4 +113,41 @@ func (s *Server) handleConfigExport(w http.ResponseWriter, r *http.Request) {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	_ = enc.Encode(kv)
+}
+
+// handleConfigHistory 变更历史的只读快照页（从当前 KV 倒放 diff 还原）
+func (s *Server) handleConfigHistory(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	id, err := strconv.ParseInt(r.URL.Query().Get("id"), 10, 64)
+	if err != nil || id <= 0 {
+		http.Error(w, "缺少历史 id", http.StatusBadRequest)
+		return
+	}
+	kv, entry, err := store.ReconstructKVAfter(s.db, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		http.Error(w, "历史不存在", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		pkglog.Component(pkglog.Admin).Error("还原历史配置失败", "id", id, "err", err)
+		http.Error(w, "还原失败", http.StatusInternalServerError)
+		return
+	}
+	if store.IsSecretConfigKey(entry.Key) {
+		if entry.OldValue != "" {
+			entry.OldValue = "••••"
+		}
+		if entry.NewValue != "" {
+			entry.NewValue = "••••"
+		}
+	}
+	if err := s.tmpl.ExecuteTemplate(w, "config_history", mergePageCtx(pageCtx(r, "config"), map[string]any{
+		"Sections": snapshotSections(kv),
+		"Entry":    entry,
+	})); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
 }

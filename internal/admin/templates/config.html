@@ -31,20 +31,20 @@
       <input type="hidden" name="section" value="{{.Section.ID}}">
 
       {{if eq .Tab "notifier"}}
-      <div class="flex gap-2 mb-2">
+      <div class="flex flex-wrap gap-2 mb-4 pb-3 border-b border-gray-100">
         <button type="button" data-notify-tab="feishu" class="notify-tab px-3 py-1.5 rounded-lg text-sm bg-brand-50 text-brand-700 font-semibold">飞书</button>
         <button type="button" data-notify-tab="pushplus" class="notify-tab px-3 py-1.5 rounded-lg text-sm text-gray-600 hover:bg-gray-50">PushPlus</button>
       </div>
       {{end}}
 
       {{if eq .Tab "sources"}}
-      <div class="flex gap-2 mb-2">
+      <div class="flex flex-wrap gap-2 mb-4 pb-3 border-b border-gray-100">
         <button type="button" data-source-tab="douban" class="source-tab px-3 py-1.5 rounded-lg text-sm bg-brand-50 text-brand-700 font-semibold">豆瓣</button>
         <button type="button" data-source-tab="weibo" class="source-tab px-3 py-1.5 rounded-lg text-sm text-gray-600 hover:bg-gray-50">微博</button>
       </div>
       {{end}}
 
-      <div class="space-y-4">
+      <div class="space-y-4 config-panel-stack">
         {{range .Section.Blocks}}
         {{if and (eq $.Tab "ai") (eq .Title "高级")}}
         <details class="rounded-xl border border-dashed {{.Class}} px-4 py-3">
@@ -54,8 +54,8 @@
             {{range .Items}}{{template "config_field" .}}{{end}}
           </div>
         </details>
-        {{else}}
-        <div class="rounded-xl border p-4 {{.Class}}"
+        {{else if or (eq $.Tab "sources") (eq $.Tab "notifier")}}
+        <div class="rounded-xl border p-4 {{.Class}} config-panel hidden"
              {{if .Group}}{{if eq $.Tab "sources"}}data-source-group="{{.Group}}"{{else}}data-notify-group="{{.Group}}"{{end}}{{end}}>
           {{if .Title}}<h3 class="text-sm font-semibold text-gray-800">{{.Title}}</h3>{{end}}
           {{if .Hint}}<p class="text-xs text-gray-500 mt-0.5 mb-3">{{.Hint}}</p>{{else}}<div class="mb-3"></div>{{end}}
@@ -63,33 +63,55 @@
             {{range .Items}}{{if not .Advanced}}{{template "config_field" .}}{{end}}{{end}}
           </div>
           {{if eq .Tools "cookie"}}
-          <div class="mt-3 space-y-2">
-            <div class="flex flex-wrap gap-2">
-              <button type="button" id="cookiecloud-test-btn" class="px-4 py-2 border border-amber-300 text-amber-900 hover:bg-amber-100 rounded-xl text-sm font-medium bg-white">检测 CookieCloud</button>
-              <button type="button" id="cookie-test-btn" class="px-4 py-2 border border-amber-300 text-amber-900 hover:bg-amber-100 rounded-xl text-sm font-medium bg-white">检测豆瓣 Cookie</button>
+          <div class="mt-3 space-y-3">
+            <div>
+              <button type="button" id="cookiecloud-test-btn" class="px-4 py-2 border border-amber-300 text-amber-900 hover:bg-amber-100 rounded-xl text-sm font-medium bg-white">检测 CookieCloud 连通性</button>
             </div>
-            <div id="cookiecloud-test-result" class="rounded-lg border border-amber-100 bg-white/80 p-3 text-sm space-y-2">
-              <p id="cookiecloud-test-summary" class="font-medium text-gray-700">检测 CookieCloud：只测云端连通和解密，不访问豆瓣</p>
-              <ul id="cookiecloud-test-list" class="hidden text-xs text-gray-600 list-disc pl-5 space-y-0.5"></ul>
-            </div>
-            <div id="cookie-test-result" class="rounded-lg border border-amber-100 bg-white/80 p-3 text-sm space-y-2">
-              <p id="cookie-test-summary" class="font-medium text-gray-700">检测豆瓣 Cookie：用当前 cookie 打小组页，看登录态是否有效</p>
-              <p class="text-xs text-gray-400">详细请求见 <a href="/admin/logs{{if $.Token}}?token={{$.Token}}{{end}}" class="text-brand-600 hover:underline" target="_blank" rel="noopener">系统日志</a></p>
-              <pre id="cookie-test-snippet" class="hidden text-xs overflow-x-auto whitespace-pre-wrap text-gray-500"></pre>
+            <div>
+              <button type="button" id="cookie-test-btn" class="px-4 py-2 border border-amber-300 text-amber-900 hover:bg-amber-100 rounded-xl text-sm font-medium bg-white">检测 Cookie</button>
             </div>
           </div>
           {{end}}
           {{if eq .Tools "llm"}}
           <div class="mt-3 space-y-2">
             <div class="flex flex-wrap gap-2">
-              <button type="button" id="llm-models-btn" class="px-4 py-2 border border-violet-300 text-violet-800 hover:bg-violet-100 rounded-xl text-sm font-medium bg-white">拉取模型列表</button>
               <button type="button" id="llm-test-btn" class="px-4 py-2 border border-violet-300 text-violet-800 hover:bg-violet-100 rounded-xl text-sm font-medium bg-white">连通检测</button>
             </div>
             <div id="llm-probe-result" class="rounded-lg border border-violet-100 bg-white/80 p-3 text-sm space-y-2">
-              <p id="llm-probe-summary" class="font-medium text-gray-700">可对草稿表单做连通检测 / 拉取模型（不写库）</p>
+              <p id="llm-probe-summary" class="font-medium text-gray-700">连通检测只测当前表单草稿，不写库</p>
               <p class="text-xs text-gray-400">请求应答原文见 <a href="/admin/logs{{if $.Token}}?token={{$.Token}}{{end}}" class="text-brand-600 hover:underline" target="_blank" rel="noopener">系统日志</a></p>
               <pre id="llm-probe-json" class="hidden text-xs overflow-x-auto whitespace-pre-wrap text-gray-500"></pre>
-              <ul id="llm-models-list" class="hidden text-xs text-gray-600 list-disc pl-5 space-y-0.5"></ul>
+            </div>
+          </div>
+          {{end}}
+        </div>
+        {{else}}
+        <div class="rounded-xl border p-4 {{.Class}}"
+             {{if .Group}}{{if eq $.Tab "sources"}}data-source-group="{{.Group}}"{{else if eq $.Tab "notifier"}}data-notify-group="{{.Group}}"{{end}}{{end}}>
+          {{if .Title}}<h3 class="text-sm font-semibold text-gray-800">{{.Title}}</h3>{{end}}
+          {{if .Hint}}<p class="text-xs text-gray-500 mt-0.5 mb-3">{{.Hint}}</p>{{else}}<div class="mb-3"></div>{{end}}
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {{range .Items}}{{if not .Advanced}}{{template "config_field" .}}{{end}}{{end}}
+          </div>
+          {{if eq .Tools "cookie"}}
+          <div class="mt-3 space-y-3">
+            <div>
+              <button type="button" id="cookiecloud-test-btn" class="px-4 py-2 border border-amber-300 text-amber-900 hover:bg-amber-100 rounded-xl text-sm font-medium bg-white">检测 CookieCloud 连通性</button>
+            </div>
+            <div>
+              <button type="button" id="cookie-test-btn" class="px-4 py-2 border border-amber-300 text-amber-900 hover:bg-amber-100 rounded-xl text-sm font-medium bg-white">检测 Cookie</button>
+            </div>
+          </div>
+          {{end}}
+          {{if eq .Tools "llm"}}
+          <div class="mt-3 space-y-2">
+            <div class="flex flex-wrap gap-2">
+              <button type="button" id="llm-test-btn" class="px-4 py-2 border border-violet-300 text-violet-800 hover:bg-violet-100 rounded-xl text-sm font-medium bg-white">连通检测</button>
+            </div>
+            <div id="llm-probe-result" class="rounded-lg border border-violet-100 bg-white/80 p-3 text-sm space-y-2">
+              <p id="llm-probe-summary" class="font-medium text-gray-700">连通检测只测当前表单草稿，不写库</p>
+              <p class="text-xs text-gray-400">请求应答原文见 <a href="/admin/logs{{if $.Token}}?token={{$.Token}}{{end}}" class="text-brand-600 hover:underline" target="_blank" rel="noopener">系统日志</a></p>
+              <pre id="llm-probe-json" class="hidden text-xs overflow-x-auto whitespace-pre-wrap text-gray-500"></pre>
             </div>
           </div>
           {{end}}
@@ -97,14 +119,22 @@
         {{end}}
         {{end}}
       </div>
-      {{if eq .Tab "sources"}}
-      <div id="source-weibo-placeholder" class="hidden rounded-xl border border-dashed border-gray-200 bg-slate-50 px-4 py-8 text-center text-sm text-gray-500">暂未实现</div>
-      {{end}}
       <div class="flex justify-end pt-4 border-t border-gray-100">
         <button type="submit" class="w-full sm:w-auto px-6 py-2.5 bg-brand-600 hover:bg-brand-700 text-white rounded-xl text-sm font-medium">保存「{{.Section.Title}}」</button>
       </div>
     </form>
   </div>
+  {{if or (eq .Tab "sources") (eq .Tab "ai")}}
+  <div id="config-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
+    <div class="bg-white rounded-2xl shadow-xl max-w-lg w-full p-5 max-h-[80vh] overflow-y-auto">
+      <div class="flex items-center justify-between mb-3">
+        <h3 id="config-modal-title" class="font-semibold text-gray-900">提示</h3>
+        <button type="button" id="config-modal-close" class="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
+      </div>
+      <div id="config-modal-body" class="text-sm text-gray-700"></div>
+    </div>
+  </div>
+  {{end}}
   {{if eq .Tab "sources"}}
   <script>
   (function(){
@@ -138,14 +168,24 @@
       if (ccBtn) ccBtn.style.display = cc ? '' : 'none';
       if (ccBox) ccBox.style.display = cc ? '' : 'none';
     }
+    function syncSourcePanelInputs(active){
+      document.querySelectorAll('[data-source-group]').forEach(function(el){
+        var on = el.getAttribute('data-source-group') === active;
+        el.querySelectorAll('input,select,textarea,button').forEach(function(inp){
+          if (inp.name === 'collector.sources') return;
+          inp.disabled = !on;
+        });
+      });
+    }
     function showSourceGroup(name){
       currentSource = name;
       document.querySelectorAll('[data-source-group]').forEach(function(el){
         var g = el.getAttribute('data-source-group');
-        el.style.display = (g === 'common' || g === name) ? '' : 'none';
+        var on = g === name;
+        el.classList.toggle('hidden', !on);
+        el.style.display = on ? '' : 'none';
       });
-      var ph = document.getElementById('source-weibo-placeholder');
-      if (ph) ph.classList.toggle('hidden', name !== 'weibo');
+      syncSourcePanelInputs(name);
       document.querySelectorAll('.source-tab').forEach(function(btn){
         var on = btn.getAttribute('data-source-tab') === name;
         btn.className = on
@@ -206,59 +246,56 @@
       fd.set('collector.douban.groups', v('collector.douban.groups'));
       return fd;
     }
+    function showModal(title, bodyHtml){
+      var overlay = document.getElementById('config-modal');
+      if (!overlay) return;
+      document.getElementById('config-modal-title').textContent = title || '提示';
+      document.getElementById('config-modal-body').innerHTML = bodyHtml || '';
+      overlay.classList.remove('hidden');
+    }
+    function hideModal(){
+      var overlay = document.getElementById('config-modal');
+      if (overlay) overlay.classList.add('hidden');
+    }
+    var modalClose = document.getElementById('config-modal-close');
+    if (modalClose) modalClose.addEventListener('click', hideModal);
     var ccBtn = document.getElementById('cookiecloud-test-btn');
-    var ccSummary = document.getElementById('cookiecloud-test-summary');
-    var ccList = document.getElementById('cookiecloud-test-list');
-    if (ccBtn && ccSummary) {
+    if (ccBtn) {
       ccBtn.addEventListener('click', function(){
-        ccSummary.textContent = '检测中…';
-        ccSummary.className = 'font-medium text-gray-700';
-        if (ccList) { ccList.classList.add('hidden'); ccList.innerHTML = ''; }
+        showModal('CookieCloud 检测', '<p class="text-gray-600">检测中…</p>');
         fetch('/admin/config/cookiecloud/test{{if $.Token}}?token={{$.Token}}{{end}}', {method:'POST', body: cookieFD(), credentials:'same-origin'})
           .then(function(r){ return r.json().then(function(j){ return {ok:r.ok, j:j}; }); })
           .then(function(x){
             var j = x.j || {};
-            ccSummary.textContent = j.summary || (j.ok ? '通过' : '失败');
-            ccSummary.className = 'font-medium ' + (j.ok ? 'text-green-700' : 'text-red-700');
+            var html = '<p class="font-medium ' + (j.ok ? 'text-green-700' : 'text-red-700') + '">' + (j.summary || (j.ok ? '通过' : '失败')) + '</p>';
             var items = j.cookies || j.cookie_names || [];
-            if (ccList && items.length) {
-              ccList.innerHTML = '';
-              items.forEach(function(item){
-                var li = document.createElement('li');
-                li.textContent = item;
-                ccList.appendChild(li);
-              });
-              ccList.classList.remove('hidden');
+            if (items.length) {
+              html += '<ul class="mt-2 text-xs text-gray-600 list-disc pl-5 space-y-0.5">';
+              items.forEach(function(item){ html += '<li>' + item + '</li>'; });
+              html += '</ul>';
             }
+            if (j.detail) html += '<pre class="mt-2 text-xs whitespace-pre-wrap text-gray-500">' + j.detail + '</pre>';
+            showModal('CookieCloud 检测', html);
           })
           .catch(function(e){
-            ccSummary.textContent = '请求失败: ' + e;
-            ccSummary.className = 'font-medium text-red-700';
+            showModal('CookieCloud 检测', '<p class="text-red-700">请求失败: ' + e + '</p>');
           });
       });
     }
     var btn = document.getElementById('cookie-test-btn');
-    var summary = document.getElementById('cookie-test-summary');
-    var snipEl = document.getElementById('cookie-test-snippet');
-    if (btn && summary) {
+    if (btn) {
       btn.addEventListener('click', function(){
-        summary.textContent = '检测中…';
-        summary.className = 'font-medium text-gray-700';
-        if (snipEl) { snipEl.classList.add('hidden'); snipEl.textContent = ''; }
+        showModal('Cookie 检测', '<p class="text-gray-600">检测中…</p>');
         fetch('/admin/config/cookie/test{{if $.Token}}?token={{$.Token}}{{end}}', {method:'POST', body: cookieFD(), credentials:'same-origin'})
           .then(function(r){ return r.json().then(function(j){ return {ok:r.ok, j:j}; }); })
           .then(function(x){
             var j = x.j || {};
-            summary.textContent = j.ok ? '通过' : ('HTTP ' + (j.http || (x.ok ? '?' : '请求失败')));
-            summary.className = 'font-medium ' + (j.ok ? 'text-green-700' : 'text-red-700');
-            if (snipEl && j.snippet) {
-              snipEl.textContent = j.snippet;
-              snipEl.classList.remove('hidden');
-            }
+            var html = '<p class="font-medium ' + (j.ok ? 'text-green-700' : 'text-red-700') + '">' + (j.ok ? '通过' : (j.summary || ('HTTP ' + (j.http || '失败')))) + '</p>';
+            if (j.snippet) html += '<pre class="mt-2 text-xs whitespace-pre-wrap text-gray-500">' + j.snippet + '</pre>';
+            showModal('Cookie 检测', html);
           })
           .catch(function(e){
-            summary.textContent = '请求失败: ' + e;
-            summary.className = 'font-medium text-red-700';
+            showModal('Cookie 检测', '<p class="text-red-700">请求失败: ' + e + '</p>');
           });
       });
     }
@@ -271,87 +308,84 @@
     var form = document.getElementById('config-section-form');
     var summary = document.getElementById('llm-probe-summary');
     var jsonEl = document.getElementById('llm-probe-json');
-    var listEl = document.getElementById('llm-models-list');
-    function matchShowWhen(attr, mode){
-      if (!attr) return true;
-      return attr.split(',').map(function(s){ return s.trim(); }).indexOf(mode) >= 0;
-    }
-    function syncLLMPanels(){
-      var sel = document.getElementById('llm-api-style');
-      var mode = sel ? (sel.value || 'none') : 'none';
-      document.querySelectorAll('[data-show-when]').forEach(function(el){
-        var sw = el.getAttribute('data-show-when');
-        if (!sw) return;
-        el.style.display = matchShowWhen(sw, mode) ? '' : 'none';
-      });
-      var showTools = mode === 'openai' || mode === 'other';
-      var modelsBtn = document.getElementById('llm-models-btn');
-      var testBtn = document.getElementById('llm-test-btn');
-      var probe = document.getElementById('llm-probe-result');
-      if (modelsBtn) modelsBtn.style.display = showTools ? '' : 'none';
-      if (testBtn) testBtn.style.display = showTools ? '' : 'none';
-      if (probe) probe.style.display = showTools ? '' : 'none';
-    }
-    var styleSel = document.getElementById('llm-api-style');
-    if (styleSel) styleSel.addEventListener('change', syncLLMPanels);
-    syncLLMPanels();
     function v(name){ var el = form.querySelector('[name="'+name+'"]'); return el ? el.value : ''; }
     function draftFD(){
       var fd = new FormData();
-      fd.set('api_style', v('secret.filter.llm.api_style'));
+      fd.set('api_style', 'openai');
       fd.set('base_url', v('secret.filter.llm.base_url'));
       fd.set('api_key', v('secret.filter.llm.api_key'));
       fd.set('model', v('secret.filter.llm.model'));
       return fd;
     }
-    function showResult(ok, text, raw){
-      summary.textContent = text;
-      summary.className = 'font-medium ' + (ok ? 'text-green-700' : 'text-red-700');
-      if (raw){ jsonEl.textContent = typeof raw === 'string' ? raw : JSON.stringify(raw, null, 2); jsonEl.classList.remove('hidden'); }
-      else jsonEl.classList.add('hidden');
+    function showModal(title, bodyHtml){
+      var overlay = document.getElementById('config-modal');
+      if (!overlay) return;
+      document.getElementById('config-modal-title').textContent = title || '提示';
+      document.getElementById('config-modal-body').innerHTML = bodyHtml || '';
+      overlay.classList.remove('hidden');
     }
-    var testBtn = document.getElementById('llm-test-btn');
-    if (testBtn) testBtn.addEventListener('click', function(){
-      listEl.classList.add('hidden'); listEl.innerHTML = '';
-      summary.textContent = '检测中…'; summary.className = 'font-medium text-gray-700';
-      fetch('/admin/config/llm/test{{if $.Token}}?token={{$.Token}}{{end}}', {method:'POST', body: draftFD(), credentials:'same-origin'})
-        .then(function(r){ return r.json().then(function(j){ return {ok:r.ok, j:j}; }); })
-        .then(function(x){
-          if (x.j && x.j.ok) showResult(true, '✅ 连通成功' + (x.j.detail ? '：'+x.j.detail : ''), x.j);
-          else showResult(false, '❌ 连通失败：' + ((x.j && (x.j.detail || x.j.error)) || '未知错误'), x.j);
-        })
-        .catch(function(e){ showResult(false, '❌ 请求失败: ' + e); });
+    var modalClose = document.getElementById('config-modal-close');
+    if (modalClose) modalClose.addEventListener('click', function(){
+      var overlay = document.getElementById('config-modal');
+      if (overlay) overlay.classList.add('hidden');
     });
-    var modelsBtn = document.getElementById('llm-models-btn');
-    if (modelsBtn) modelsBtn.addEventListener('click', function(){
-      listEl.classList.add('hidden'); listEl.innerHTML = '';
+    function showResult(ok, text, raw){
+      if (summary) {
+        summary.textContent = text;
+        summary.className = 'font-medium ' + (ok ? 'text-green-700' : 'text-red-700');
+      }
+      if (jsonEl) {
+        if (raw){ jsonEl.textContent = typeof raw === 'string' ? raw : JSON.stringify(raw, null, 2); jsonEl.classList.remove('hidden'); }
+        else jsonEl.classList.add('hidden');
+      }
+    }
+    function fillModelSelect(models){
+      var sel = document.getElementById('llm-model-select');
+      if (!sel) return;
+      var cur = sel.value;
+      sel.innerHTML = '';
+      var empty = document.createElement('option');
+      empty.value = '';
+      empty.textContent = '（未选择）';
+      sel.appendChild(empty);
+      models.forEach(function(m){
+        var opt = document.createElement('option');
+        opt.value = m;
+        opt.textContent = m;
+        sel.appendChild(opt);
+      });
+      if (cur && models.indexOf(cur) >= 0) sel.value = cur;
+    }
+    var fetchBtn = document.getElementById('llm-fetch-models-btn');
+    if (fetchBtn) fetchBtn.addEventListener('click', function(){
       summary.textContent = '拉取中…'; summary.className = 'font-medium text-gray-700';
       fetch('/admin/config/llm/models{{if $.Token}}?token={{$.Token}}{{end}}', {method:'POST', body: draftFD(), credentials:'same-origin'})
         .then(function(r){ return r.json().then(function(j){ return {ok:r.ok, j:j}; }); })
         .then(function(x){
           if (!x.j || !x.j.ok) {
-            showResult(false, '❌ 拉取失败：' + ((x.j && (x.j.detail || x.j.error)) || '请手填模型'), x.j);
+            showResult(false, '拉取失败：' + ((x.j && (x.j.detail || x.j.error)) || '请检查 Base URL 与 Key'), x.j);
             return;
           }
           var models = x.j.models || [];
-          showResult(true, '✅ 已拉取 ' + models.length + ' 个模型（可点选填入主模型）', x.j);
-          listEl.innerHTML = '';
-          models.slice(0, 80).forEach(function(m){
-            var li = document.createElement('li');
-            var a = document.createElement('button');
-            a.type = 'button';
-            a.className = 'text-brand-700 hover:underline';
-            a.textContent = m;
-            a.addEventListener('click', function(){
-              var inp = form.querySelector('[name="secret.filter.llm.model"]');
-              if (inp) inp.value = m;
-            });
-            li.appendChild(a);
-            listEl.appendChild(li);
-          });
-          listEl.classList.remove('hidden');
+          fillModelSelect(models);
+          showResult(true, '已拉取 ' + models.length + ' 个模型，可在主模型下拉框选择', null);
         })
-        .catch(function(e){ showResult(false, '❌ 请求失败: ' + e + '（可手填模型）'); });
+        .catch(function(e){ showResult(false, '请求失败: ' + e); });
+    });
+    var testBtn = document.getElementById('llm-test-btn');
+    if (testBtn) testBtn.addEventListener('click', function(){
+      showModal('LLM 连通检测', '<p class="text-gray-600">检测中…</p>');
+      fetch('/admin/config/llm/test{{if $.Token}}?token={{$.Token}}{{end}}', {method:'POST', body: draftFD(), credentials:'same-origin'})
+        .then(function(r){ return r.json().then(function(j){ return {ok:r.ok, j:j}; }); })
+        .then(function(x){
+          var ok = !!(x.j && x.j.ok);
+          var text = ok ? ('连通成功' + (x.j.detail ? '：'+x.j.detail : '')) : ('连通失败：' + ((x.j && (x.j.detail || x.j.error)) || '未知错误'));
+          var raw = x.j ? JSON.stringify(x.j, null, 2) : '';
+          var html = '<p class="font-medium ' + (ok ? 'text-green-700' : 'text-red-700') + '">' + text + '</p>';
+          if (raw) html += '<pre class="mt-2 text-xs whitespace-pre-wrap text-gray-500">' + raw + '</pre>';
+          showModal('LLM 连通检测', html);
+        })
+        .catch(function(e){ showModal('LLM 连通检测', '<p class="text-red-700">请求失败: ' + e + '</p>'); });
     });
   })();
   </script>
@@ -362,7 +396,13 @@
     function showGroup(name){
       document.querySelectorAll('[data-notify-group]').forEach(function(el){
         var g = el.getAttribute('data-notify-group');
-        el.style.display = (g === 'common' || g === name) ? '' : 'none';
+        var on = g === name;
+        el.classList.toggle('hidden', !on);
+        el.style.display = on ? '' : 'none';
+        el.querySelectorAll('input,select,textarea,button').forEach(function(inp){
+          if (inp.name === 'notifier.channels') return;
+          inp.disabled = !on;
+        });
       });
       document.querySelectorAll('.notify-tab').forEach(function(btn){
         var on = btn.getAttribute('data-notify-tab') === name;
@@ -380,11 +420,11 @@
   {{end}}
   {{if eq .Tab "general"}}
   <div class="mt-8 bg-white rounded-2xl shadow-sm border border-gray-100 p-4 sm:p-6">
-    <h3 class="text-lg font-bold mb-4">变更历史（只读）</h3>
+    <h3 class="text-lg font-bold mb-4">变更历史</h3>
     <div class="overflow-x-auto">
       <table class="min-w-full text-sm divide-y divide-gray-100">
-        <thead><tr class="text-left text-xs text-gray-500 uppercase"><th class="py-2 pr-4">Key</th><th class="py-2 pr-4">旧值</th><th class="py-2 pr-4">新值</th><th class="py-2">时间</th></tr></thead>
-        <tbody>{{range .History}}<tr class="border-t"><td class="py-2 pr-4 font-mono text-xs">{{.Key}}</td><td class="py-2 pr-4 text-gray-500">{{.OldValue}}</td><td class="py-2 pr-4 text-gray-500">{{.NewValue}}</td><td class="py-2 text-gray-400">{{.CreatedAt.Format "01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="4" class="py-6 text-center text-gray-400">暂无历史</td></tr>{{end}}</tbody>
+        <thead><tr class="text-left text-xs text-gray-500 uppercase"><th class="py-2 pr-4">时间</th><th class="py-2">操作</th></tr></thead>
+        <tbody>{{range .History}}<tr class="border-t"><td class="py-2 pr-4 text-gray-600 whitespace-nowrap">{{.CreatedAt.Format "2006-01-02 15:04:05"}}</td><td class="py-2"><a href="/admin/config/history?id={{.ID}}{{if $.Token}}&token={{$.Token}}{{end}}" target="_blank" rel="noopener" class="text-brand-600 hover:underline text-xs">详情</a></td></tr>{{else}}<tr><td colspan="2" class="py-6 text-center text-gray-400">暂无历史</td></tr>{{end}}</tbody>
       </table>
     </div>
   </div>
@@ -401,20 +441,33 @@
              {{if .Group}}data-source-group="{{.Group}}" data-notify-group="{{.Group}}"{{end}}>
           <label class="block text-sm font-medium text-gray-700 mb-1">{{.Label}}</label>
           {{if eq .Type "textarea"}}
-          <textarea name="{{.Key}}" rows="4" class="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white" {{if and .CanClear (eq .Value "")}}placeholder="留空不修改"{{end}} autocomplete="off">{{.Value}}</textarea>
-          {{if .CanClear}}<label class="inline-flex items-center gap-1 mt-1 text-xs text-gray-500"><input type="checkbox" name="clear_{{.Key}}" value="on"> 清空此项</label>{{end}}
+          <textarea name="{{.Key}}" rows="4" class="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white{{if .Readonly}} bg-gray-50{{end}}" {{if .Readonly}}disabled{{end}} {{if and .CanClear (eq .Value "")}}placeholder="留空不修改"{{end}} autocomplete="off">{{.Value}}</textarea>
+          {{if and .CanClear (not .Readonly)}}<label class="inline-flex items-center gap-1 mt-1 text-xs text-gray-500"><input type="checkbox" name="clear_{{.Key}}" value="on"> 清空此项</label>{{end}}
           {{else if eq .Type "checkbox"}}
-          <label class="inline-flex items-center gap-2 mt-1"><input type="checkbox" name="{{.Key}}" value="on" {{if or (eq .Value "true") (eq .Value "1") (eq .Value "on")}}checked{{end}}> 启用</label>
+          <label class="inline-flex items-center gap-2 mt-1"><input type="checkbox" name="{{.Key}}" value="on" {{if or (eq .Value "true") (eq .Value "1") (eq .Value "on")}}checked{{end}} {{if .Readonly}}disabled{{end}}> 启用</label>
           {{else if eq .Type "sources"}}
-          {{$srcKey := .Key}}{{$srcVal := .Value}}
+          {{$srcKey := .Key}}{{$srcVal := .Value}}{{$ro := .Readonly}}
           <div class="flex flex-wrap gap-4 mt-1">
             {{range .Options}}
-            <label class="inline-flex items-center gap-2 text-sm"><input type="checkbox" name="{{$srcKey}}" value="{{.}}" {{if csvHas $srcVal .}}checked{{end}}> {{.}}</label>
+            <label class="inline-flex items-center gap-2 text-sm"><input type="checkbox" name="{{$srcKey}}" value="{{.}}" {{if csvHas $srcVal .}}checked{{end}} {{if $ro}}disabled{{end}}> {{.}}</label>
             {{end}}
+          </div>
+          {{else if eq .Type "readonly"}}
+          <input type="text" value="{{if .OptionLabels}}{{index .OptionLabels 0}}{{else}}{{.Value}}{{end}}" disabled class="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-gray-50">
+          <input type="hidden" name="{{.Key}}" value="{{.Value}}">
+          {{else if eq .Type "model_select"}}
+          {{$selVal := .Value}}
+          <div class="flex flex-wrap gap-2 items-center mt-1">
+            <select name="{{.Key}}" id="llm-model-select" class="flex-1 min-w-[12rem] border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white{{if .Readonly}} bg-gray-50{{end}}" {{if .Readonly}}disabled{{end}}>
+              {{range .Options}}
+              <option value="{{.}}" {{if eq $selVal .}}selected{{end}}>{{if eq . ""}}（未选择）{{else}}{{.}}{{end}}</option>
+              {{end}}
+            </select>
+            {{if not .Readonly}}<button type="button" id="llm-fetch-models-btn" class="shrink-0 px-3 py-2 border border-violet-300 text-violet-800 hover:bg-violet-100 rounded-xl text-sm font-medium bg-white">拉取模型列表</button>{{end}}
           </div>
           {{else if eq .Type "select"}}
           {{$selVal := .Value}}{{$labels := .OptionLabels}}
-          <select name="{{.Key}}" {{if eq .Key "secret.collector.douban.cookie_mode"}}id="cookie-mode-select"{{end}} {{if eq .Key "secret.filter.llm.api_style"}}id="llm-api-style"{{end}} class="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white">
+          <select name="{{.Key}}" {{if eq .Key "secret.collector.douban.cookie_mode"}}id="cookie-mode-select"{{end}} {{if eq .Key "secret.filter.llm.api_style"}}id="llm-api-style"{{end}} class="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white{{if .Readonly}} bg-gray-50{{end}}" {{if .Readonly}}disabled{{end}}>
             {{range $i, $opt := .Options}}
             <option value="{{$opt}}" {{if eq $selVal $opt}}selected{{end}}>{{if and $labels (lt $i (len $labels))}}{{index $labels $i}}{{else}}{{$opt}}{{end}}</option>
             {{else}}
@@ -424,13 +477,13 @@
             {{end}}
           </select>
           {{else if eq .Type "password"}}
-          <input type="password" name="{{.Key}}" value="{{.Value}}" {{if eq .Value ""}}placeholder="留空不修改"{{end}} autocomplete="off" class="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white">
-          {{if .CanClear}}<label class="inline-flex items-center gap-1 mt-1 text-xs text-gray-500"><input type="checkbox" name="clear_{{.Key}}" value="on"> 清空此项</label>{{end}}
+          <input type="password" name="{{.Key}}" value="{{.Value}}" {{if eq .Value ""}}placeholder="留空不修改"{{end}} autocomplete="off" class="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white{{if .Readonly}} bg-gray-50{{end}}" {{if .Readonly}}disabled{{end}}>
+          {{if and .CanClear (not .Readonly)}}<label class="inline-flex items-center gap-1 mt-1 text-xs text-gray-500"><input type="checkbox" name="clear_{{.Key}}" value="on"> 清空此项</label>{{end}}
           {{else if eq .Type "number"}}
-          <input type="number" name="{{.Key}}" value="{{.Value}}" class="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white">
+          <input type="number" name="{{.Key}}" value="{{.Value}}" class="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white{{if .Readonly}} bg-gray-50{{end}}" {{if .Readonly}}disabled{{end}}>
           {{else}}
-          <input type="text" name="{{.Key}}" value="{{.Value}}" class="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white" {{if .DayOffset}}data-day-offset="{{.Key}}"{{end}}>
-          {{if .CanClear}}<label class="inline-flex items-center gap-1 mt-1 text-xs text-gray-500"><input type="checkbox" name="clear_{{.Key}}" value="on"> 清空此项</label>{{end}}
+          <input type="text" name="{{.Key}}" value="{{.Value}}" class="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white{{if .Readonly}} bg-gray-50{{end}}" {{if .DayOffset}}data-day-offset="{{.Key}}"{{end}} {{if .Readonly}}disabled{{end}}>
+          {{if and .CanClear (not .Readonly)}}<label class="inline-flex items-center gap-1 mt-1 text-xs text-gray-500"><input type="checkbox" name="clear_{{.Key}}" value="on"> 清空此项</label>{{end}}
           {{end}}
           {{if .DayOffset}}<p class="text-xs text-gray-400 mt-1" data-day-tip="{{.Key}}"></p>{{end}}
           {{if .Hint}}<p class="text-xs text-gray-400 mt-1">{{.Hint}}</p>{{end}}

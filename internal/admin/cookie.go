@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -93,13 +94,21 @@ func (s *Server) handleCookieTest(w http.ResponseWriter, r *http.Request) {
 	rawCookie, err := fetchDraftCookie(ctx, mode, draft)
 	if err != nil {
 		pkglog.Component(pkglog.Admin).Info("豆瓣检测", "stage", "fetch_cookie", "mode", mode, "err", err)
-		writeJSON(w, map[string]any{"ok": false, "http": 0, "snippet": err.Error()})
+		writeJSON(w, map[string]any{"ok": false, "http": 0, "summary": "失败：" + err.Error(), "snippet": err.Error()})
 		return
 	}
 
 	probeURL := cookieProbeURL(r, s.rt)
 	page := cookie.ProbePage(ctx, probeURL, rawCookie, nil)
 	resp := map[string]any{"ok": page.OK, "http": page.HTTP}
+	if page.OK {
+		resp["summary"] = "通过"
+	} else {
+		resp["summary"] = "失败"
+		if page.HTTP != 0 {
+			resp["summary"] = "失败：HTTP " + strconv.Itoa(page.HTTP)
+		}
+	}
 	if !page.OK && page.Snippet != "" {
 		resp["snippet"] = page.Snippet
 	}
@@ -128,6 +137,7 @@ func (s *Server) draftCookieConfig(r *http.Request) config.DoubanCookieConfig {
 		CookieRaw: firstNonEmpty(
 			r.PostFormValue("cookie_raw"),
 			r.PostFormValue("secret.collector.douban.cookie_raw"),
+			stored.CookieRaw,
 		),
 		CookiecloudURL: firstNonEmpty(
 			r.PostFormValue("cookiecloud_url"),
@@ -142,18 +152,6 @@ func (s *Server) draftCookieConfig(r *http.Request) config.DoubanCookieConfig {
 			r.PostFormValue("secret.collector.douban.cookiecloud_password"),
 		),
 	}
-	if draft.CookieRaw == "" {
-		draft.CookieRaw = stored.CookieRaw
-	}
-	if draft.CookiecloudURL == "" {
-		draft.CookiecloudURL = stored.CookiecloudURL
-	}
-	if draft.CookiecloudKey == "" {
-		draft.CookiecloudKey = stored.CookiecloudKey
-	}
-	if draft.CookiecloudPass == "" {
-		draft.CookiecloudPass = stored.CookiecloudPass
-	}
 	return draft
 }
 
@@ -162,7 +160,17 @@ func fetchDraftCookie(ctx context.Context, mode string, draft config.DoubanCooki
 	if m == config.CookieModeNone {
 		return "", nil
 	}
-	// 豆瓣检测只读本地 cookie，不打 CookieCloud
+	if m == config.CookieModeCookieCloud {
+		ins, err := cookie.InspectCookieCloud(ctx, draft)
+		if err != nil {
+			return "", err
+		}
+		ck := strings.TrimSpace(ins.Cookie)
+		if ck == "" {
+			return "", cookie.ErrCookieMissing
+		}
+		return ck, nil
+	}
 	ck := strings.TrimSpace(draft.CookieRaw)
 	if ck == "" {
 		return "", cookie.ErrCookieMissing

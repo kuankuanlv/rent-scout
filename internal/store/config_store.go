@@ -7,7 +7,6 @@ import (
 
 const setupCompletedKey = "setup.completed"
 
-
 // ConfigEntry 配置项
 type ConfigEntry struct {
 	Key       string
@@ -81,6 +80,11 @@ func GetAllConfig(s *Store) ([]ConfigEntry, error) {
 
 func isSecretKey(key string) bool {
 	return len(key) > 7 && key[:7] == "secret."
+}
+
+// IsSecretConfigKey 给 admin 打码历史行用
+func IsSecretConfigKey(key string) bool {
+	return isSecretKey(key)
 }
 
 // GetConfig 读取单个配置
@@ -196,6 +200,61 @@ func ListConfigHistory(s *Store, limit int) ([]ConfigHistoryEntry, error) {
 		entries = append(entries, e)
 	}
 	return entries, rows.Err()
+}
+
+// GetConfigHistory 按 id 取一条原始历史（不打码，给回放用）
+func GetConfigHistory(s *Store, id int64) (ConfigHistoryEntry, bool, error) {
+	var e ConfigHistoryEntry
+	var createdAt int64
+	err := s.db.QueryRow(`
+		SELECT id, key, old_value, new_value, created_at
+		FROM config_history WHERE id = ?`, id).
+		Scan(&e.ID, &e.Key, &e.OldValue, &e.NewValue, &createdAt)
+	if err == sql.ErrNoRows {
+		return e, false, nil
+	}
+	if err != nil {
+		return e, false, err
+	}
+	e.CreatedAt = time.Unix(createdAt, 0)
+	return e, true, nil
+}
+
+// ReconstructKVAfter 从当前 KV 倒放 id 之后的变更，得到该条历史落地后的全量配置
+func ReconstructKVAfter(s *Store, id int64) (map[string]string, ConfigHistoryEntry, error) {
+	entry, ok, err := GetConfigHistory(s, id)
+	if err != nil {
+		return nil, entry, err
+	}
+	if !ok {
+		return nil, entry, sql.ErrNoRows
+	}
+	kv, err := GetConfigMap(s)
+	if err != nil {
+		return nil, entry, err
+	}
+	rows, err := s.db.Query(`
+		SELECT key, old_value FROM config_history
+		WHERE id > ? ORDER BY id DESC`, id)
+	if err != nil {
+		return nil, entry, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var key, old string
+		if err := rows.Scan(&key, &old); err != nil {
+			return nil, entry, err
+		}
+		if old == "" {
+			delete(kv, key)
+		} else {
+			kv[key] = old
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, entry, err
+	}
+	return kv, entry, nil
 }
 
 // RecordConfigHistory 记录配置变更历史

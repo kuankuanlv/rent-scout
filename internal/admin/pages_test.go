@@ -51,6 +51,12 @@ func TestAdminPage(t *testing.T) {
 		if !strings.Contains(body, "标题0") {
 			t.Errorf("passed 过滤缺标题0")
 		}
+		if !strings.Contains(body, "通过") {
+			t.Errorf("状态徽章应显示中文「通过」而不是英文码")
+		}
+		if strings.Contains(body, ">passed<") {
+			t.Errorf("状态徽章不应直接打 passed")
+		}
 		if strings.Contains(body, "标题1") || strings.Contains(body, "标题2") {
 			t.Errorf("passed 过滤混入非 passed 帖")
 		}
@@ -69,6 +75,9 @@ func TestAdminPageFilters(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := s.InsertPost(models.RentPost{Source: "douban", ExternalID: "chip2", Title: "其它帖", Status: models.PostStatusPassed}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateRule(models.Rule{Name: "地点", Type: models.RuleTypeWhitelist, Value: "朝阳门", Enabled: true, Priority: 1}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -90,20 +99,36 @@ func TestAdminPageFilters(t *testing.T) {
 		t.Errorf("页面缺 AddressTags chips")
 	}
 	if !strings.Contains(body, `name="handled"`) || !strings.Contains(body, "/admin/handled") {
-		t.Errorf("页面缺已处理表单")
+		t.Errorf("页面缺已查看表单")
 	}
-	if !strings.Contains(body, "js-mark-form") || !strings.Contains(body, "redirect: 'follow'") {
-		t.Errorf("页面缺 fetch 行内更新脚本")
+	if !strings.Contains(body, "人工标记") || !strings.Contains(body, "mark-open-btn") {
+		t.Errorf("页面缺人工标记按钮")
 	}
 
 	if code, body := get("/admin"); code != http.StatusOK || !strings.Contains(body, "无标签") {
 		t.Errorf("无 AddressTags 帖应显示空态「无标签」: code=%d", code)
 	}
 
+	if code, body := get("/admin"); code != http.StatusOK {
+		t.Fatalf("标签下拉 status = %d", code)
+	} else {
+		if !strings.Contains(body, `name="tag"`) || strings.Contains(body, `placeholder="address tag"`) {
+			t.Error("标签应是下拉，不是自由输入")
+		}
+		for _, opt := range []string{`value="望京"`, `value="14号线"`, `value="朝阳门"`} {
+			if !strings.Contains(body, opt) {
+				t.Errorf("标签下拉缺选项 %s", opt)
+			}
+		}
+	}
+
 	if code, body := get("/admin?tag=望京"); code != http.StatusOK || !strings.Contains(body, "望京合租帖") || strings.Contains(body, "其它帖") {
 		t.Errorf("tag=望京: code=%d body 异常", code)
+	} else if !strings.Contains(body, `value="望京" selected`) {
+		t.Errorf("tag=望京 下拉未选中")
 	}
 }
+
 // TestAdminMark 标记反馈：POST /admin/mark 合法 → 302（PRG）+ DB 有记录；非法 action → 400
 func TestAdminMark(t *testing.T) {
 	s := newAdminTestStore(t)

@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
 
 	"rent-scout/internal/models"
 )
@@ -39,6 +41,57 @@ func (s *Store) SaveFilterResult(fr models.FilterResult) error {
 		return fmt.Errorf("保存筛选结果: %w", err)
 	}
 	return nil
+}
+
+// ListFilterTags 帖子页标签下拉：已写过的 address_tags ∪ 启用白名单词，去重排序
+func (s *Store) ListFilterTags() ([]string, error) {
+	seen := map[string]struct{}{}
+	var out []string
+	add := func(raw string) {
+		t := strings.TrimSpace(raw)
+		if t == "" {
+			return
+		}
+		if _, ok := seen[t]; ok {
+			return
+		}
+		seen[t] = struct{}{}
+		out = append(out, t)
+	}
+	rows, err := s.db.Query(`SELECT DISTINCT j.value FROM posts, json_each(posts.address_tags) AS j
+		WHERE typeof(j.value) = 'text' AND TRIM(j.value) != ''`)
+	if err != nil {
+		return nil, fmt.Errorf("列举地址标签: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			return nil, err
+		}
+		add(v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rules, err := s.ListRules(true)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range rules {
+		if r.Type != models.RuleTypeWhitelist {
+			continue
+		}
+		for _, kw := range strings.FieldsFunc(r.Value, isTagSep) {
+			add(kw)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+func isTagSep(r rune) bool {
+	return r == ',' || r == '\n' || r == '，' || r == '、'
 }
 
 // UpdatePostAddressTags 写回地址标签（白名单命中，调整规格 A 2.3）。

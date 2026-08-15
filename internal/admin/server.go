@@ -28,6 +28,7 @@ type Server struct {
 func NewServer(db *store.Store, rt *config.HotConfig, ctrl SourceController) *Server {
 	t := template.New("").Funcs(template.FuncMap{
 		"percent":        percent,
+		"statusLabel":    statusLabel,
 		"setupStepTitle": setupStepTitle,
 		"csvHas":         csvHas,
 		"seq": func(n int) []int {
@@ -64,6 +65,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/admin/config", s.handleConfig)
 	mux.HandleFunc("/admin/config/save", s.handleConfig)
 	mux.HandleFunc("/admin/config/export", s.handleConfigExport)
+	mux.HandleFunc("/admin/config/history", s.handleConfigHistory)
 	mux.HandleFunc("/admin/config/cookie/test", s.handleCookieTest)
 	mux.HandleFunc("/admin/config/cookiecloud/test", s.handleCookieCloudTest)
 	mux.HandleFunc("/admin/config/llm/test", s.handleLLMTest)

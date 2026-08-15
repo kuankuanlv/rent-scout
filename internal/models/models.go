@@ -50,8 +50,8 @@ type RentPost struct {
 	PublishedAt time.Time  // 源发布时间
 	CollectedAt time.Time  // 采集时间
 	Status      string     // 主状态：仅 collected|passed|rejected
-	AddressTags []string   `json:"addressTags"` // 地址标签（调整规格 2.3）：白名单命中地点，多值；分组主键 = [0]
-	HitTags     []HitTag   `json:"hitTags,omitempty"` // 全览展示用，不落 posts 表
+	AddressTags []string   `json:"addressTags"`        // 地址标签（调整规格 2.3）：白名单命中地点，多值；分组主键 = [0]
+	HitTags     []HitTag   `json:"hitTags,omitempty"`  // 全览展示用，不落 posts 表
 	AIReason    string     `json:"aiReason,omitempty"` // 全览展示 AI 原因，不落 posts 表
 	HandledAt   *time.Time // 已处理时间；nil=未处理（独立于 useful/useless 反馈）
 	Raw         string     // 源适配器完整原始输出（JSON，供重放/排查）

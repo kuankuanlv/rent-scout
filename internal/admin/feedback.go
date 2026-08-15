@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
+	"rent-scout/internal/actionref"
 	"rent-scout/internal/models"
-	"rent-scout/internal/notifier"
 	"rent-scout/internal/pkglog"
 )
 
@@ -49,7 +49,7 @@ func (s *Server) postIDFromRefQuery(q url.Values) (int64, error) {
 	if p == "" {
 		return 0, errors.New("缺少引用")
 	}
-	return notifier.OpenPostRef(p, s.rt.Get().Admin.Token)
+	return actionref.Open(p, s.rt.Get().Admin.Token)
 }
 
 // handleFeedback 反馈链接（/f?p=&action=&exp=&sig=）：校验 → 写反馈 → 结果页

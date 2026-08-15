@@ -23,6 +23,8 @@ type Server struct {
 	ctrl           SourceController
 	tmpl           *template.Template
 	onRulesChanged func()
+	cookieProbe    CookieProbe
+	llmProbe       LLMProbe
 }
 
 // NewServer 创建管理面服务
@@ -49,6 +51,10 @@ func NewServer(db *store.Store, rt *config.HotConfig, ctrl SourceController) *Se
 func (s *Server) SetOnRulesChanged(fn func()) {
 	s.onRulesChanged = fn
 }
+
+func (s *Server) SetCookieProbe(p CookieProbe) { s.cookieProbe = p }
+
+func (s *Server) SetLLMProbe(p LLMProbe) { s.llmProbe = p }
 
 func (s *Server) notifyRulesChanged() {
 	if s.onRulesChanged != nil {

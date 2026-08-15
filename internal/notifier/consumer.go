@@ -90,7 +90,7 @@ func (n *Notifier) sendChannel(ctx context.Context, ch Channel, batch []models.R
 	if len(pending) == 0 {
 		return nil
 	}
-	groups := GroupByAddressTag(pending)
+	groups := groupByAddressTag(pending)
 	tags := make([]string, 0, len(groups))
 	for tag := range groups {
 		tags = append(tags, tag)
@@ -141,15 +141,12 @@ func (n *Notifier) sendGroup(ctx context.Context, ch Channel, tag string, posts 
 	}
 	items = sortByPriority(items)
 
-	// 组装层必经 NotifyBatch；Channel.Send 仍吃 []NotifyItem
-	nb := NotifyBatch{GroupKey: tag, Items: items}
-
 	log := pkglog.Component(pkglog.Notifier)
-	log.Info("渠道分组发送", "channel", ch.Name(), "group", nb.GroupKey, "items", len(nb.Items))
-	sent, failed, err := ch.Send(ctx, nb.Items)
+	log.Info("渠道分组发送", "channel", ch.Name(), "group", tag, "items", len(items))
+	sent, failed, err := ch.Send(ctx, items)
 	if err != nil && len(sent) == 0 {
 		// 整组失败：按 items 下标逐帖标记 failed（attempts+1，达阈值 dead）——items 与 failed 同序
-		for i, it := range nb.Items {
+		for i, it := range items {
 			n.recordOutcome(it.PostID, ch.Name(), failedFor(i, failed, err))
 		}
 		return err
@@ -158,7 +155,7 @@ func (n *Notifier) sendGroup(ctx context.Context, ch Channel, tag string, posts 
 	for _, id := range sent {
 		sentSet[id] = true
 	}
-	for _, it := range nb.Items {
+	for _, it := range items {
 		if sentSet[it.PostID] {
 			if err := n.st.MarkNotificationSent(it.PostID, ch.Name()); err != nil {
 				log.Error("标记已发送失败", "post_id", it.PostID, "channel", ch.Name(), "err", err)

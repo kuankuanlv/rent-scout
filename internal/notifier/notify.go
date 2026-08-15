@@ -30,12 +30,6 @@ type NotifyItem struct {
 	HandledURL         string // 卡片内嵌「已处理」链接（action=handled，写 handled_at，不写 feedbacks）
 }
 
-// NotifyBatch 按分组键打包的一批 NotifyItem（Spec 09 §3.3）；组装层必经，不落库
-type NotifyBatch struct {
-	GroupKey string
-	Items    []NotifyItem
-}
-
 // Channel 通知渠道接口（规格 6.2）：新增渠道 = 新增一个实现。
 // Send 发送一个通知批次（一组帖子）；返回成功项 PostID 与失败项。
 // 部分失败可重试（调用方按 notifications 表状态机处理）

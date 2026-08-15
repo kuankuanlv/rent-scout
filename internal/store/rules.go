@@ -12,17 +12,6 @@ import (
 // ErrLastEnabledRule 删除或禁用会导致启用规则总数变为 0
 var ErrLastEnabledRule = errors.New("至少保留一条启用规则")
 
-// DefaultLocationRule 兼容旧测试引用；新库走 EnsureDefaultRule 黑白两条种子
-func DefaultLocationRule() models.Rule {
-	return models.Rule{
-		Name:     "白名单-地点",
-		Type:     models.RuleTypeWhitelist,
-		Value:    "梨园,雍和宫",
-		Enabled:  true,
-		Priority: 80,
-	}
-}
-
 // defaultSeedRules 启用规则数为 0 时写入的默认黑名单和白名单
 func defaultSeedRules() []models.Rule {
 	return []models.Rule{

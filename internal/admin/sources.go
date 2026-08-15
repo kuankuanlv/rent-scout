@@ -9,14 +9,6 @@ import (
 	"rent-scout/internal/store"
 )
 
-// SourceController 采集源控制接口（main 注入 collector.Runner；admin 不依赖 collector 包）
-type SourceController interface {
-	SetEnabled(name string, on bool) error
-	Trigger(name string) error
-	Sources() []string
-	SourceEnabled(name string) bool
-}
-
 // handleSources 源列表（GET /api/sources，规格 7.1）：name/enabled/cursor（store.GetCursor）。
 // ctrl nil（采集未启动）→ 503；仅接受 GET，写操作走 HandleSourceAction
 func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) {

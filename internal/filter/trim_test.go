@@ -15,8 +15,8 @@ func TestBuildLLMViewDefaultLimit(t *testing.T) {
 	for _, limit := range []int{0, -1} {
 		v := BuildLLMView(post, limit)
 		n := utf8.RuneCountInString(v.Content)
-		if n > defaultTrimLimit {
-			t.Errorf("limit=%d: 截断后 %d runes, want ≤ %d", limit, n, defaultTrimLimit)
+		if n > DefaultTrimLimit {
+			t.Errorf("limit=%d: 截断后 %d runes, want ≤ %d", limit, n, DefaultTrimLimit)
 		}
 		if n == 0 {
 			t.Errorf("limit=%d: 正文不应为空", limit)

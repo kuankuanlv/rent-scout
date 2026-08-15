@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"rent-scout/internal/collector/cookie"
 	"rent-scout/internal/config"
 	"rent-scout/internal/store"
 )
@@ -32,7 +31,10 @@ func newSetupInProgressServer(t *testing.T, s *store.Store, extra map[string]str
 	if err := rt.ReloadOnce(); err != nil {
 		t.Fatal(err)
 	}
-	return NewServer(s, rt, nil)
+	srv := NewServer(s, rt, nil)
+	srv.SetCookieProbe(testCookieProbe{})
+	srv.SetLLMProbe(testLLMProbe{})
+	return srv
 }
 
 // TestSetupFinishSeedsDefaultRule finish 时无启用规则 → 种子默认地点白名单
@@ -211,15 +213,12 @@ func TestSetupStep3RendersCookieModeAndHint(t *testing.T) {
 
 // TestSetupAllowsCookieTestDuringSetup setup 未完成时 POST cookie/test 不重定向
 func TestSetupAllowsCookieTestDuringSetup(t *testing.T) {
-	orig := cookie.ProbePage
-	cookie.ProbePage = func(ctx context.Context, rawURL, c string, client *http.Client) cookie.DoubanPageResult {
-		return cookie.DoubanPageResult{OK: false, HTTP: 200, Snippet: "有异常请求从你的 IP 发出，请 登录 使用豆瓣"}
-	}
-	defer func() { cookie.ProbePage = orig }()
-
 	s := newAdminTestStore(t)
 	defer s.Close()
 	srv := newSetupInProgressServer(t, s, nil)
+	srv.SetCookieProbe(stubPageProbe{fn: func(ctx context.Context, rawURL, c string) DoubanPageResult {
+		return DoubanPageResult{OK: false, HTTP: 200, Snippet: "有异常请求从你的 IP 发出，请 登录 使用豆瓣"}
+	}})
 
 	form := url.Values{"cookie_mode": {"none"}}
 	req := httptest.NewRequest(http.MethodPost, "/admin/config/cookie/test", strings.NewReader(form.Encode()))

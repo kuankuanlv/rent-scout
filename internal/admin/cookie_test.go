@@ -15,18 +15,15 @@ import (
 )
 
 func TestCookieTestNoneProbesOnline(t *testing.T) {
-	orig := cookie.ProbePage
-	cookie.ProbePage = func(ctx context.Context, rawURL, c string, client *http.Client) cookie.DoubanPageResult {
-		if c != "" {
-			t.Errorf("匿名探测不应带 cookie, got len=%d", len(c))
-		}
-		return cookie.DoubanPageResult{OK: false, HTTP: 200, Snippet: "有异常请求从你的 IP 发出，请 登录 使用豆瓣"}
-	}
-	defer func() { cookie.ProbePage = orig }()
-
 	s := newAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
+	srv.SetCookieProbe(stubPageProbe{fn: func(ctx context.Context, rawURL, c string) DoubanPageResult {
+		if c != "" {
+			t.Errorf("匿名探测不应带 cookie, got len=%d", len(c))
+		}
+		return DoubanPageResult{OK: false, HTTP: 200, Snippet: "有异常请求从你的 IP 发出，请 登录 使用豆瓣"}
+	}})
 
 	form := url.Values{"cookie_mode": {"none"}}
 	req := httptest.NewRequest(http.MethodPost, "/admin/config/cookie/test", strings.NewReader(form.Encode()))
@@ -53,15 +50,12 @@ func TestCookieTestNoneProbesOnline(t *testing.T) {
 }
 
 func TestCookieTestRawDraftNoWrite(t *testing.T) {
-	orig := cookie.ProbePage
-	cookie.ProbePage = func(ctx context.Context, rawURL, c string, client *http.Client) cookie.DoubanPageResult {
-		return cookie.DoubanPageResult{OK: false, HTTP: 403, Snippet: "forbidden"}
-	}
-	defer func() { cookie.ProbePage = orig }()
-
 	s := newAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
+	srv.SetCookieProbe(stubPageProbe{fn: func(ctx context.Context, rawURL, c string) DoubanPageResult {
+		return DoubanPageResult{OK: false, HTTP: 403, Snippet: "forbidden"}
+	}})
 
 	before, _ := store.GetConfigMap(s)
 	form := url.Values{
@@ -92,18 +86,15 @@ func TestCookieTestRawDraftNoWrite(t *testing.T) {
 }
 
 func TestCookieTestRawUsesStoredWhenEmpty(t *testing.T) {
-	orig := cookie.ProbePage
-	cookie.ProbePage = func(ctx context.Context, rawURL, c string, client *http.Client) cookie.DoubanPageResult {
-		if c != "dbcl2=storedvalue123456" {
-			t.Errorf("应使用已存 cookie, got %q", c)
-		}
-		return cookie.DoubanPageResult{OK: true, HTTP: 200}
-	}
-	defer func() { cookie.ProbePage = orig }()
-
 	s := newAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
+	srv.SetCookieProbe(stubPageProbe{fn: func(ctx context.Context, rawURL, c string) DoubanPageResult {
+		if c != "dbcl2=storedvalue123456" {
+			t.Errorf("应使用已存 cookie, got %q", c)
+		}
+		return DoubanPageResult{OK: true, HTTP: 200}
+	}})
 	if err := store.SetConfigBatch(s, map[string]string{
 		"secret.collector.douban.cookie_mode": "raw",
 		"secret.collector.douban.cookie_raw":  "dbcl2=storedvalue123456",
@@ -246,4 +237,16 @@ func TestCookieHeaderPreviews(t *testing.T) {
 	if strings.Contains(got[0], "abcdefghijklmnop") {
 		t.Errorf("不应含明文: %v", got)
 	}
+}
+
+type stubPageProbe struct {
+	fn func(ctx context.Context, probeURL, rawCookie string) DoubanPageResult
+}
+
+func (s stubPageProbe) InspectCookieCloud(ctx context.Context, draft config.DoubanCookieConfig) (CookieCloudInspect, error) {
+	return testCookieProbe{}.InspectCookieCloud(ctx, draft)
+}
+
+func (s stubPageProbe) ProbePage(ctx context.Context, probeURL, rawCookie string) DoubanPageResult {
+	return s.fn(ctx, probeURL, rawCookie)
 }

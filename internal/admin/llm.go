@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"rent-scout/internal/filter/llm"
 	"rent-scout/internal/pkglog"
 )
 
@@ -31,8 +30,11 @@ func (s *Server) handleLLMTest(w http.ResponseWriter, r *http.Request) {
 		"model", draft.model,
 		"api_style", draft.apiStyle,
 	)
-	c := llm.NewClient(llm.ClientOptions{BaseURL: draft.baseURL, APIKey: draft.apiKey, Model: draft.model, DumpHTTP: true})
-	models, listErr := c.ListModels(ctx)
+	if s.llmProbe == nil {
+		writeJSON(w, map[string]any{"ok": false, "error": "探测未配置"})
+		return
+	}
+	models, listErr := s.llmProbe.ListModels(ctx, draft.baseURL, draft.apiKey, draft.model)
 	if listErr == nil {
 		preview := models
 		if len(preview) > 8 {
@@ -58,7 +60,7 @@ func (s *Server) handleLLMTest(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"ok": false, "detail": "models 失败且未填模型: " + listErr.Error(), "error": listErr.Error()})
 		return
 	}
-	reply, chatErr := c.Chat(ctx, "ping", "回复 ok")
+	reply, chatErr := s.llmProbe.Chat(ctx, draft.baseURL, draft.apiKey, draft.model, "ping", "回复 ok")
 	if chatErr != nil {
 		pkglog.Component(pkglog.Admin).Info("LLM 连通检测",
 			"stage", "chat",
@@ -94,8 +96,11 @@ func (s *Server) handleLLMModels(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
 	defer cancel()
 	pkglog.Component(pkglog.Admin).Info("拉取模型开始", "stage", "start", "base_url", draft.baseURL)
-	c := llm.NewClient(llm.ClientOptions{BaseURL: draft.baseURL, APIKey: draft.apiKey, Model: draft.model, DumpHTTP: true})
-	models, err := c.ListModels(ctx)
+	if s.llmProbe == nil {
+		writeJSON(w, map[string]any{"ok": false, "error": "探测未配置"})
+		return
+	}
+	models, err := s.llmProbe.ListModels(ctx, draft.baseURL, draft.apiKey, draft.model)
 	if err != nil {
 		pkglog.Component(pkglog.Admin).Info("拉取模型失败", "stage", "models", "base_url", draft.baseURL, "err", err)
 		writeJSON(w, map[string]any{"ok": false, "detail": err.Error(), "error": err.Error()})

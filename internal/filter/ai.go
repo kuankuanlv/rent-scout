@@ -21,7 +21,7 @@ type AIBatchEvaluator struct {
 }
 
 // NewAIBatchEvaluator 创建批量评估器；截断统一用 DefaultTrimLimit（不再读配置 map）
-func NewAIBatchEvaluator(c llmChat, _ map[string]int) *AIBatchEvaluator {
+func NewAIBatchEvaluator(c llmChat) *AIBatchEvaluator {
 	return &AIBatchEvaluator{llm: c}
 }
 

@@ -97,7 +97,7 @@ func (d *Douban) List(ctx context.Context, cursor string) ([]collector.ListItem,
 	if gi >= len(d.groupURLs) {
 		return nil, "", nil // 已遍历全部小组：结束
 	}
-		// 组 URL 拼接 start 参数（豆瓣分页 start=0, pageSize, 2*pageSize...）
+	// 组 URL 拼接 start 参数（豆瓣分页 start=0, pageSize, 2*pageSize...）
 	u, err := url.Parse(d.groupURLs[gi])
 	if err != nil {
 		return nil, "", fmt.Errorf("小组 URL 非法: %w", err)
@@ -142,7 +142,7 @@ func (d *Douban) List(ctx context.Context, cursor string) ([]collector.ListItem,
 	// 下一页游标：有条目 → 同组下一页；空页 → 下一组
 	next := ""
 	if len(items) > 0 {
-			next = strconv.Itoa(gi) + ":" + strconv.Itoa(offset+listPageSize)
+		next = strconv.Itoa(gi) + ":" + strconv.Itoa(offset+listPageSize)
 	} else if gi+1 < len(d.groupURLs) {
 		next = strconv.Itoa(gi+1) + ":0"
 	}

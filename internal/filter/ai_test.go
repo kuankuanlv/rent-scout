@@ -36,7 +36,7 @@ func itoa(i int) string {
 // 批量判定：system 含全部自然语言规则（共享一次）；user 含 N 条精简帖；结果按 PostID 对齐
 func TestAIBatchEvaluate(t *testing.T) {
 	fl := &fakeLLM{}
-	ev := NewAIBatchEvaluator(fl, map[string]int{})
+	ev := NewAIBatchEvaluator(fl)
 	posts := []models.RentPost{
 		{ID: 1, Source: "douban", Title: "望京整租", Content: "近14号线，4500"},
 		{ID: 2, Source: "douban", Title: "回龙观精装", Content: "两居"},
@@ -65,7 +65,7 @@ func TestAIBatchEvaluate(t *testing.T) {
 
 // LLM 失败：整批返回错误（调用方保持待判定，不误标记——规格 5.6）
 func TestAIBatchLLMFailure(t *testing.T) {
-	ev2 := NewAIBatchEvaluator(&failLLM{}, map[string]int{})
+	ev2 := NewAIBatchEvaluator(&failLLM{})
 	posts := []models.RentPost{{ID: 1, Source: "douban", Title: "t", Content: "c"}}
 	if _, err := ev2.EvaluateBatch(context.Background(), posts, []models.Rule{{Type: models.RuleTypeAINatural}}); err == nil {
 		t.Fatal("LLM 失败应整批报错")
@@ -81,7 +81,7 @@ func (f *failLLM) Chat(ctx context.Context, system, user string) (string, error)
 // Plan 10 E1：截断统一 DefaultTrimLimit，不再按源读配置 map
 func TestAIBatchEvaluatorDefaultTrim(t *testing.T) {
 	fl := &fakeLLM{}
-	ev := NewAIBatchEvaluator(fl, map[string]int{"douban": 100}) // map 已忽略
+	ev := NewAIBatchEvaluator(fl) // 截断统一 DefaultTrimLimit
 	long := strings.Repeat("甲", DefaultTrimLimit+50)
 	posts := []models.RentPost{
 		{ID: 1, Source: "douban", Title: "望京", Content: long},
@@ -113,7 +113,7 @@ func (f *fakeLLMWithModel) ChatWithModel(ctx context.Context, system, user strin
 func TestAIBatchEvaluatorModelBackfill(t *testing.T) {
 	t.Run("ChatWithModel 实现者回填模型名", func(t *testing.T) {
 		fl := &fakeLLMWithModel{model: "deepseek-chat"}
-		ev := NewAIBatchEvaluator(fl, map[string]int{})
+		ev := NewAIBatchEvaluator(fl)
 		posts := []models.RentPost{{ID: 1, Source: "douban", Title: "望京", Content: "近地铁"}}
 		results, err := ev.EvaluateBatch(context.Background(), posts, []models.Rule{{Type: models.RuleTypeAINatural, Enabled: true}})
 		if err != nil {
@@ -125,7 +125,7 @@ func TestAIBatchEvaluatorModelBackfill(t *testing.T) {
 	})
 	t.Run("仅实现 Chat 的 fake 兜底 Model 留空", func(t *testing.T) {
 		fl := &fakeLLM{}
-		ev := NewAIBatchEvaluator(fl, map[string]int{})
+		ev := NewAIBatchEvaluator(fl)
 		posts := []models.RentPost{{ID: 1, Source: "douban", Title: "望京", Content: "近地铁"}}
 		results, err := ev.EvaluateBatch(context.Background(), posts, []models.Rule{{Type: models.RuleTypeAINatural, Enabled: true}})
 		if err != nil {

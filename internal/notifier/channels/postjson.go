@@ -1,4 +1,4 @@
-package notifier
+package channels
 
 import (
 	"bytes"
@@ -9,9 +9,7 @@ import (
 	"time"
 )
 
-// PostJSON 向 webhook 发送 JSON body；超时秒数 timeoutSec（<=0 用 10s）。
-// 非 2xx 返回错误（含状态码与截断响应体，防日志膨胀）
-func PostJSON(ctx context.Context, url string, body []byte, timeoutSec int) (string, error) {
+func postJSON(ctx context.Context, url string, body []byte, timeoutSec int) (string, error) {
 	if timeoutSec <= 0 {
 		timeoutSec = 10
 	}
@@ -36,8 +34,6 @@ func PostJSON(ctx context.Context, url string, body []byte, timeoutSec int) (str
 	return string(b), nil
 }
 
-// truncateRunes rune 安全截断（多字节不切碎）。
-// 与 filter 包同名函数不同包不冲突；filter 版未导出不可复用，故内联最小版。
 func truncateRunes(s string, n int) string {
 	r := []rune(s)
 	if len(r) <= n {

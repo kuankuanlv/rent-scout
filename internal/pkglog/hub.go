@@ -5,11 +5,15 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"rent-scout/internal/config"
 )
 
 const subBuf = 64
+
+const (
+	defaultMemoryLines = 1000
+	minMemoryLines     = 100
+	maxMemoryLines     = 10000
+)
 
 // Line 一条进 ring / SSE 的日志（给管理台滚动查看）
 type Line struct {
@@ -32,22 +36,22 @@ type Hub struct {
 
 func newHub(cap int) *Hub {
 	if cap <= 0 {
-		cap = config.DefaultLogMemoryLines
+		cap = defaultMemoryLines
 	}
 	return &Hub{cap: cap, buf: make([]Line, 0, cap), subs: map[chan Line]struct{}{}}
 }
 
-var defaultHub = newHub(config.DefaultLogMemoryLines)
+var defaultHub = newHub(defaultMemoryLines)
 
 func clampHubCap(n int) int {
 	if n <= 0 {
-		return config.DefaultLogMemoryLines
+		return defaultMemoryLines
 	}
-	if n < config.MinLogMemoryLines {
-		return config.MinLogMemoryLines
+	if n < minMemoryLines {
+		return minMemoryLines
 	}
-	if n > config.MaxLogMemoryLines {
-		return config.MaxLogMemoryLines
+	if n > maxMemoryLines {
+		return maxMemoryLines
 	}
 	return n
 }
@@ -150,4 +154,4 @@ func pushHub(duty string, r slog.Record) {
 }
 
 // ResetHubForTest 单测清空 ring，避免串扰
-func ResetHubForTest() { defaultHub = newHub(config.DefaultLogMemoryLines) }
+func ResetHubForTest() { defaultHub = newHub(defaultMemoryLines) }

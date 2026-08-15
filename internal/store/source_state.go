@@ -121,6 +121,5 @@ func (s *Store) ClearProgress(source string) error {
 
 // 旧常量：测试/日志若还提到，仅表示历史 JSON；新进度用 Page 是否为空区分
 const (
-	ProgressBackfill    = "backfill"
 	ProgressIncremental = "incremental"
 )

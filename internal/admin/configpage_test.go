@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -90,8 +91,11 @@ func TestConfigTabs(t *testing.T) {
 	if !strings.Contains(body, `data-source-tab="douban"`) || !strings.Contains(body, `data-source-tab="weibo"`) {
 		t.Errorf("sources 应有豆瓣/微博子 tab")
 	}
-	if !strings.Contains(body, "collector.weibo.urls") || !strings.Contains(body, "微博超话") {
-		t.Errorf("微博 tab 应有超话 URL 配置")
+	if !strings.Contains(body, `name="collector.weibo.range_from"`) {
+		t.Errorf("微博 tab 应有发布时间筛选")
+	}
+	if strings.Contains(body, `name="collector.max_age_days"`) {
+		t.Errorf("微博/豆瓣不应再露出 max_age_days")
 	}
 	if !strings.Contains(body, `name="secret.collector.weibo.cookie_mode"`) {
 		t.Errorf("微博 tab 应有 cookie 配置")
@@ -132,8 +136,8 @@ func TestConfigTabs(t *testing.T) {
 	if !strings.Contains(body, "cc-pass-plain") {
 		t.Errorf("CookieCloud 密码应明文回显")
 	}
-	if !strings.Contains(body, "采集暂未实现") {
-		t.Errorf("微博子 tab 应有暂未实现提示")
+	if !strings.Contains(body, "按话题走高级搜索") {
+		t.Errorf("微博子 tab 应说明高级搜索采集")
 	}
 	if strings.Contains(body, "豆瓣截断") || strings.Contains(body, "trim_limits") {
 		t.Errorf("不应再出现 trim_limits UI")
@@ -430,5 +434,61 @@ func TestConfigHistorySnapshotPage(t *testing.T) {
 	srv.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("未知 id status = %d, want 404", rec.Code)
+	}
+}
+
+func TestParseSectionFormGroupKeepsOtherSource(t *testing.T) {
+	keep := map[string]string{
+		"collector.sources":         "douban,weibo",
+		"collector.weibo.tags":      "#北京租房#",
+		"collector.douban.groups":   "https://www.douban.com/group/1/",
+	}
+	form := url.Values{
+		"section":               {"collector"},
+		"group":                 {"weibo"},
+		"collector.sources":     {"weibo"},
+		"collector.weibo.tags":   {"#北京合租#"},
+		"collector.interval":     {"300"},
+		"collector.jitter_ratio": {"0.2"},
+	}
+	got := ParseSectionForm(form, "collector", keep)
+	if got["collector.weibo.tags"] != "#北京合租#" {
+		t.Errorf("weibo tags = %q", got["collector.weibo.tags"])
+	}
+	if _, ok := got["collector.douban.groups"]; ok {
+		t.Errorf("不应提交豆瓣字段: %v", got)
+	}
+	if got["collector.sources"] != "douban,weibo" {
+		t.Errorf("sources merge = %q, want douban,weibo", got["collector.sources"])
+	}
+}
+
+func TestConfigSectionSaveJSONNoRedirect(t *testing.T) {
+	s := newAdminTestStore(t)
+	defer s.Close()
+	srv := newTestServerWithStore(t, s, config.DefaultApp(), "", nil)
+	form := url.Values{
+		"section":     {"general"},
+		"server.addr": {":7777"},
+		"log.level":   {"info"},
+		"log.path":    {""},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/admin/config/save", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if loc := rec.Header().Get("Location"); loc != "" {
+		t.Errorf("JSON 保存不应 302: %s", loc)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out["ok"] != true {
+		t.Errorf("body=%v", out)
 	}
 }

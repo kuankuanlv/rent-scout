@@ -15,9 +15,10 @@ type PostListFilter struct {
 	Q       string // title/content LIKE
 	Status  string
 	Tag     string // 硬规则标签（白/黑/默认拒绝）；不含 AI
-	Handled string // "0"=NULL，"1"=非空，其它/空=不限
-	AI      string // reviewed / unreviewed / pass / fail（独立于 Tag）
-}
+		Handled string // "0"=NULL，"1"=非空，其它/空=不限
+		AI      string // reviewed / unreviewed / pass / fail（独立于 Tag）
+		Source  string // douban / weibo；空=不限
+	}
 
 func postListWhere(f PostListFilter) (string, []any) {
 	var where []string
@@ -26,11 +27,15 @@ func postListWhere(f PostListFilter) (string, []any) {
 		where = append(where, "status = ?")
 		args = append(args, f.Status)
 	}
-	if f.Q != "" {
-		where = append(where, "(title LIKE ? OR content LIKE ?)")
-		like := "%" + f.Q + "%"
-		args = append(args, like, like)
-	}
+		if f.Q != "" {
+			where = append(where, "(title LIKE ? OR content LIKE ?)")
+			like := "%" + f.Q + "%"
+			args = append(args, like, like)
+		}
+		if f.Source != "" {
+			where = append(where, "source = ?")
+			args = append(args, f.Source)
+		}
 	if f.Tag != "" {
 		// 硬规则标签：白名单地点 / 黑名单词 / 默认拒绝（AI 走独立 ai 条件）
 		tag := f.Tag

@@ -16,7 +16,7 @@ import (
 
 // postsFilter 全览筛选条当前值；With 改一维并清 page，供平铺枚举链接用
 type postsFilter struct {
-	Q, Status, Tag, AI, Handled, Token string
+	Q, Status, Tag, AI, Handled, Source, Token string
 	PageSize                           int
 }
 
@@ -32,6 +32,7 @@ func (f postsFilter) With(key, val string) template.URL {
 	set("tag", f.Tag)
 	set("ai", f.AI)
 	set("handled", f.Handled)
+	set("source", f.Source)
 	set("token", f.Token)
 	if f.PageSize > 0 && f.PageSize != adminPostPageSize {
 		q.Set("page_size", strconv.Itoa(f.PageSize))
@@ -64,12 +65,17 @@ func appendSelectedTag(opts []string, selected string) []string {
 
 // postListFilterFromQuery 从 URL 取帖子列表筛选（admin / API 共用）
 func postListFilterFromQuery(q url.Values) store.PostListFilter {
+	src := ""
+	if s, ok := models.ParseSource(q.Get("source")); ok {
+		src = s.String()
+	}
 	return store.PostListFilter{
 		Q:       q.Get("q"),
 		Status:  q.Get("status"),
 		Tag:     q.Get("tag"),
 		Handled: q.Get("handled"),
 		AI:      q.Get("ai"),
+		Source:  src,
 	}
 }
 
@@ -77,7 +83,7 @@ func postListFilterFromQuery(q url.Values) store.PostListFilter {
 func adminPostsQuery(r *http.Request) url.Values {
 	src := r.URL.Query()
 	out := url.Values{}
-	for _, k := range []string{"q", "status", "tag", "handled", "ai", "page", "page_size", "token"} {
+	for _, k := range []string{"q", "status", "tag", "handled", "ai", "source", "page", "page_size", "token"} {
 		if v := src.Get(k); v != "" {
 			out.Set(k, v)
 		}
@@ -156,7 +162,7 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
 	fq := adminPostsQuery(r).Encode()
 	prevQ, nextQ := pageQuery(r, page-1), pageQuery(r, page+1)
 	filter := postsFilter{
-		Q: f.Q, Status: f.Status, Tag: f.Tag, AI: f.AI, Handled: f.Handled,
+		Q: f.Q, Status: f.Status, Tag: f.Tag, AI: f.AI, Handled: f.Handled, Source: f.Source,
 		Token: r.URL.Query().Get("token"), PageSize: size,
 	}
 	if err := s.tmpl.ExecuteTemplate(w, "admin", mergePageCtx(pageCtx(r, "posts"), map[string]any{
@@ -166,6 +172,8 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
 		"Tag":         f.Tag,
 		"Handled":     f.Handled,
 		"AI":          f.AI,
+		"Source":      f.Source,
+		"Sources":     models.KnownSources(),
 		"Tags":        tags,
 		"Filter":      filter,
 		"Page":        page,

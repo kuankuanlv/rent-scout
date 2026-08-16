@@ -219,10 +219,11 @@ func (r *Runner) RunOnce(ctx context.Context, src Source, trigger chan<- struct{
 	return err
 }
 
-const maxPagesPerRound = 10
-const listPageSize = 25 // 和豆瓣小组讨论列表每页条数一致
+const maxPagesPerGroup = 10  // 单个搜索/小组本轮最多翻这么多页，后面页更旧就该换组
+const maxPagesPerRound = 200 // 整轮总页数上限，防止死循环；13 个搜索各 1 页也够
+const listPageSize = 25      // 和豆瓣小组讨论列表每页条数一致
 
-// runSourceOnce 单轮采集：最多翻 10 页，进度写回 offset（page + seen_newest）
+// runSourceOnce 单轮采集：每个搜索都从第1页看起，水位只决定本组要不要继续翻页
 func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- struct{}) (roundResult, error) {
 	log := pkglog.Component(pkglog.SourceCollector(src.Name()))
 	cfg := r.rt.Get()
@@ -237,23 +238,22 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 		return roundResult{}, err
 	}
 	fp := sourceFingerprint(src.Name(), cfg)
-	if prog.Fingerprint != "" && prog.Fingerprint != fp {
-		log.Info("源配置变了，重置采集进度", "source", src.Name(), "old", prog.Fingerprint, "new", fp)
+	if prog.Fingerprint != "" && fingerprintRangeKey(prog.Fingerprint) != fingerprintRangeKey(fp) {
+		log.Info("时间窗变了，重置采集进度", "source", src.Name(), "old", prog.Fingerprint, "new", fp)
 		prog = store.SourceProgress{}
 	}
 	prog.Fingerprint = fp
 
 	catchUp := prog.CatchingUp()
 	listCursor := ""
-	if !catchUp {
-		listCursor = prog.Page
-	}
 	winFrom := start.Format("01-02 15:04")
 	winTo := end.Format("01-02 15:04")
 	round := r.nextRound(src.Name())
 	mode := roundMode(catchUp)
-	log.Info(fmt.Sprintf("============ %s 第%d轮开始 %s 时间窗=%s~%s 水位=%s ============",
-		src.Name(), round, mode, winFrom, winTo, formatWatermark(prog.SeenNewest)))
+	scope := formatRoundScope(src)
+	log.Info(fmt.Sprintf("============ %s 第%d轮开始 %s ============", src.Name(), round, mode))
+	log.Info(fmt.Sprintf("【%s 第%d轮 时间窗=%s~%s 水位=%s %s】",
+		src.Name(), round, winFrom, winTo, formatWatermark(prog.SeenNewest), scope))
 
 	var wm time.Time
 	if prog.SeenNewest != "" {
@@ -296,18 +296,57 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 			src.Name(), round, len(fetched), listCount, newPosts, formatNextPos(prog)))
 	}
 	noteGroup := func(to string) {
-		if m := nextGroupMsg(src.Name(), round, listCursor, to); m != "" {
+		if m := nextGroupMsg(src.Name(), round, listCursor, to, func(c string) string { return describeCursor(src, c) }); m != "" {
 			log.Info(m)
 		}
+	}
+	leaveGroup := func(to, reason string, idle bool) {
+		g1, _ := parsePageCursor(listCursor)
+		g2, _ := parsePageCursor(to)
+		changing := strings.TrimSpace(to) == "" || g1 != g2
+		if idle && changing {
+			log.Info(fmt.Sprintf("【%s 第%d轮 %s %s，未收集到任何新帖】", src.Name(), round, describeCursor(src, listCursor), reason))
+		}
+		noteGroup(to)
 	}
 	type numbered struct {
 		idx int
 		it  ListItem
 	}
+	activeG := 0
+	groupNew := 0
+	pagesInGroup := 0
 	for pages < maxPagesPerRound {
+		g, _ := parsePageCursor(listCursor)
+		if pages == 0 || g != activeG {
+			activeG = g
+			groupNew = 0
+			pagesInGroup = 0
+			log.Info(fmt.Sprintf("【%s 第%d轮 开始%s】", src.Name(), round, describeCursor(src, listCursor)))
+		}
+		if pagesInGroup >= maxPagesPerGroup {
+			ng := skipGroup(src, listCursor)
+			if ng == "" {
+				leaveGroup("", "本组页数用尽", groupNew == 0)
+				prog = sealProgress(prog, wm, end)
+				if err := persist(); err != nil {
+					return roundResult{}, err
+				}
+				break
+			}
+			leaveGroup(ng, "本组页数用尽", groupNew == 0)
+			if !catchUp {
+				prog.Page = ng
+			}
+			listCursor = ng
+			if err := persist(); err != nil {
+				return roundResult{}, err
+			}
+			continue
+		}
 		pace()
-		pageLabel := formatPageCursor(listCursor)
-		items, next, err := src.List(ctx, listCursor)
+		pageLabel := describeCursor(src, listCursor)
+		items, next, err := listItems(ctx, src, listCursor, start, end)
 		if err != nil {
 			if cookieDead(err) {
 				log.Error("cookie 失效，本轮结束", "err", err)
@@ -317,6 +356,7 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 			return roundResult{}, fmt.Errorf("列表页: %w", err)
 		}
 		pages++
+		pagesInGroup++
 		listCount += len(items)
 		fetched = append(fetched, pageLabel)
 		log.Info(fmt.Sprintf("【%s 第%d轮 %s %s 本页%d条】",
@@ -349,15 +389,20 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 			if skip := formatSkipSummary(0, tooNew, hitWm, hitOld); skip != "" {
 				log.Info(fmt.Sprintf("【%s 第%d轮 %s 跳过 %s】", src.Name(), round, pageLabel, skip))
 			}
+			idleReason := "本页无帖"
+			if hitWm {
+				idleReason = "到水位线"
+			} else if hitOld {
+				idleReason = "超出时间窗"
+			}
 			if stop {
+				if hitOld {
+					log.Info(fmt.Sprintf("【%s 第%d轮 %s 已超出时间窗，本搜索后续页更旧，不再翻页】", src.Name(), round, pageLabel))
+				}
 				if ng := skipGroup(src, listCursor); ng != "" {
-					noteGroup(ng)
+					leaveGroup(ng, idleReason, groupNew == 0)
 					if !catchUp {
 						prog.Page = ng
-						if err := persist(); err != nil {
-							return roundResult{}, err
-						}
-						break
 					}
 					listCursor = ng
 					if err := persist(); err != nil {
@@ -365,6 +410,7 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 					}
 					continue
 				}
+				leaveGroup("", idleReason, groupNew == 0)
 				prog = sealProgress(prog, wm, end)
 				if err := persist(); err != nil {
 					return roundResult{}, err
@@ -372,6 +418,7 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 				break
 			}
 			if next == "" {
+				leaveGroup("", idleReason, groupNew == 0)
 				prog = sealProgress(prog, wm, end)
 				if err := persist(); err != nil {
 					return roundResult{}, err
@@ -379,15 +426,13 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 				break
 			}
 			if !catchUp {
-				noteGroup(next)
 				prog.Page = next
-				if err := persist(); err != nil {
-					return roundResult{}, err
-				}
-				break
 			}
-			noteGroup(next)
+			leaveGroup(next, idleReason, groupNew == 0)
 			listCursor = next
+			if err := persist(); err != nil {
+				return roundResult{}, err
+			}
 			continue
 		}
 		ids := make([]string, 0, len(fresh))
@@ -426,23 +471,27 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 			if err != nil {
 				return roundResult{}, fmt.Errorf("入库: %w", err)
 			}
-			if added {
-				newPosts++
-			}
+				if added {
+					newPosts++
+					groupNew++
+				}
 		}
 		if skip := formatSkipSummary(existN, tooNew, hitWm, hitOld); skip != "" {
 			log.Info(fmt.Sprintf("【%s 第%d轮 %s 跳过 %s】", src.Name(), round, pageLabel, skip))
 		}
 
 		if stop {
+			idleReason := "到水位线"
+			if hitOld {
+				idleReason = "超出时间窗"
+			}
 			if ng := skipGroup(src, listCursor); ng != "" {
-				noteGroup(ng)
+				if hitOld {
+					log.Info(fmt.Sprintf("【%s 第%d轮 %s 已超出时间窗，本搜索后续页更旧，不再翻页】", src.Name(), round, pageLabel))
+				}
+				leaveGroup(ng, idleReason, groupNew == 0)
 				if !catchUp {
 					prog.Page = ng
-					if err := persist(); err != nil {
-						return roundResult{}, err
-					}
-					break
 				}
 				listCursor = ng
 				if err := persist(); err != nil {
@@ -450,6 +499,7 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 				}
 				continue
 			}
+			leaveGroup("", idleReason, groupNew == 0)
 			prog = sealProgress(prog, wm, end)
 			if err := persist(); err != nil {
 				return roundResult{}, err
@@ -457,6 +507,9 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 			break
 		}
 		if next == "" {
+			if groupNew == 0 {
+				log.Info(fmt.Sprintf("【%s 第%d轮 %s 本组结束，未收集到任何新帖】", src.Name(), round, pageLabel))
+			}
 			prog = sealProgress(prog, wm, end)
 			if err := persist(); err != nil {
 				return roundResult{}, err
@@ -505,12 +558,22 @@ func sourceFingerprint(name string, cfg *config.AppConfig) string {
 		return name
 	}
 	if name == models.SourceDouban.String() {
-		return name + "|" + cfg.Collector.Douban.RangeFrom + "|" + strings.Join(config.HTTPURLs(cfg.Collector.Douban.Groups), ",")
+		return name + "|" + cfg.Collector.Douban.RangeFrom
 	}
 	if name == models.SourceWeibo.String() {
-		return name + "|from=" + strconv.Itoa(cfg.Collector.MaxAgeDays) + "|" + strings.Join(config.HTTPURLs(cfg.Collector.Weibo.URLs), ",")
+		return name + "|" + cfg.Collector.Weibo.RangeFrom
 	}
 	return name + "|from=" + strconv.Itoa(cfg.Collector.MaxAgeDays)
+}
+
+// fingerprintRangeKey 旧指纹可能还带着 URL 列表，只拿前两段比时间窗
+func fingerprintRangeKey(fp string) string {
+	fp = strings.TrimSpace(fp)
+	parts := strings.Split(fp, "|")
+	if len(parts) >= 2 {
+		return parts[0] + "|" + parts[1]
+	}
+	return fp
 }
 
 // sourceTimeWindow 起点用相对天数（如 -10）；终点永远是 now，不进指纹
@@ -519,6 +582,13 @@ func sourceTimeWindow(name string, cfg *config.AppConfig, now time.Time) (time.T
 		start, end, err := config.ResolveTimeRange(cfg.Collector.Douban.RangeFrom, "now", now)
 		if err != nil {
 			return time.Time{}, time.Time{}, fmt.Errorf("豆瓣拉取范围: %w", err)
+		}
+		return start, end, nil
+	}
+	if name == models.SourceWeibo.String() {
+		start, end, err := config.ResolveTimeRange(cfg.Collector.Weibo.RangeFrom, "now", now)
+		if err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("微博拉取范围: %w", err)
 		}
 		return start, end, nil
 	}
@@ -550,14 +620,31 @@ func cookieDead(err error) bool {
 }
 
 func (r *Runner) requestGap(src Source) time.Duration {
-	if src.Name() != models.SourceDouban.String() {
+	if r.rt == nil {
 		return 0
 	}
-	n := r.rt.Get().Collector.Douban.Interval
+	cfg := r.rt.Get()
+	if cfg == nil {
+		return 0
+	}
+	n := 0
+	switch src.Name() {
+	case models.SourceDouban.String():
+		n = cfg.Collector.Douban.Interval
+	case models.SourceWeibo.String():
+		n = cfg.Collector.Weibo.Interval
+	}
 	if n <= 0 {
 		return 0
 	}
 	return time.Duration(n) * time.Second
+}
+
+func listItems(ctx context.Context, src Source, cursor string, start, end time.Time) ([]ListItem, string, error) {
+	if w, ok := src.(TimeWindowLister); ok {
+		return w.ListInWindow(ctx, cursor, start, end)
+	}
+	return src.List(ctx, cursor)
 }
 
 func formatWatermark(s string) string {
@@ -610,7 +697,51 @@ func (r *Runner) nextRound(name string) int {
 	return r.roundNo[name]
 }
 
-func nextGroupMsg(src string, round int, from, to string) string {
+func describeCursor(src Source, cursor string) string {
+	if d, ok := src.(CursorDescriber); ok {
+		if s := strings.TrimSpace(d.DescribeCursor(cursor)); s != "" {
+			return s
+		}
+	}
+	return formatPageCursor(cursor)
+}
+
+func stripPageSuffix(s string) string {
+	i := strings.LastIndex(s, "第")
+	if i >= 0 && strings.HasSuffix(s, "页") {
+		return strings.TrimSpace(s[:i])
+	}
+	return s
+}
+
+// formatRoundScope 本轮会扫的组/搜索清单
+func formatRoundScope(src Source) string {
+	if src == nil {
+		return "范围 无"
+	}
+	var parts []string
+	c := ""
+	seen := map[int]bool{}
+	for i := 0; i < 200; i++ {
+		g, _ := parsePageCursor(c)
+		if seen[g] {
+			break
+		}
+		seen[g] = true
+		parts = append(parts, stripPageSuffix(describeCursor(src, c)))
+		ng := skipGroup(src, c)
+		if ng == "" {
+			break
+		}
+		c = ng
+	}
+	if len(parts) == 0 {
+		return "范围 无"
+	}
+	return fmt.Sprintf("范围共%d个 %s", len(parts), strings.Join(parts, "、"))
+}
+
+func nextGroupMsg(src string, round int, from, to string, label func(string) string) string {
 	if strings.TrimSpace(to) == "" {
 		return ""
 	}
@@ -619,7 +750,11 @@ func nextGroupMsg(src string, round int, from, to string) string {
 	if g1 == g2 {
 		return ""
 	}
-	return fmt.Sprintf("【%s 第%d轮 小组串行 %s完，接着%s】", src, round, formatPageCursor(from), formatPageCursor(to))
+	fl, tl := formatPageCursor(from), formatPageCursor(to)
+	if label != nil {
+		fl, tl = label(from), label(to)
+	}
+	return fmt.Sprintf("【%s 第%d轮 %s执行完成，开始%s】", src, round, fl, tl)
 }
 
 func formatSkipSummary(exist, tooNew int, hitWm, hitOld bool) string {
@@ -634,7 +769,7 @@ func formatSkipSummary(exist, tooNew int, hitWm, hitOld bool) string {
 		parts = append(parts, "超窗旧")
 	}
 	if hitWm {
-		parts = append(parts, "撞水位")
+		parts = append(parts, "到水位线")
 	}
 	return strings.Join(parts, " ")
 }

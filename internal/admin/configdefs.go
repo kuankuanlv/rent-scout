@@ -189,8 +189,8 @@ func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[stri
 			{Key: "collector.interval", Label: "采集间隔(秒)", Value: get("collector.interval", strconv.Itoa(app.Collector.Interval)), Type: "number", Hint: "跑完一轮后等多久再开下一轮，默认 300（5 分钟）", Group: group},
 			{Key: "collector.jitter_ratio", Label: "抖动比例", Value: get("collector.jitter_ratio", fmt.Sprintf("%g", app.Collector.JitterRatio)), Type: "text", Group: group},
 		}
-		if source != models.SourceDouban.String() {
-			items = append(items, configField{Key: "collector.max_age_days", Label: "帖子时效(天)", Value: get("collector.max_age_days", strconv.Itoa(app.Collector.MaxAgeDays)), Type: "number", Hint: "超过此天数的帖不再采集。豆瓣不用这项，看「按发布时间筛选」。", Group: group, Wide: true})
+		if source != models.SourceDouban.String() && source != models.SourceWeibo.String() {
+			items = append(items, configField{Key: "collector.max_age_days", Label: "帖子时效(天)", Value: get("collector.max_age_days", strconv.Itoa(app.Collector.MaxAgeDays)), Type: "number", Hint: "超过此天数的帖不再采集。", Group: group, Wide: true})
 		}
 		return items
 	}
@@ -220,7 +220,7 @@ func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[stri
 				},
 			},
 		}),
-		makeSection("collector", "采集", "按源切换；各源独立配置页，保存仍写入整分区", []configBlock{
+		makeSection("collector", "采集", "按源切换；保存只写入当前源，不影响另一源。", []configBlock{
 			{
 				Title: "豆瓣", Class: "bg-slate-50 border-slate-200", Group: "douban",
 				Items: sourceBase(models.SourceDouban.String(), "douban"),
@@ -239,31 +239,38 @@ func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[stri
 				},
 			},
 			{
-				Title: "豆瓣 Cookie", Hint: "采集访问豆瓣用的登录态。raw 自己贴；cookiecloud 从云端同步到本地后再用。", Class: "bg-amber-50 border-amber-200", Group: "douban", Tools: "cookie",
+				Title: "豆瓣 Cookie", Hint: "raw 直接贴原文，保存即写入该源 cookie；cookiecloud 只填地址、UUID、密码，不出现原文框。", Class: "bg-amber-50 border-amber-200", Group: "douban", Tools: "cookie",
 				Items: []configField{
-					{Key: config.KeyDoubanCookieMode, Label: "Cookie 模式", Value: get(config.KeyDoubanCookieMode, env.Collector.Douban.CookieMode), Type: "select", Options: []string{config.CookieModeNone.String(), config.CookieModeRaw.String(), config.CookieModeCookieCloud.String()}, Hint: "none 不带 cookie；raw 粘贴原文；cookiecloud 从 CookieCloud 同步", Group: "douban"},
+					{Key: config.KeyDoubanCookieMode, Label: "Cookie 模式", Value: get(config.KeyDoubanCookieMode, env.Collector.Douban.CookieMode), Type: "select", Options: []string{config.CookieModeNone.String(), config.CookieModeRaw.String(), config.CookieModeCookieCloud.String()}, Hint: "none 不带 cookie；raw 粘贴原文；cookiecloud 只填三元组", Group: "douban"},
 					{Key: config.KeyDoubanCookieRaw, Label: "Cookie 原文", Value: "", Type: "textarea", CanClear: true, Hint: cookieRawHint(env.Collector.Douban), ShowWhen: config.CookieModeRaw.String(), Group: "douban"},
-					{Key: config.KeyDoubanCookieCloudURL, Label: "CookieCloud 地址", Value: get(config.KeyDoubanCookieCloudURL, env.Collector.Douban.CookiecloudURL), Type: "text", Hint: "如 https://cc.example.com", CanClear: true, ShowWhen: config.CookieModeCookieCloud.String(), Group: "douban"},
+					{Key: config.KeyDoubanCookieCloudURL, Label: "CookieCloud 地址", Value: get(config.KeyDoubanCookieCloudURL, env.Collector.Douban.CookiecloudURL), Type: "text", Hint: "如 https://cc.example.com；检测用当前输入，不读库", CanClear: true, ShowWhen: config.CookieModeCookieCloud.String(), Group: "douban"},
 					{Key: config.KeyDoubanCookieCloudKey, Label: "CookieCloud UUID", Value: get(config.KeyDoubanCookieCloudKey, env.Collector.Douban.CookiecloudKey), Type: "text", CanClear: true, ShowWhen: config.CookieModeCookieCloud.String(), Group: "douban"},
 					{Key: config.KeyDoubanCookieCloudPwd, Label: "CookieCloud 密码", Value: ccPass, Type: "text", CanClear: true, Hint: "明文回显；勾选清空可删除", ShowWhen: config.CookieModeCookieCloud.String(), Group: "douban", Wide: true},
 				},
 			},
 			{
-				Title: "微博", Hint: "采集暂未实现，可先配超话地址与启用。", Class: "bg-slate-50 border-slate-200", Group: "weibo",
+				Title: "微博", Hint: "按话题走高级搜索；Cookie 失效本轮结束。", Class: "bg-slate-50 border-slate-200", Group: "weibo",
 				Items: sourceBase(models.SourceWeibo.String(), "weibo"),
 			},
 			{
-				Title: "微博超话", Hint: "搜索/超话页地址，采集接上后按这些 URL 拉帖。", Class: "bg-emerald-50/80 border-emerald-200", Group: "weibo",
+				Title: "按发布时间筛选", Hint: "只抓这个时刻之后发布的帖，截止日期永远是现在（不单独配置，也不参与采集进度指纹）。单位是天，相对现在：-10 = 10 天前。支持小数。改这个值会重置该源采集进度。", Class: "bg-sky-50 border-sky-200", Group: "weibo",
 				Items: []configField{
-					{Key: "collector.weibo.urls", Label: "微博超话 URL", Value: get("collector.weibo.urls", strings.Join(app.Collector.Weibo.URLs, "\n")), Type: "textarea", Hint: "每行一个网址。#话题名 单独一行当注释，采集只认 http(s)。", Group: "weibo"},
+					{Key: "collector.weibo.range_from", Label: "起始（几天前）", Value: config.CanonicalDayOffset(get("collector.weibo.range_from", app.Collector.Weibo.RangeFrom)), Type: "text", Group: "weibo", DayOffset: true, Wide: true, Hint: "只采集这个时刻之后发布的帖。必须为负数，例如 -10；改了会重置采集进度"},
 				},
 			},
 			{
-				Title: "微博 Cookie", Hint: "采集访问微博用的登录态。与豆瓣同一套模式；CookieCloud 只拼 weibo.com。账号可与豆瓣相同也可分开填。", Class: "bg-amber-50 border-amber-200", Group: "weibo", Tools: "cookie",
+				Title: "微博话题与请求节奏", Hint: "每行一个超话/话题，当作高级搜索的 q。采集会带上时间范围并按时间排序。旧的搜索网址保存过也能抽 q。", Class: "bg-emerald-50/80 border-emerald-200", Group: "weibo",
 				Items: []configField{
-					{Key: config.KeyWeiboCookieMode, Label: "Cookie 模式", Value: get(config.KeyWeiboCookieMode, env.Collector.Weibo.CookieMode), Type: "select", Options: []string{config.CookieModeNone.String(), config.CookieModeRaw.String(), config.CookieModeCookieCloud.String()}, Hint: "none 不带 cookie；raw 粘贴原文；cookiecloud 从 CookieCloud 同步", Group: "weibo"},
+					{Key: "collector.weibo.tags", Label: "话题 / 超话", Value: get("collector.weibo.tags", strings.Join(app.Collector.Weibo.Tags, "\n")), Type: "textarea", Hint: "每行一个，如 #北京租房#。# 空格开头当注释。不要再贴整段搜索 URL。", Group: "weibo"},
+					{Key: "collector.weibo.interval", Label: "请求间隔(秒)", Value: get("collector.weibo.interval", strconv.Itoa(app.Collector.Weibo.Interval)), Type: "number", Group: "weibo", Wide: true, Hint: "同一轮里两次访问微博停几秒，默认 5。不是上面的采集间隔。"},
+				},
+			},
+			{
+				Title: "微博 Cookie", Hint: "raw 直接贴原文，保存即写入该源 cookie；cookiecloud 只填地址、UUID、密码。CookieCloud 只拼 weibo.com。", Class: "bg-amber-50 border-amber-200", Group: "weibo", Tools: "cookie",
+				Items: []configField{
+					{Key: config.KeyWeiboCookieMode, Label: "Cookie 模式", Value: get(config.KeyWeiboCookieMode, env.Collector.Weibo.CookieMode), Type: "select", Options: []string{config.CookieModeNone.String(), config.CookieModeRaw.String(), config.CookieModeCookieCloud.String()}, Hint: "none 不带 cookie；raw 粘贴原文；cookiecloud 只填三元组", Group: "weibo"},
 					{Key: config.KeyWeiboCookieRaw, Label: "Cookie 原文", Value: "", Type: "textarea", CanClear: true, Hint: cookieRawHint(env.Collector.Weibo), ShowWhen: config.CookieModeRaw.String(), Group: "weibo"},
-					{Key: config.KeyWeiboCookieCloudURL, Label: "CookieCloud 地址", Value: get(config.KeyWeiboCookieCloudURL, env.Collector.Weibo.CookiecloudURL), Type: "text", Hint: "如 https://cc.example.com", CanClear: true, ShowWhen: config.CookieModeCookieCloud.String(), Group: "weibo"},
+					{Key: config.KeyWeiboCookieCloudURL, Label: "CookieCloud 地址", Value: get(config.KeyWeiboCookieCloudURL, env.Collector.Weibo.CookiecloudURL), Type: "text", Hint: "如 https://cc.example.com；检测用当前输入，不读库", CanClear: true, ShowWhen: config.CookieModeCookieCloud.String(), Group: "weibo"},
 					{Key: config.KeyWeiboCookieCloudKey, Label: "CookieCloud UUID", Value: get(config.KeyWeiboCookieCloudKey, env.Collector.Weibo.CookiecloudKey), Type: "text", CanClear: true, ShowWhen: config.CookieModeCookieCloud.String(), Group: "weibo"},
 					{Key: config.KeyWeiboCookieCloudPwd, Label: "CookieCloud 密码", Value: weiboCCPass, Type: "text", CanClear: true, Hint: "明文回显；勾选清空可删除", ShowWhen: config.CookieModeCookieCloud.String(), Group: "weibo", Wide: true},
 				},
@@ -288,7 +295,7 @@ func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[stri
 				},
 			},
 		}),
-		makeSection("notifier", "通知", "按渠道切换；各渠道独立配置页，保存仍写入整分区", []configBlock{
+		makeSection("notifier", "通知", "按渠道切换；保存只写入当前渠道，不影响另一渠道。", []configBlock{
 			{
 				Title: "飞书", Hint: "发送节奏与 Webhook", Class: "bg-sky-50 border-sky-200", Group: "feishu", Tools: "notify",
 				Items: append(notifyBase("feishu", "feishu"), configField{
@@ -347,21 +354,31 @@ func ParseSectionForm(form url.Values, section string, keepSecrets map[string]st
 	for _, k := range config.SectionKeys[section] {
 		allowed[k] = true
 	}
-	updates := map[string]string{}
-	for key, values := range form {
-		if !allowed[key] || len(values) == 0 {
-			continue
-		}
+		group := strings.TrimSpace(form.Get("group"))
+		updates := map[string]string{}
+		for key, values := range form {
+			if key == "section" || key == "group" {
+				continue
+			}
+			if !allowed[key] || len(values) == 0 {
+				continue
+			}
+			if group != "" && !keyInConfigGroup(key, group) {
+				continue
+			}
 		if form.Get("clear_"+key) == "on" {
 			updates[key] = config.EmptySentinel
 			continue
 		}
 		v := values[0]
 		if key == "collector.sources" {
-			v = joinFormValues(values)
+			continue
+		}
+		if key == "notifier.channels" {
+			continue
 		}
 		v = config.NormalizeValue(v)
-		if key == "collector.douban.range_from" {
+		if key == "collector.douban.range_from" || key == "collector.weibo.range_from" {
 			v = config.CanonicalDayOffset(v)
 			if v == "" {
 				v = "-10"
@@ -378,12 +395,29 @@ func ParseSectionForm(form url.Values, section string, keepSecrets map[string]st
 		}
 		updates[key] = v
 	}
-	// 启用源多选：未勾选时显式写空（交给校验报错）
 	if allowed["collector.sources"] {
-		updates["collector.sources"] = joinFormValues(form["collector.sources"])
+		if group == "douban" || group == "weibo" {
+			on := csvHas(joinFormValues(form["collector.sources"]), group)
+			cur := ""
+			if keepSecrets != nil {
+				cur = keepSecrets["collector.sources"]
+			}
+			updates["collector.sources"] = mergeToggleCSV(cur, group, on)
+		} else if group == "" {
+			updates["collector.sources"] = joinFormValues(form["collector.sources"])
+		}
 	}
 	if allowed["notifier.channels"] {
-		updates["notifier.channels"] = joinFormValues(form["notifier.channels"])
+		if group == "feishu" || group == "pushplus" {
+			on := csvHas(joinFormValues(form["notifier.channels"]), group)
+			cur := ""
+			if keepSecrets != nil {
+				cur = keepSecrets["notifier.channels"]
+			}
+			updates["notifier.channels"] = mergeToggleCSV(cur, group, on)
+		} else if group == "" {
+			updates["notifier.channels"] = joinFormValues(form["notifier.channels"])
+		}
 	}
 	if allowed["secret.filter.llm.api_style"] {
 		updates["secret.filter.llm.api_style"] = "openai"
@@ -408,6 +442,49 @@ func ParseSectionForm(form url.Values, section string, keepSecrets map[string]st
 // normalizeLLMAPIStyle 旧 custom → other；非法空串原样
 func normalizeLLMAPIStyle(s string) string {
 	return config.ParseLLMAPIStyle(s).String()
+}
+
+func keyInConfigGroup(key, group string) bool {
+	switch group {
+	case "douban":
+		if key == "collector.sources" || key == "collector.interval" || key == "collector.jitter_ratio" {
+			return true
+		}
+		return strings.Contains(key, ".douban.") || strings.HasPrefix(key, "collector.douban.")
+	case "weibo":
+		if key == "collector.sources" || key == "collector.interval" || key == "collector.jitter_ratio" {
+			return true
+		}
+		return strings.Contains(key, ".weibo.") || strings.HasPrefix(key, "collector.weibo.")
+	case "feishu":
+		if key == "notifier.channels" || key == "notifier.batch_size" || key == "notifier.max_attempts" || key == "notifier.retry_base_interval" {
+			return true
+		}
+		return strings.Contains(key, ".feishu.")
+	case "pushplus":
+		if key == "notifier.channels" || key == "notifier.batch_size" || key == "notifier.max_attempts" || key == "notifier.retry_base_interval" {
+			return true
+		}
+		return strings.Contains(key, ".pushplus.")
+	default:
+		return true
+	}
+}
+
+func mergeToggleCSV(csv, item string, on bool) string {
+	var out []string
+	seen := map[string]bool{}
+	for _, p := range splitFlexible(csv) {
+		if p == item || seen[p] {
+			continue
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	if on {
+		out = append(out, item)
+	}
+	return strings.Join(out, ",")
 }
 
 func joinFormValues(values []string) string {

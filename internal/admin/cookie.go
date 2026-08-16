@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -17,7 +18,7 @@ func (s *Server) handleCookieCloudTest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if err := r.ParseForm(); err != nil {
+	if err := parseAdminForm(r); err != nil {
 		http.Error(w, "解析表单失败", http.StatusBadRequest)
 		return
 	}
@@ -25,6 +26,10 @@ func (s *Server) handleCookieCloudTest(w http.ResponseWriter, r *http.Request) {
 	source := cookieSource(r)
 	if strings.ToLower(draft.CookieMode) != "cookiecloud" {
 		draft.CookieMode = "cookiecloud"
+	}
+	if strings.TrimSpace(draft.CookiecloudURL) == "" || strings.TrimSpace(draft.CookiecloudKey) == "" || strings.TrimSpace(draft.CookiecloudPass) == "" {
+		writeJSON(w, map[string]any{"ok": false, "summary": "失败：请填写页面上的 CookieCloud 地址、UUID 和密码"})
+		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
@@ -49,6 +54,7 @@ func (s *Server) handleCookieCloudTest(w http.ResponseWriter, r *http.Request) {
 		resp["summary"] = "失败：" + err.Error()
 		pkglog.Component(pkglog.Admin).Info("CookieCloud 检测",
 			"stage", "fail",
+			"source", source,
 			"http", ins.HTTPStatus,
 			"algo", ins.Algo,
 			"err", err,
@@ -59,6 +65,7 @@ func (s *Server) handleCookieCloudTest(w http.ResponseWriter, r *http.Request) {
 	resp["summary"] = "通过"
 	pkglog.Component(pkglog.Admin).Info("CookieCloud 检测",
 		"stage", "ok",
+		"source", source,
 		"http", ins.HTTPStatus,
 		"algo", ins.Algo,
 		"cookies", ins.Names,
@@ -73,7 +80,7 @@ func (s *Server) handleCookieTest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if err := r.ParseForm(); err != nil {
+	if err := parseAdminForm(r); err != nil {
 		http.Error(w, "解析表单失败", http.StatusBadRequest)
 		return
 	}
@@ -122,6 +129,7 @@ func (s *Server) handleCookieTest(w http.ResponseWriter, r *http.Request) {
 	}
 	pkglog.Component(pkglog.Admin).Info("Cookie 检测",
 		"stage", "page",
+		"source", cookieSource(r),
 		"mode", mode,
 		"ok", page.OK,
 		"http", page.HTTP,
@@ -130,27 +138,32 @@ func (s *Server) handleCookieTest(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, resp)
 }
 
+func parseAdminForm(r *http.Request) error {
+	ct := r.Header.Get("Content-Type")
+	if strings.HasPrefix(ct, "multipart/form-data") {
+		return r.ParseMultipartForm(2 << 20)
+	}
+	return r.ParseForm()
+}
+
 func cookieSource(r *http.Request) string {
-	return config.CookieSource(firstNonEmpty(r.PostFormValue("source")))
+	return config.CookieSource(firstNonEmpty(r.PostFormValue("source"), r.FormValue("source")))
 }
 
 func (s *Server) draftCookieConfig(r *http.Request) config.DoubanCookieConfig {
 	source := cookieSource(r)
-	stored := s.rt.Secrets().Collector.CookieFor(source)
 	mode := strings.ToLower(strings.TrimSpace(firstNonEmpty(
 		r.PostFormValue("cookie_mode"),
 		r.PostFormValue(config.CookieModeKey(source)),
-		stored.CookieMode,
 	)))
 	if mode == "" {
 		mode = "none"
 	}
-	draft := config.DoubanCookieConfig{
+	return config.DoubanCookieConfig{
 		CookieMode: mode,
 		CookieRaw: firstNonEmpty(
 			r.PostFormValue("cookie_raw"),
 			r.PostFormValue(config.CookieRawKey(source)),
-			stored.CookieRaw,
 		),
 		CookiecloudURL: firstNonEmpty(
 			r.PostFormValue("cookiecloud_url"),
@@ -165,7 +178,6 @@ func (s *Server) draftCookieConfig(r *http.Request) config.DoubanCookieConfig {
 			r.PostFormValue(config.CookieCloudPwdKey(source)),
 		),
 	}
-	return draft
 }
 
 func (s *Server) fetchDraftCookie(ctx context.Context, mode string, draft config.DoubanCookieConfig, source string) (string, error) {
@@ -196,20 +208,21 @@ func cookieProbeURL(r *http.Request, rt *config.HotConfig) string {
 	source := cookieSource(r)
 	if source == "weibo" {
 		raw := firstNonEmpty(
+			r.PostFormValue("collector.weibo.tags"),
 			r.PostFormValue("collector.weibo.urls"),
 			r.PostFormValue("urls"),
 		)
-		if line := config.FirstHTTPURL(raw); line != "" {
-			return line
+		if tags := config.WeiboTags(strings.Split(raw, "\n")); len(tags) > 0 {
+			return weiboProbeSearchURL(tags[0])
 		}
 		if rt != nil {
 			if app := rt.Get(); app != nil {
-				if urls := config.HTTPURLs(app.Collector.Weibo.URLs); len(urls) > 0 {
-					return urls[0]
+				if tags := config.WeiboTags(app.Collector.Weibo.Tags); len(tags) > 0 {
+					return weiboProbeSearchURL(tags[0])
 				}
 			}
 		}
-		return "https://weibo.com/"
+		return "https://s.weibo.com/"
 	}
 	raw := firstNonEmpty(
 		r.PostFormValue("collector.douban.groups"),
@@ -226,6 +239,20 @@ func cookieProbeURL(r *http.Request, rt *config.HotConfig) string {
 		}
 	}
 	return "https://www.douban.com/"
+}
+
+func weiboProbeSearchURL(tag string) string {
+	u, err := url.Parse("https://s.weibo.com/weibo")
+	if err != nil {
+		return "https://s.weibo.com/"
+	}
+	q := u.Query()
+	q.Set("q", tag)
+	q.Set("typeall", "1")
+	q.Set("suball", "1")
+	q.Set("Refer", "g")
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 const errCookieMissing = cookieMissingError("本地 cookie 为空")

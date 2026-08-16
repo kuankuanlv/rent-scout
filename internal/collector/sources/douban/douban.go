@@ -70,36 +70,37 @@ type noopCookie struct{}
 
 func (noopCookie) Get(context.Context, string) (string, error) { return "", nil }
 
-// Detail 抓取详情页并归一化为 RentPost（只对未存在的新帖调用）。
-// 正文 = 首帖正文 HTML（含图片链接，不含评论）；Raw = 原始 HTML（规格 3.1）
-func (d *Douban) Detail(ctx context.Context, item collector.ListItem) (models.RentPost, error) {
-	body, err := d.get(ctx, item.URL)
-	if err != nil {
-		return models.RentPost{}, err
+	// Detail 抓取详情页并归一化为 RentPost（只对未存在的新帖调用）。
+	// 正文 = 首帖纯文本（去掉图片）；Raw = 去图后的详情 HTML
+	func (d *Douban) Detail(ctx context.Context, item collector.ListItem) (models.RentPost, error) {
+		body, err := d.get(ctx, item.URL)
+		if err != nil {
+			return models.RentPost{}, err
+		}
+		doc, err := goquery.NewDocumentFromReader(strings.NewReader(body))
+		if err != nil {
+			return models.RentPost{}, fmt.Errorf("解析详情页: %w", err)
+		}
+		doc.Find("img").Remove()
+		box := doc.Find(".topic-content").First()
+		content := collector.PlainText(box.Text())
+		raw, _ := doc.Html()
+		title := item.Title
+		if title == "" {
+			title = strings.TrimSpace(doc.Find("h1").First().Text())
+		}
+		return models.RentPost{
+			Source:      d.Name(),
+			ExternalID:  item.ExternalID,
+			URL:         item.URL,
+			Title:       title,
+			Content:     content,
+			Author:      item.Author,
+			PublishedAt: item.PublishedAt,
+			Status:      models.PostStatusCollected,
+			Raw:         raw,
+		}, nil
 	}
-	doc, err := goquery.NewDocumentFromReader(strings.NewReader(body))
-	if err != nil {
-		return models.RentPost{}, fmt.Errorf("解析详情页: %w", err)
-	}
-	// 正文：.topic-content 的 HTML（保留 <img> 图片链接）
-	content, _ := doc.Find(".topic-content").First().Html()
-	// 标题兜底：详情页 h1（列表标题优先）
-	title := item.Title
-	if title == "" {
-		title = strings.TrimSpace(doc.Find("h1").First().Text())
-	}
-	return models.RentPost{
-		Source:      d.Name(),
-		ExternalID:  item.ExternalID,
-		URL:         item.URL,
-		Title:       title,
-		Content:     strings.TrimSpace(content),
-		Author:      item.Author,
-		PublishedAt: item.PublishedAt,
-		Status:      models.PostStatusCollected,
-		Raw:         body,
-	}, nil
-}
 
 // List 抓取一页讨论列表。cursor 格式 "组下标:偏移"（如 "0:25"；"" = 从第一组第一页）。
 // 当前组该页有条目 → 同组下一页 "gi:offset+25"；空页 → 推进到下一组 "gi+1:0"；
@@ -173,6 +174,14 @@ func (d *Douban) SkipGroup(cursor string) string {
 		return ""
 	}
 	return strconv.Itoa(gi+1) + ":0"
+}
+
+func (d *Douban) DescribeCursor(cursor string) string {
+	gi, off := parseListCursor(cursor)
+	if off < 0 {
+		off = 0
+	}
+	return fmt.Sprintf("组%d第%d页", gi+1, off/listPageSize+1)
 }
 
 // parseListCursor 解析 "组下标:偏移" 游标；非法/空 → 0:0

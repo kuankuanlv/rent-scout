@@ -37,8 +37,9 @@ func New(opts Options) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
+	w := weibo.New(weibo.Options{Config: rt, Cookie: cp})
 	trigger := make(chan struct{}, postCreatedCap)
-	runner := collector.NewRunner(rt, db, []collector.Source{d, weibo.New(rt)}, trigger)
+	runner := collector.NewRunner(rt, db, []collector.Source{d, w}, trigger)
 	return &Service{
 		rt:            rt,
 		db:            db,

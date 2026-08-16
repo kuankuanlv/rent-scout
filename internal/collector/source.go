@@ -14,8 +14,10 @@ type ListItem struct {
 	URL         string // 详情页链接
 	Title       string
 	Author      string
-	PublishedAt time.Time // 源发布时间（窗口过滤依据）
-}
+		PublishedAt time.Time // 源发布时间（窗口过滤依据）
+		Content     string    // 列表页已带正文时 Detail 可直接用；豆瓣留空
+		NeedDetail  bool      // 列表是截断摘要，Detail 再拉全文（微博长微博）
+	}
 
 // Source 信息源适配器（规格 4.2 修订版）：List/Detail 双层。
 // 适配器不依赖 store——查重编排在 Runner（调整规格 E）
@@ -31,6 +33,16 @@ type Source interface {
 // GroupSkipper 多组源可选：本组已撞水位/时间窗时跳到下一组开头，少打无效页
 type GroupSkipper interface {
 	SkipGroup(cursor string) string
+}
+
+// CursorDescriber 把游标说成人话（搜索1「#话题」第2页）；没有则 Runner 用组N第M页
+type CursorDescriber interface {
+	DescribeCursor(cursor string) string
+}
+
+// TimeWindowLister 列表请求能带时间窗（微博高级搜索 timescope）
+type TimeWindowLister interface {
+	ListInWindow(ctx context.Context, cursor string, start, end time.Time) ([]ListItem, string, error)
 }
 
 func skipGroup(src Source, cursor string) string {

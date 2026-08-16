@@ -198,6 +198,12 @@ func TestAPIPostsListFilters(t *testing.T) {
 	if code, posts := get("/api/posts?handled=0"); code != http.StatusOK || len(posts) != 1 || posts[0].ExternalID != "af1" {
 		t.Errorf("handled=0: code=%d posts=%+v", code, posts)
 	}
+	if _, err := s.InsertPost(models.RentPost{Source: "weibo", ExternalID: "wb-api", Title: "微博API", Status: models.PostStatusPassed}); err != nil {
+		t.Fatal(err)
+	}
+	if code, posts := get("/api/posts?source=weibo"); code != http.StatusOK || len(posts) != 1 || posts[0].ExternalID != "wb-api" {
+		t.Errorf("source=weibo: code=%d posts=%+v", code, posts)
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/post-tags", nil)
 	req.Header.Set("Authorization", "Bearer secret")

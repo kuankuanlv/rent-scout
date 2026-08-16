@@ -102,7 +102,7 @@ func TestCookieTestWeiboProbesWeiboURL(t *testing.T) {
 		"source":      {"weibo"},
 		"cookie_mode": {"raw"},
 		"cookie_raw":  {"SUB=wb"},
-		"collector.weibo.urls": {"https://s.weibo.com/weibo?q=test"},
+		"collector.weibo.tags": {"#test#"},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/admin/config/cookie/test", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -116,13 +116,13 @@ func TestCookieTestWeiboProbesWeiboURL(t *testing.T) {
 	}
 }
 
-func TestCookieTestRawUsesStoredWhenEmpty(t *testing.T) {
+func TestCookieTestRawEmptyDoesNotUseStored(t *testing.T) {
 	s := newAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 	srv.SetCookieProbe(stubPageProbe{fn: func(ctx context.Context, rawURL, c string) DoubanPageResult {
-		if c != "dbcl2=storedvalue123456" {
-			t.Errorf("应使用已存 cookie, got %q", c)
+		if c != "" {
+			t.Errorf("空草稿不应回落到库里的 cookie, got %q", c)
 		}
 		return DoubanPageResult{OK: true, HTTP: 200}
 	}})
@@ -148,11 +148,8 @@ func TestCookieTestRawUsesStoredWhenEmpty(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
-	if out["ok"] != true {
-		t.Errorf("mocked page 应 ok: %v", out)
-	}
-	if strings.Contains(rec.Body.String(), "storedvalue123456") {
-		t.Error("响应 JSON 不应含明文 cookie")
+	if out["ok"] != false {
+		t.Errorf("页面未填 cookie 应失败: %v", out)
 	}
 }
 
@@ -215,8 +212,8 @@ func TestCookieCloudTestIncomplete(t *testing.T) {
 		t.Errorf("缺 url/key 应失败: %v", out)
 	}
 	sum, _ := out["summary"].(string)
-	if !strings.Contains(sum, "不完整") && !strings.Contains(sum, "url") {
-		t.Errorf("summary 应说明配置不完整: %q", sum)
+	if !strings.Contains(sum, "页面上的 CookieCloud") {
+		t.Errorf("summary 应要求填写页面三元组: %q", sum)
 	}
 }
 
@@ -268,6 +265,60 @@ func TestCookieHeaderPreviews(t *testing.T) {
 	if strings.Contains(got[0], "abcdefghijklmnop") {
 		t.Errorf("不应含明文: %v", got)
 	}
+}
+
+func TestCookieCloudTestUsesPageTripleAndSource(t *testing.T) {
+	s := newAdminTestStore(t)
+	defer s.Close()
+	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
+	probe := &recCloudProbe{}
+	srv.SetCookieProbe(probe)
+	if err := store.SetConfigBatch(s, map[string]string{
+		"secret.collector.douban.cookiecloud_url":      "https://stored-douban.example",
+		"secret.collector.douban.cookiecloud_key":      "db-uuid",
+		"secret.collector.douban.cookiecloud_password": "db-pass",
+		"secret.collector.weibo.cookiecloud_url":       "https://stored-weibo.example",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.rt.ReloadOnce(); err != nil {
+		t.Fatal(err)
+	}
+	form := url.Values{
+		"source":               {"weibo"},
+		"cookie_mode":          {"cookiecloud"},
+		"cookiecloud_url":      {"https://page-weibo.example"},
+		"cookiecloud_key":      {"page-uuid"},
+		"cookiecloud_password": {"page-pass"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/admin/config/cookiecloud/test", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if probe.source != "weibo" {
+		t.Errorf("source = %q, want weibo", probe.source)
+	}
+	if probe.url != "https://page-weibo.example" {
+		t.Errorf("url = %q, 应用页面草稿而不是库里的豆瓣/微博", probe.url)
+	}
+}
+
+type recCloudProbe struct {
+	source string
+	url    string
+}
+
+func (p *recCloudProbe) InspectCookieCloud(ctx context.Context, draft config.DoubanCookieConfig, source string) (CookieCloudInspect, error) {
+	p.source = source
+	p.url = draft.CookiecloudURL
+	return CookieCloudInspect{Cookie: "SUB=1", HTTPStatus: 200}, nil
+}
+
+func (p *recCloudProbe) ProbePage(ctx context.Context, probeURL, rawCookie string) DoubanPageResult {
+	return DoubanPageResult{OK: true, HTTP: 200}
 }
 
 type stubPageProbe struct {

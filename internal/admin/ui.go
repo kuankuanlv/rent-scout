@@ -5,6 +5,8 @@ import (
 	"math"
 	"net/http"
 	"strings"
+
+	"rent-scout/internal/models"
 )
 
 // ProjectRepoURL 控制台首页/页脚展示的仓库地址
@@ -63,6 +65,17 @@ func statusLabel(s string) string {
 		return "通过"
 	case "rejected":
 		return "拒绝"
+	default:
+		return s
+	}
+}
+
+func sourceLabel(s string) string {
+	switch s {
+	case models.SourceDouban.String():
+		return "豆瓣"
+	case models.SourceWeibo.String():
+		return "微博"
 	default:
 		return s
 	}

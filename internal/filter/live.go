@@ -24,11 +24,11 @@ func LiveAIEvaluator(rt *config.HotConfig) (AIEvaluator, string) {
 	}
 	baseURL := env.Filter.LLM.BaseURL
 	if baseURL == "" {
-		baseURL = "https://api.openai.com/v1"
+		baseURL = config.DefaultLLMBaseURL
 	}
 	model := env.Filter.LLM.Model
 	if model == "" {
-		model = "deepseek-chat"
+		model = config.DefaultLLMModel
 	}
 	opts := []llm.ClientOptions{{BaseURL: baseURL, APIKey: env.Filter.LLM.APIKey, Model: model}}
 	for _, m := range env.Filter.LLM.FallbackModels {

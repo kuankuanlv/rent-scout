@@ -103,3 +103,23 @@ func TestCanonicalDayOffset(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+func TestCollectorReplayWindowTakesEarlierFrom(t *testing.T) {
+	now := time.Date(2026, 8, 16, 12, 0, 0, 0, time.Local)
+	cfg := &AppConfig{
+		Collector: CollectorConfig{
+			Douban: DoubanConfig{RangeFrom: "-3"},
+			Weibo:  WeiboConfig{RangeFrom: "-10"},
+		},
+	}
+	start, end, err := CollectorReplayWindow(cfg, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !start.Equal(now.Add(-10 * 24 * time.Hour)) {
+		t.Errorf("start = %v, want 微博更早的 -10 天", start)
+	}
+	if !end.Equal(now) {
+		t.Errorf("end = %v, want now", end)
+	}
+}

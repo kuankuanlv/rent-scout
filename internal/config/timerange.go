@@ -79,6 +79,33 @@ func parseDayOffset(s string) (float64, bool) {
 	return n, true
 }
 
+// CollectorReplayWindow 规则重放用采集时间窗：豆瓣、微博 RangeFrom 取更早的起点，终点都是 now
+func CollectorReplayWindow(cfg *AppConfig, now time.Time) (start, end time.Time, err error) {
+	froms := []string{"-10"}
+	if cfg != nil {
+		froms = []string{cfg.Collector.Douban.RangeFrom, cfg.Collector.Weibo.RangeFrom}
+	}
+	var lastErr error
+	for _, from := range froms {
+		s, e, eerr := ResolveTimeRange(from, "now", now)
+		if eerr != nil {
+			lastErr = eerr
+			continue
+		}
+		if start.IsZero() || s.Before(start) {
+			start = s
+		}
+		end = e
+	}
+	if start.IsZero() {
+		if lastErr != nil {
+			return time.Time{}, time.Time{}, lastErr
+		}
+		return ResolveTimeRange("-10", "now", now)
+	}
+	return start, end, nil
+}
+
 // CanonicalDayOffset 存库/展示：-10d → -10；now 保持；绝对时间原样
 func CanonicalDayOffset(s string) string {
 	s = strings.TrimSpace(s)

@@ -115,8 +115,14 @@ func (c *Consumer) ReplayHard(ctx context.Context, batch []models.RentPost) erro
 		} else if res.Status == models.PostStatusRejected {
 			_ = c.store.UpdatePostAddressTags(post.ID, []string{})
 		}
+		becamePassed := post.Status != models.PostStatusPassed && res.Status == models.PostStatusPassed
 		if err := c.commitHard(res); err != nil {
 			return err
+		}
+		if becamePassed {
+			if err := c.store.ClearNotificationsByPost(post.ID); err != nil {
+				log.Error("重放通过后清通知账本失败", "post_id", post.ID, "err", err)
+			}
 		}
 		n++
 	}

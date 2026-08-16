@@ -65,6 +65,10 @@ func (s *Store) InsertNotification(postID int64, channel string) (bool, error) {
 	return s.notify.InsertNotification(postID, channel)
 }
 
+func (s *Store) ClearNotificationsByPost(postID int64) error {
+	return s.notify.ClearByPost(postID)
+}
+
 func (s *Store) FetchPendingNotifications(channel string, limit int) ([]models.Notification, error) {
 	return s.notify.FetchPendingNotifications(channel, limit)
 }

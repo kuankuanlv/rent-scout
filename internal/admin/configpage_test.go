@@ -179,7 +179,7 @@ func TestConfigTabs(t *testing.T) {
 	if !strings.Contains(body, "本配置当前版本仅用于审核帖子") {
 		t.Errorf("ai tab Desc 应说明仅用于审核")
 	}
-	if !strings.Contains(body, "系统提示词") || !strings.Contains(body, "json_schema") || !strings.Contains(body, "500 字") {
+	if !strings.Contains(body, "系统提示词") || !strings.Contains(body, "verdicts") || !strings.Contains(body, "500 字") {
 		t.Errorf("ai tab Desc 应说明 prompt、结构化输出和省 token")
 	}
 	if !strings.Contains(body, "filter.batch_size") || !strings.Contains(body, "filter.ai_batch_size") {
@@ -212,8 +212,8 @@ func TestConfigTabs(t *testing.T) {
 	if strings.Contains(body, "fallback_models") {
 		t.Errorf("ai 不应含 fallback")
 	}
-	if !strings.Contains(body, "https://api.deepseek.com") {
-		t.Errorf("ai Base URL 默认 deepseek")
+	if !strings.Contains(body, "127.0.0.1:20128") {
+		t.Errorf("ai Base URL 默认本地 OmniRoute")
 	}
 	if strings.Contains(body, "启用 AI") {
 		t.Errorf("ai 不应再有单独「启用 AI」checkbox")
@@ -439,14 +439,14 @@ func TestConfigHistorySnapshotPage(t *testing.T) {
 
 func TestParseSectionFormGroupKeepsOtherSource(t *testing.T) {
 	keep := map[string]string{
-		"collector.sources":         "douban,weibo",
-		"collector.weibo.users":     "6342026928",
-		"collector.douban.groups":   "https://www.douban.com/group/1/",
+		"collector.sources":       "douban,weibo",
+		"collector.weibo.users":   "6342026928",
+		"collector.douban.groups": "https://www.douban.com/group/1/",
 	}
 	form := url.Values{
-		"section":               {"collector"},
-		"group":                 {"weibo"},
-		"collector.sources":     {"weibo"},
+		"section":                {"collector"},
+		"group":                  {"weibo"},
+		"collector.sources":      {"weibo"},
 		"collector.weibo.users":  {"1111111111"},
 		"collector.interval":     {"300"},
 		"collector.jitter_ratio": {"0.2"},

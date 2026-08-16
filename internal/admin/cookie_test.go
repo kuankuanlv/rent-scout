@@ -102,7 +102,7 @@ func TestCookieTestWeiboProbesWeiboURL(t *testing.T) {
 		"source":      {"weibo"},
 		"cookie_mode": {"raw"},
 		"cookie_raw":  {"SUB=wb"},
-		"collector.weibo.tags": {"#test#"},
+		"collector.weibo.users": {"6342026928"},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/admin/config/cookie/test", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")

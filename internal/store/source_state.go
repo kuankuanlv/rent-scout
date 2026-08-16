@@ -53,6 +53,65 @@ func (p SourceProgress) normalized() SourceProgress {
 	return p
 }
 
+// DecodeWatermarks 把 seen_newest 解成 目标键→时间。旧的单时间戳放在 "*" 里当共同初值。
+func DecodeWatermarks(seen string) map[string]string {
+	seen = strings.TrimSpace(seen)
+	if seen == "" {
+		return map[string]string{}
+	}
+	if strings.HasPrefix(seen, "{") {
+		var m map[string]string
+		if err := json.Unmarshal([]byte(seen), &m); err == nil && m != nil {
+			return m
+		}
+	}
+	return map[string]string{"*": seen}
+}
+
+func EncodeWatermarks(m map[string]string) string {
+	if len(m) == 0 {
+		return ""
+	}
+	if len(m) == 1 {
+		if v, ok := m["*"]; ok {
+			return v
+		}
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+func LookupWatermark(m map[string]string, key string) time.Time {
+	if key == "" || len(m) == 0 {
+		return time.Time{}
+	}
+	if v, ok := m[key]; ok {
+		return parseStoredWatermark(v)
+	}
+	keyed := false
+	for k := range m {
+		if k != "*" {
+			keyed = true
+			break
+		}
+	}
+	if !keyed {
+		return parseStoredWatermark(m["*"])
+	}
+	return time.Time{}
+}
+
+func parseStoredWatermark(s string) time.Time {
+	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
+		return t
+	}
+	t, _ := time.Parse(time.RFC3339, s)
+	return t
+}
+
 // CatchingUp 历史已翻完，本轮从列表头追新
 func (p SourceProgress) CatchingUp() bool {
 	p = p.normalized()

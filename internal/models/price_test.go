@@ -14,12 +14,29 @@ func TestExtractRentPrice(t *testing.T) {
 		{"无价格帖", "近地铁拎包入住", PriceUnknown},
 		{"年份干扰", "2024年搬家记录，无租金", PriceUnknown},
 		{"区间", "月租3000-3500可谈", "3000"},
+		{"k写法", "望京整租 3.5k 可短租", "3500"},
+		{"千", "月租3千5水电暖齐", "3500"},
+		{"中文金额", "房租三千五，押一付一", "3500"},
+		{"万元", "整租价1.2万含物业", "12000"},
+		{"全角数字", "月租４５００元/月", "4500"},
+		{"平米干扰", "120平精装近地铁无租金数字月", PriceUnknown},
 	}
 	for _, c := range cases {
 		got := ExtractRentPrice(c.title, c.content)
 		if got != c.want {
 			t.Errorf("title=%q content=%q got %q want %q", c.title, c.content, got, c.want)
 		}
+	}
+}
+
+func TestFillPostExtractedDoesNotTouchBody(t *testing.T) {
+	p := RentPost{Title: "月租2600", Content: "电话13812345678 原文别动"}
+	FillPostExtracted(&p)
+	if p.Title != "月租2600" || p.Content != "电话13812345678 原文别动" {
+		t.Fatalf("抽取不该改帖子正文: title=%q content=%q", p.Title, p.Content)
+	}
+	if p.Price != "2600" || p.Contact != "13812345678" {
+		t.Fatalf("应只填价格和联系方式: price=%q contact=%q", p.Price, p.Contact)
 	}
 }
 

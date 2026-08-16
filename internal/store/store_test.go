@@ -398,8 +398,8 @@ func TestEnsureDefaultRule(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rules) != 2 {
-		t.Fatalf("启用 = %d, want 2", len(rules))
+	if len(rules) != 3 {
+		t.Fatalf("启用 = %d, want 3", len(rules))
 	}
 	byName := map[string]models.Rule{}
 	for _, r := range rules {
@@ -408,11 +408,14 @@ func TestEnsureDefaultRule(t *testing.T) {
 	if byName["黑名单-中介"].Value != "中介,代理,隔断," || byName["白名单-地点"].Value != "梨园,雍和宫" {
 		t.Errorf("默认规则值不符: %+v", rules)
 	}
+	if byName["靠谱个人房源"].Type != models.RuleTypeAINatural || byName["靠谱个人房源"].Value != models.BuiltInAIRuleValue {
+		t.Errorf("默认 AI 规则不符: %+v", byName["靠谱个人房源"])
+	}
 	if err := s.EnsureDefaultRule(); err != nil {
 		t.Fatal(err)
 	}
 	rules, _ = s.ListRules(false)
-	if len(rules) != 2 {
+	if len(rules) != 3 {
 		t.Errorf("不应重复种子: %d", len(rules))
 	}
 }

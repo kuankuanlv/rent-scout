@@ -87,6 +87,23 @@ func TestHotConfigCookieProviderPerSource(t *testing.T) {
 	}
 }
 
+func TestHotConfigWeiboCNCookie(t *testing.T) {
+	env := &config.Secrets{
+		Collector: config.SecretsCollector{
+			Weibo: config.DoubanCookieConfig{CookieMode: "raw", CookieRaw: "wb=pc", CookieRawCN: "wb=mobi"},
+		},
+	}
+	p := NewHotConfigProvider(config.NewHotConfigWithSnapshot(nil, env))
+	got, err := p.Get(context.Background(), "weibo")
+	if err != nil || got != "wb=pc" {
+		t.Fatalf("weibo = %q %v", got, err)
+	}
+	got, err = p.Get(context.Background(), "weibo.cn")
+	if err != nil || got != "wb=mobi" {
+		t.Fatalf("weibo.cn = %q %v", got, err)
+	}
+}
+
 // 未知模式：报错（配置错误应显式暴露）
 func TestUnknownCookieMode(t *testing.T) {
 	if _, err := New("weird", config.DoubanCookieConfig{}); err == nil {

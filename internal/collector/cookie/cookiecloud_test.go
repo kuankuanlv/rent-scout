@@ -228,6 +228,21 @@ func TestInspectCookieCloudWeiboDomain(t *testing.T) {
 	}
 }
 
+func TestWeiboComAndCNCookiesDoNotMix(t *testing.T) {
+	plain := `{"cookie_data":{
+		"weibo.com":[{"name":"SUB","value":"pc","domain":".weibo.com"}],
+		"weibo.cn":[{"name":"SUB","value":"mobi","domain":".weibo.cn"},{"name":"MLOGIN","value":"1","domain":".weibo.cn"}]
+	}}`
+	pc := buildCookieString(plain, "weibo.com")
+	cn := buildCookieString(plain, "weibo.cn")
+	if pc != "SUB=pc" {
+		t.Errorf("com=%q", pc)
+	}
+	if !strings.Contains(cn, "SUB=mobi") || !strings.Contains(cn, "MLOGIN=1") || strings.Contains(cn, "SUB=pc") {
+		t.Errorf("cn=%q", cn)
+	}
+}
+
 func TestRiskSnippet(t *testing.T) {
 	body := `<html><body>抱歉，检测到有异常请求，请稍后再试</body></html>`
 	if !RiskDetected(body) {

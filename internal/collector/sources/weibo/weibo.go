@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -25,237 +26,322 @@ import (
 var _ collector.Source = (*Source)(nil)
 var _ collector.GroupSkipper = (*Source)(nil)
 var _ collector.TimeWindowLister = (*Source)(nil)
+var _ collector.GroupWatermarker = (*Source)(nil)
 
-const listPageSize = 25 // 游标步进与豆瓣一致，映射到微博 page=offset/25+1
+const weiboStatusTime = "Mon Jan 02 15:04:05 -0700 2006"
 
-	type Options struct {
-		Config     *config.HotConfig
-		Tags       []string // 仅测试钉死；生产留空，List 时读配置
-		Base       string   // 测试用搜索前缀；空则 https://s.weibo.com/weibo
-		Cookie     cookie.Provider
-		Client     *http.Client
-		DetailBase string // 测试用详情前缀；空则 https://m.weibo.cn/detail
+type Options struct {
+	Config      *config.HotConfig
+	Users       []string
+	SuperTopics []string
+	AjaxBase    string // 测试用 PC ajax 前缀；空则 https://weibo.com
+	MobileBase  string // 测试用手机域前缀；空则 https://m.weibo.cn
+	Cookie      cookie.Provider
+	Client      *http.Client
+	DetailBase  string // 测试用详情前缀；空则 https://m.weibo.cn/detail
+}
+
+type Source struct {
+	rt         *config.HotConfig
+	fixedUsers []string
+	fixedSuper []string
+	ajaxBase   string
+	mobileBase string
+	cookie     cookie.Provider
+	client     *http.Client
+	detailBase string
+	mu         sync.Mutex
+	superSince map[string]string // 超话 id → 下一页 since_id JSON
+}
+
+func New(opts Options) *Source {
+	if opts.Cookie == nil {
+		opts.Cookie = noopCookie{}
 	}
-
-	type Source struct {
-		rt         *config.HotConfig
-		fixedTags  []string
-		base       string
-		cookie     cookie.Provider
-		client     *http.Client
-		detailBase string
+	if opts.Client == nil {
+		opts.Client = &http.Client{Timeout: 30 * time.Second}
 	}
+	return &Source{
+		rt:         opts.Config,
+		fixedUsers: append([]string(nil), opts.Users...),
+		fixedSuper: append([]string(nil), opts.SuperTopics...),
+		ajaxBase:   strings.TrimRight(opts.AjaxBase, "/"),
+		mobileBase: strings.TrimRight(opts.MobileBase, "/"),
+		cookie:     opts.Cookie,
+		client:     opts.Client,
+		detailBase: strings.TrimRight(opts.DetailBase, "/"),
+		superSince: map[string]string{},
+	}
+}
 
-	func New(opts Options) *Source {
-		if opts.Cookie == nil {
-			opts.Cookie = noopCookie{}
-		}
-		if opts.Client == nil {
-			opts.Client = &http.Client{Timeout: 30 * time.Second}
-		}
-		return &Source{
-			rt:         opts.Config,
-			fixedTags:  append([]string(nil), opts.Tags...),
-			base:       strings.TrimRight(opts.Base, "/"),
-			cookie:     opts.Cookie,
-			client:     opts.Client,
-			detailBase: strings.TrimRight(opts.DetailBase, "/"),
+func (s *Source) Name() string { return models.SourceWeibo.String() }
+
+func (s *Source) users() []string {
+	if len(s.fixedUsers) > 0 {
+		return config.WeiboUIDs(s.fixedUsers)
+	}
+	if s.rt != nil {
+		if app := s.rt.Get(); app != nil {
+			return config.WeiboUIDs(app.Collector.Weibo.Users)
 		}
 	}
+	return nil
+}
 
-	func (s *Source) Name() string { return models.SourceWeibo.String() }
-
-	func (s *Source) tags() []string {
-		if len(s.fixedTags) > 0 {
-			return config.WeiboTags(s.fixedTags)
-		}
-		if s.rt != nil {
-			if app := s.rt.Get(); app != nil {
-				return config.WeiboTags(app.Collector.Weibo.Tags)
-			}
-		}
-		return nil
+func (s *Source) supers() []string {
+	if len(s.fixedSuper) > 0 {
+		return config.WeiboContainerIDs(s.fixedSuper)
 	}
-
-	type noopCookie struct{}
-
-	func (noopCookie) Get(context.Context, string) (string, error) { return "", nil }
-
-	// List 抓一页高级搜索。cursor 同豆瓣 "组下标:偏移"；偏移按 25 步进，请求时写成 page。
-	func (s *Source) List(ctx context.Context, cursor string) ([]collector.ListItem, string, error) {
-		start, end := s.defaultWindow()
-		return s.ListInWindow(ctx, cursor, start, end)
+	if s.rt != nil {
+		if app := s.rt.Get(); app != nil {
+			return config.WeiboContainerIDs(app.Collector.Weibo.SuperTopics)
+		}
 	}
+	return nil
+}
 
-	func (s *Source) ListInWindow(ctx context.Context, cursor string, start, end time.Time) ([]collector.ListItem, string, error) {
-		tags := s.tags()
-		if len(tags) == 0 {
-			pkglog.Component(pkglog.SourceCollector(s.Name())).Info("当前配置微博话题为空，无需执行")
-			return nil, "", nil
-		}
-		gi, offset := parseListCursor(cursor)
-		if gi >= len(tags) {
-			return nil, "", nil
-		}
-			pageURL, err := advancedSearchURL(s.searchBase(), tags[gi], start, end, offset/listPageSize+1)
-			if err != nil {
-				return nil, "", err
-			}
-			pkglog.Component(pkglog.SourceCollector(s.Name())).Info("请求列表 "+pageURL)
-			body, err := s.get(ctx, pageURL)
-			if err != nil {
-				return nil, "", err
-			}
-			items, err := parseSearchList(body)
-			if err != nil {
-				return nil, "", err
-			}
-			pkglog.Component(pkglog.SourceCollector(s.Name())).Info(fmt.Sprintf("列表解析 %d 条 %s", len(items), pageURL))
-		next := ""
-		if len(items) > 0 {
-			next = strconv.Itoa(gi) + ":" + strconv.Itoa(offset+listPageSize)
-		} else if gi+1 < len(tags) {
-			next = strconv.Itoa(gi+1) + ":0"
-		}
-		return items, next, nil
+type crawlTarget struct {
+	kind    string
+	id      string
+	label   string
+	ordered bool
+	wmKey   string
+}
+
+func (s *Source) targets() []crawlTarget {
+	var out []crawlTarget
+	for _, id := range s.supers() {
+		out = append(out, crawlTarget{kind: "super", id: id, label: id, ordered: true, wmKey: "super:" + id})
 	}
-
-	func (s *Source) SkipGroup(cursor string) string {
-		gi, _ := parseListCursor(cursor)
-		if gi+1 >= len(s.tags()) {
-			return ""
-		}
-		return strconv.Itoa(gi+1) + ":0"
+	for _, id := range s.users() {
+		out = append(out, crawlTarget{kind: "user", id: id, label: id, ordered: true, wmKey: "user:" + id})
 	}
+	return out
+}
 
-	func (s *Source) DescribeCursor(cursor string) string {
-		gi, off := parseListCursor(cursor)
-		page := off / listPageSize
-		if off < 0 {
-			off = 0
-			page = 0
-		}
-		page++
-		name := fmt.Sprintf("搜索%d", gi+1)
-		tags := s.tags()
-		if gi >= 0 && gi < len(tags) {
-			name += "「" + tags[gi] + "」"
-		}
-		return fmt.Sprintf("%s第%d页", name, page)
+type noopCookie struct{}
+
+func (noopCookie) Get(context.Context, string) (string, error) { return "", nil }
+
+func (s *Source) List(ctx context.Context, cursor string) ([]collector.ListItem, string, error) {
+	start, end := s.defaultWindow()
+	return s.ListInWindow(ctx, cursor, start, end)
+}
+
+func (s *Source) ListInWindow(ctx context.Context, cursor string, start, end time.Time) ([]collector.ListItem, string, error) {
+	ts := s.targets()
+	if len(ts) == 0 {
+		pkglog.Component(pkglog.SourceCollector(s.Name())).Info("当前配置微博超话、博主均为空，无需执行")
+		return nil, "", nil
 	}
-
-	func (s *Source) searchBase() string {
-		if s.base != "" {
-			return s.base
-		}
-		return "https://s.weibo.com/weibo"
+	gi, offset := parseListCursor(cursor)
+	if gi >= len(ts) {
+		return nil, "", nil
 	}
-
-	func (s *Source) defaultWindow() (time.Time, time.Time) {
-		now := time.Now()
-		if s.rt != nil {
-			if app := s.rt.Get(); app != nil {
-				start, end, err := config.ResolveTimeRange(app.Collector.Weibo.RangeFrom, "now", now)
-				if err == nil {
-					return start, end
-				}
-			}
-		}
-		return now.Add(-10 * 24 * time.Hour), now
+	t := ts[gi]
+	var items []collector.ListItem
+	var err error
+	switch t.kind {
+	case "super":
+		items, err = s.listSuper(ctx, t, offset, start, end)
+	default:
+		items, err = s.listUser(ctx, t, offset, start, end)
 	}
+	if err != nil {
+		return nil, "", err
+	}
+	next := ""
+	if len(items) > 0 {
+		next = strconv.Itoa(gi) + ":" + nextPageOffset(offset)
+	} else if gi+1 < len(ts) {
+		next = strconv.Itoa(gi+1) + ":0"
+	}
+	return items, next, nil
+}
 
-	func advancedSearchURL(base, tag string, start, end time.Time, page int) (string, error) {
-		if strings.TrimSpace(base) == "" {
-			base = "https://s.weibo.com/weibo"
-		}
-		u, err := url.Parse(base)
-		if err != nil {
-			return "", fmt.Errorf("微博搜索地址非法: %w", err)
-		}
-		if u.Path == "" || u.Path == "/" {
-			u.Path = "/weibo"
-		}
-		q := u.Query()
-		q.Set("q", tag)
-		q.Set("typeall", "1")
-		q.Set("suball", "1")
-		q.Set("timescope", weiboTimescope(start, end))
-		q.Set("Refer", "g")
+func nextPageOffset(offset string) string {
+	return strconv.Itoa(pageFromOffset(offset) + 1)
+}
+
+func pageFromOffset(offset string) int {
+	page := 1
+	if offset != "" && offset != "0" {
+		page, _ = strconv.Atoi(offset)
 		if page < 1 {
 			page = 1
 		}
-		q.Set("page", strconv.Itoa(page))
-		u.RawQuery = q.Encode()
-		return u.String(), nil
 	}
+	return page
+}
 
-	func weiboTimescope(start, end time.Time) string {
-		if start.IsZero() {
-			start = time.Now().Add(-10 * 24 * time.Hour)
-		}
-		if end.IsZero() {
-			end = time.Now()
-		}
-		if end.Before(start) {
-			end = start
-		}
-		return "custom:" + weiboHour(start) + ":" + weiboHour(end)
+func (s *Source) SkipGroup(cursor string) string {
+	gi, _ := parseListCursor(cursor)
+	if gi+1 >= len(s.targets()) {
+		return ""
 	}
+	return strconv.Itoa(gi+1) + ":0"
+}
 
-	func weiboHour(t time.Time) string {
-		t = t.In(time.Local)
-		return fmt.Sprintf("%s-%d", t.Format("2006-01-02"), t.Hour())
+func (s *Source) DescribeCursor(cursor string) string {
+	gi, off := parseListCursor(cursor)
+	ts := s.targets()
+	name := fmt.Sprintf("目标%d", gi+1)
+	if gi >= 0 && gi < len(ts) {
+		t := ts[gi]
+		switch t.kind {
+		case "super":
+			name = "超话「" + t.label + "」"
+		default:
+			name = "博主「" + t.label + "」"
+		}
 	}
+	page := pageFromOffset(off)
+	return fmt.Sprintf("%s第%d页", name, page)
+}
 
-	// Detail 短帖用列表正文；长微博列表只有摘要时再打 m.weibo.cn 详情拿全文。正文去图。
-	func (s *Source) Detail(ctx context.Context, item collector.ListItem) (models.RentPost, error) {
-		content := stripUnfoldChrome(item.Content)
-		if item.NeedDetail && strings.TrimSpace(item.ExternalID) != "" {
-			base := s.detailBase
-			if base == "" {
-				base = "https://m.weibo.cn/detail"
+func (s *Source) WatermarkKey(cursor string) string {
+	gi, _ := parseListCursor(cursor)
+	ts := s.targets()
+	if gi < 0 || gi >= len(ts) {
+		return ""
+	}
+	return ts[gi].wmKey
+}
+
+func (s *Source) TimeOrdered(cursor string) bool {
+	gi, _ := parseListCursor(cursor)
+	ts := s.targets()
+	if gi < 0 || gi >= len(ts) {
+		return true
+	}
+	return ts[gi].ordered
+}
+
+func (s *Source) sinceFor(id string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.superSince == nil {
+		return ""
+	}
+	return s.superSince[id]
+}
+
+func (s *Source) setSince(id, since string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.superSince == nil {
+		s.superSince = map[string]string{}
+	}
+	if strings.TrimSpace(since) == "" {
+		delete(s.superSince, id)
+		return
+	}
+	s.superSince[id] = since
+}
+
+func (s *Source) pcBase() string {
+	if s.ajaxBase != "" {
+		return s.ajaxBase
+	}
+	return "https://weibo.com"
+}
+
+func (s *Source) mBase() string {
+	if s.mobileBase != "" {
+		return s.mobileBase
+	}
+	return "https://m.weibo.cn"
+}
+
+func (s *Source) defaultWindow() (time.Time, time.Time) {
+	now := time.Now()
+	if s.rt != nil {
+		if app := s.rt.Get(); app != nil {
+			start, end, err := config.ResolveTimeRange(app.Collector.Weibo.RangeFrom, "now", now)
+			if err == nil {
+				return start, end
 			}
-			body, err := s.get(ctx, base+"/"+item.ExternalID)
-			if err != nil {
-				if content == "" {
-					return models.RentPost{}, err
-				}
-			} else if full := parseMobileStatus(body); full != "" {
-				content = full
-			}
 		}
-		title := strings.TrimSpace(item.Title)
-		if title == "" {
-			title = clipTitle(content)
-		}
-		return models.RentPost{
-			Source:      s.Name(),
-			ExternalID:  item.ExternalID,
-			URL:         item.URL,
-			Title:       title,
-			Content:     content,
-			Author:      item.Author,
-			PublishedAt: item.PublishedAt,
-			Status:      models.PostStatusCollected,
-			Raw:         content,
-		}, nil
 	}
+	return now.Add(-10 * 24 * time.Hour), now
+}
 
-func parseListCursor(cursor string) (groupIdx, offset int) {
+// Detail 短帖用列表正文；长微博再补全文。正文抠不到联系方式和价格时，只捞博主自己的评论。
+func (s *Source) Detail(ctx context.Context, item collector.ListItem) (models.RentPost, error) {
+	content := stripUnfoldChrome(item.Content)
+	if item.Kind == "user" && item.NeedDetail && strings.TrimSpace(item.MblogID) != "" {
+		if full := s.fetchLongText(ctx, item.MblogID); full != "" {
+			content = full
+		}
+	} else if item.NeedDetail && strings.TrimSpace(item.ExternalID) != "" && item.Kind != "user" {
+		base := s.detailBase
+		if base == "" {
+			base = s.mBase() + "/detail"
+		}
+		body, err := s.get(ctx, base+"/"+item.ExternalID)
+		if err != nil {
+			if content == "" {
+				return models.RentPost{}, err
+			}
+		} else if full := parseMobileStatus(body); full != "" {
+			content = full
+		}
+	}
+	if item.AuthorID != "" && !models.HasContact(models.ExtractContact("", content)) && models.ExtractRentPrice("", content) == models.PriceUnknown {
+		if extra := s.fetchOwnerComments(ctx, item); extra != "" {
+			content = strings.TrimSpace(content + "\n" + extra)
+		}
+	}
+	title := strings.TrimSpace(item.Title)
+	if title == "" {
+		title = clipTitle(content)
+	}
+	return models.RentPost{
+		Source:      s.Name(),
+		ExternalID:  item.ExternalID,
+		URL:         item.URL,
+		Title:       title,
+		Content:     content,
+		Author:      item.Author,
+		PublishedAt: item.PublishedAt,
+		Status:      models.PostStatusCollected,
+		Raw:         content,
+	}, nil
+}
+
+func parseListCursor(cursor string) (groupIdx int, offset string) {
 	if cursor == "" {
-		return 0, 0
+		return 0, "0"
 	}
 	parts := strings.SplitN(cursor, ":", 2)
 	groupIdx, _ = strconv.Atoi(parts[0])
 	if len(parts) == 2 {
-		offset, _ = strconv.Atoi(parts[1])
+		offset = parts[1]
+	}
+	if offset == "" {
+		offset = "0"
 	}
 	return groupIdx, offset
 }
 
+func (s *Source) cookieSourceFor(rawURL string) string {
+	if u, err := url.Parse(rawURL); err == nil && strings.Contains(u.Host, "weibo.cn") {
+		return "weibo.cn"
+	}
+	return models.SourceWeibo.String()
+}
+
 func (s *Source) get(ctx context.Context, rawURL string) (string, error) {
+	return s.doGet(ctx, rawURL, true)
+}
+
+func (s *Source) getSoft(ctx context.Context, rawURL string) (string, error) {
+	return s.doGet(ctx, rawURL, false)
+}
+
+func (s *Source) doGet(ctx context.Context, rawURL string, strict bool) (string, error) {
 	pkglog.Component(pkglog.SourceCollector(s.Name())).Info("请求 " + rawURL)
-	ck, err := s.cookie.Get(ctx, models.SourceWeibo.String())
+	ck, err := s.cookie.Get(ctx, s.cookieSourceFor(rawURL))
 	if err != nil {
 		return "", err
 	}
@@ -263,19 +349,29 @@ func (s *Source) get(ctx context.Context, rawURL string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-		req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36")
-		req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-		req.Header.Set("Referer", "https://s.weibo.com/")
-		if u, err := url.Parse(rawURL); err == nil && strings.Contains(u.Host, "m.weibo.cn") {
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	req.Header.Set("Referer", "https://weibo.com/")
+	if u, err := url.Parse(rawURL); err == nil {
+		if strings.Contains(u.Host, "m.weibo.cn") || strings.Contains(u.Host, "weibo.cn") {
 			req.Header.Set("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1")
 			req.Header.Set("Referer", "https://m.weibo.cn/")
+			req.Header.Set("X-Requested-With", "XMLHttpRequest")
+			req.Header.Set("Accept", "application/json, text/plain, */*")
+		} else if strings.Contains(u.Path, "/ajax") {
+			req.Header.Set("X-Requested-With", "XMLHttpRequest")
+			req.Header.Set("Accept", "application/json, text/plain, */*")
+			req.Header.Set("Referer", "https://weibo.com/")
 		}
+	}
 	if ck != "" {
 		req.Header.Set("Cookie", ck)
 	}
 	resp, err := s.client.Do(req)
 	if err != nil {
-		pkglog.Component(pkglog.SourceCollector(s.Name())).Error("请求失败", "url", rawURL, "err", err)
+		if strict {
+			pkglog.Component(pkglog.SourceCollector(s.Name())).Error("请求失败", "url", rawURL, "err", err)
+		}
 		return "", fmt.Errorf("请求失败 %s: %w", rawURL, err)
 	}
 	defer resp.Body.Close()
@@ -284,12 +380,45 @@ func (s *Source) get(ctx context.Context, rawURL string) (string, error) {
 		return "", err
 	}
 	body := string(b)
-	if weiboRiskDetected(body) {
-		pkglog.Component(pkglog.SourceCollector(s.Name())).Error("cookie 已失效",
-			"url", rawURL, "http", resp.StatusCode)
-		return "", fmt.Errorf("%w: %s", cookie.ErrCookieInvalid, rawURL)
+	if err := weiboResponseErr(resp.StatusCode, body); err != nil {
+		if !strict {
+			return body, err
+		}
+		pkglog.Component(pkglog.SourceCollector(s.Name())).Error("微博请求异常",
+			"url", rawURL, "http", resp.StatusCode, "err", err)
+		return "", err
 	}
 	return body, nil
+}
+
+func weiboResponseErr(status int, body string) error {
+	if status == 403 || status == 418 || status == 432 {
+		return fmt.Errorf("%w: http %d", cookie.ErrCookieInvalid, status)
+	}
+	trim := strings.TrimSpace(body)
+	if strings.HasPrefix(trim, "{") {
+		var head struct {
+			OK  json.RawMessage `json:"ok"`
+			URL string          `json:"url"`
+		}
+		if err := json.Unmarshal([]byte(trim), &head); err == nil && len(head.OK) > 0 {
+			ok := strings.TrimSpace(string(head.OK))
+			if ok != "1" && ok != `"1"` && ok != "true" {
+				if ok == "-100" || strings.Contains(head.URL, "passport.weibo.com") || strings.Contains(head.URL, "sso/signin") {
+					return fmt.Errorf("%w: ok=%s", cookie.ErrCookieInvalid, ok)
+				}
+				// ok=0 常见是没内容/没评论，当空结果，别打挂整轮
+				return nil
+			}
+		}
+	}
+	if weiboRiskDetected(body) {
+		if strings.Contains(body, "404") && strings.Contains(strings.ToLower(body), "error") {
+			return fmt.Errorf("微博接口返回错误页")
+		}
+		return fmt.Errorf("%w: 登录墙", cookie.ErrCookieInvalid)
+	}
+	return nil
 }
 
 func weiboRiskDetected(body string) bool {
@@ -305,62 +434,6 @@ func weiboRiskDetected(body string) bool {
 		}
 	}
 	return false
-}
-
-func parseSearchList(body string) ([]collector.ListItem, error) {
-	doc, err := goquery.NewDocumentFromReader(strings.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("解析微博列表页: %w", err)
-	}
-	var items []collector.ListItem
-	doc.Find("div.card-wrap").Each(func(_ int, sel *goquery.Selection) {
-		mid, _ := sel.Attr("mid")
-		mid = strings.TrimSpace(mid)
-		if mid == "" || mid == "0" {
-			return
-		}
-		txt, needDetail := cardContent(sel)
-		if txt == "" {
-			return
-		}
-		author := strings.TrimSpace(sel.Find("a.name").First().AttrOr("nick-name", ""))
-		if author == "" {
-			author = strings.TrimSpace(sel.Find("a.name").First().Text())
-		}
-		from := sel.Find("p.from a").First()
-		href, _ := from.Attr("href")
-		link := absWeiboURL(href)
-		if link == "" {
-			link = "https://weibo.com/detail/" + mid
-		}
-		pub, err := parseWeiboTime(from.AttrOr("title", ""), strings.TrimSpace(from.Text()))
-		if err != nil {
-			return
-		}
-		items = append(items, collector.ListItem{
-			ExternalID:  mid,
-			URL:         link,
-			Title:       clipTitle(txt),
-			Author:      author,
-			PublishedAt: pub,
-			Content:     txt,
-			NeedDetail:  needDetail,
-		})
-	})
-	return items, nil
-}
-
-func cardContent(sel *goquery.Selection) (string, bool) {
-	full := stripUnfoldChrome(sel.Find(`p[node-type="feed_list_content_full"]`).First().Text())
-	if full != "" {
-		return full, false
-	}
-	txt := stripUnfoldChrome(sel.Find(`p[node-type="feed_list_content"]`).First().Text())
-	if txt == "" {
-		txt = stripUnfoldChrome(sel.Find("p.txt").First().Text())
-	}
-	need := sel.Find(`[action-type="fl_unfold"]`).Length() > 0
-	return txt, need
 }
 
 func stripUnfoldChrome(s string) string {
@@ -410,23 +483,6 @@ func htmlToPlain(raw string) string {
 	return stripUnfoldChrome(doc.Text())
 }
 
-func absWeiboURL(href string) string {
-	href = strings.TrimSpace(href)
-	if href == "" {
-		return ""
-	}
-	if strings.HasPrefix(href, "//") {
-		return "https:" + href
-	}
-	if strings.HasPrefix(href, "http://") || strings.HasPrefix(href, "https://") {
-		return href
-	}
-	if strings.HasPrefix(href, "/") {
-		return "https://weibo.com" + href
-	}
-	return href
-}
-
 func clipTitle(s string) string {
 	s = collapseSpace(s)
 	if utf8.RuneCountInString(s) <= 40 {
@@ -437,44 +493,4 @@ func clipTitle(s string) string {
 
 func collapseSpace(s string) string {
 	return strings.Join(strings.Fields(s), " ")
-}
-
-// parseWeiboTime 优先 title="2006-01-02 15:04"；否则今天/昨天/N分钟前
-func parseWeiboTime(title, text string) (time.Time, error) {
-	now := time.Now()
-	title = strings.TrimSpace(title)
-	for _, layout := range []string{"2006-01-02 15:04:05", "2006-01-02 15:04"} {
-		if t, err := time.ParseInLocation(layout, title, time.Local); err == nil {
-			return t, nil
-		}
-	}
-	text = strings.TrimSpace(text)
-	if strings.HasPrefix(text, "今天") {
-		rest := strings.TrimSpace(strings.TrimPrefix(text, "今天"))
-		if t, err := time.ParseInLocation("15:04", rest, time.Local); err == nil {
-			return time.Date(now.Year(), now.Month(), now.Day(), t.Hour(), t.Minute(), 0, 0, time.Local), nil
-		}
-	}
-	if strings.HasPrefix(text, "昨天") {
-		rest := strings.TrimSpace(strings.TrimPrefix(text, "昨天"))
-		if t, err := time.ParseInLocation("15:04", rest, time.Local); err == nil {
-			d := now.AddDate(0, 0, -1)
-			return time.Date(d.Year(), d.Month(), d.Day(), t.Hour(), t.Minute(), 0, 0, time.Local), nil
-		}
-	}
-	if strings.HasSuffix(text, "分钟前") {
-		n, _ := strconv.Atoi(strings.TrimSuffix(text, "分钟前"))
-		return now.Add(-time.Duration(n) * time.Minute), nil
-	}
-	if strings.HasSuffix(text, "秒前") {
-		return now, nil
-	}
-	if t, err := time.ParseInLocation("01月02日 15:04", text, time.Local); err == nil {
-		t = time.Date(now.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), 0, 0, time.Local)
-		if t.After(now.Add(24 * time.Hour)) {
-			t = t.AddDate(-1, 0, 0)
-		}
-		return t, nil
-	}
-	return time.Time{}, fmt.Errorf("unsupported weibo time: %q %q", title, text)
 }

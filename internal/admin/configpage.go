@@ -9,6 +9,7 @@ import (
 	"strconv"
 
 	"rent-scout/internal/config"
+	"rent-scout/internal/models"
 	"rent-scout/internal/pkglog"
 	"rent-scout/internal/store"
 )
@@ -46,6 +47,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		data["Rules"] = rows
+		data["BuiltInAIValue"] = models.BuiltInAIRuleValue
 	} else {
 		kv := CurrentConfigKV(s.db)
 		app := s.rt.Get()

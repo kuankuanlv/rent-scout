@@ -113,6 +113,39 @@ func TestRulesCreate(t *testing.T) {
 	}
 }
 
+func TestRulesCreateAIUsesBuiltInValue(t *testing.T) {
+	s := newAdminTestStore(t)
+	defer s.Close()
+	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
+
+	form := url.Values{
+		"name":     {"靠谱个人房源"},
+		"type":     {models.RuleTypeAINatural},
+		"value":    {""},
+		"priority": {"50"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/admin/rules", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("POST AI 规则 status = %d, want 302", rec.Code)
+	}
+	rules, err := s.ListRules(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, r := range rules {
+		if r.Type == models.RuleTypeAINatural && r.Value == models.BuiltInAIRuleValue {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("AI 规则应写入内置标准: %+v", rules)
+	}
+}
+
 // TestRulesUpdate POST /admin/rules/{id} 改 value + 关启用 → 生效（另有启用规则，不触底）
 func TestRulesUpdate(t *testing.T) {
 	s := newAdminTestStore(t)
@@ -516,18 +549,21 @@ func TestRulesEnsureDefaultOnEmptyTab(t *testing.T) {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "黑名单-中介") || !strings.Contains(body, "白名单-地点") {
-		t.Errorf("页面缺默认黑/白名单")
+	if !strings.Contains(body, "黑名单-中介") || !strings.Contains(body, "白名单-地点") || !strings.Contains(body, "靠谱个人房源") {
+		t.Errorf("页面缺默认黑/白名单或 AI 规则")
 	}
 	if !strings.Contains(body, "中介,代理,隔断,") || !strings.Contains(body, "梨园,雍和宫") {
 		t.Errorf("默认规则值不符")
+	}
+	if !strings.Contains(body, "不确定时宁可拒绝") {
+		t.Errorf("AI 规则应只读展示内置标准")
 	}
 	rules, err := s.ListRules(true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rules) != 2 {
-		t.Fatalf("启用规则 = %d, want 2", len(rules))
+	if len(rules) != 3 {
+		t.Fatalf("启用规则 = %d, want 3", len(rules))
 	}
 }
 

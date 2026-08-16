@@ -47,9 +47,11 @@ func ValidateApp(cfg *AppConfig) []string {
 		if src == models.SourceDouban.String() && len(HTTPURLs(cfg.Collector.Douban.Groups)) == 0 {
 			errs = append(errs, "collector.douban.groups 不能为空（源 douban 已启用）")
 		}
-			if src == models.SourceWeibo.String() && len(WeiboTags(cfg.Collector.Weibo.Tags)) == 0 {
-				errs = append(errs, "collector.weibo.tags 不能为空（源 weibo 已启用）")
-			}
+		if src == models.SourceWeibo.String() &&
+			len(WeiboUIDs(cfg.Collector.Weibo.Users)) == 0 &&
+			len(WeiboContainerIDs(cfg.Collector.Weibo.SuperTopics)) == 0 {
+			errs = append(errs, "collector.weibo 的超话、博主至少配置一项（源 weibo 已启用）")
+		}
 	}
 	if _, _, err := ResolveTimeRange(cfg.Collector.Douban.RangeFrom, "now", time.Now()); err != nil {
 		errs = append(errs, "collector.douban 拉取范围: "+err.Error())

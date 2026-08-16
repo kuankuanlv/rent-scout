@@ -1,6 +1,9 @@
 package store
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseSourceProgress(t *testing.T) {
 	if p := ParseSourceProgress(""); p.Page != "" || p.SeenNewest != "" {
@@ -14,6 +17,28 @@ func TestParseSourceProgress(t *testing.T) {
 	got := ParseSourceProgress(raw)
 	if !got.CatchingUp() || got.SeenNewest != "2026-08-13T00:00:00Z" || got.Fingerprint != "k" {
 		t.Errorf("旧 JSON 兼容 = %+v", got)
+	}
+}
+
+func TestDecodeWatermarksLegacyAndMap(t *testing.T) {
+	legacy := "2026-08-13T00:00:00Z"
+	m := DecodeWatermarks(legacy)
+	if m["*"] != legacy {
+		t.Fatalf("legacy = %v", m)
+	}
+	if t0 := LookupWatermark(m, "user:1"); t0.IsZero() {
+		t.Fatal("旧单值应作为所有目标初值")
+	}
+	enc := EncodeWatermarks(map[string]string{"user:1": legacy})
+	if !strings.Contains(enc, "user:1") {
+		t.Fatalf("encode=%s", enc)
+	}
+	got := DecodeWatermarks(enc)
+	if got["user:1"] != legacy {
+		t.Fatalf("map roundtrip = %v", got)
+	}
+	if !LookupWatermark(got, "user:2").IsZero() {
+		t.Fatal("已有分键后，未出现的目标不应再吃 * 初值")
 	}
 }
 

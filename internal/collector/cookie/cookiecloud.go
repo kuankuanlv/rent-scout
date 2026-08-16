@@ -323,12 +323,6 @@ func isInterestCookieDomain(domain, interest string) bool {
 	if strings.Contains(d, interest) {
 		return true
 	}
-	if strings.Contains(interest, "weibo") {
-		return strings.Contains(d, "weibo")
-	}
-	if strings.Contains(interest, "douban") {
-		return strings.Contains(d, "douban")
-	}
 	return false
 }
 

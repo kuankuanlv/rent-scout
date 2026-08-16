@@ -22,6 +22,7 @@ import (
 // 编译断言：Douban 满足 Source 接口
 var _ collector.Source = (*Douban)(nil)
 var _ collector.GroupSkipper = (*Douban)(nil)
+var _ collector.GroupWatermarker = (*Douban)(nil)
 
 const listPageSize = 25 // 豆瓣小组讨论列表每页条数
 
@@ -182,6 +183,33 @@ func (d *Douban) DescribeCursor(cursor string) string {
 		off = 0
 	}
 	return fmt.Sprintf("组%d第%d页", gi+1, off/listPageSize+1)
+}
+
+func (d *Douban) WatermarkKey(cursor string) string {
+	gi, _ := parseListCursor(cursor)
+	groups := d.groups()
+	if gi < 0 || gi >= len(groups) {
+		return ""
+	}
+	return "group:" + doubanGroupID(groups[gi])
+}
+
+func (d *Douban) TimeOrdered(cursor string) bool {
+	return true
+}
+
+func doubanGroupID(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	for i, p := range parts {
+		if p == "group" && i+1 < len(parts) {
+			return parts[i+1]
+		}
+	}
+	return topicIDFromURL(raw)
 }
 
 // parseListCursor 解析 "组下标:偏移" 游标；非法/空 → 0:0

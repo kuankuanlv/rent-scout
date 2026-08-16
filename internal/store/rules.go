@@ -91,19 +91,37 @@ func (s *Store) CountEnabledAIRules() (int, error) {
 	return n, nil
 }
 
-// EnsureDefaultRule 启用规则数为 0 时写入默认黑名单和白名单
+// EnsureDefaultRule 启用规则数为 0 时写入默认黑白名单；没有 AI 规则时补一条内置标准
 func (s *Store) EnsureDefaultRule() error {
 	n, err := s.CountEnabledRules()
 	if err != nil {
 		return err
 	}
 	if n > 0 {
-		return nil
+		return ensureDefaultAIRule(s)
 	}
 	for _, r := range defaultSeedRules() {
 		if _, err := s.CreateRule(r); err != nil {
 			return fmt.Errorf("种子默认规则: %w", err)
 		}
+	}
+	return ensureDefaultAIRule(s)
+}
+
+func ensureDefaultAIRule(s *Store) error {
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM rules WHERE type = ?`, models.RuleTypeAINatural).Scan(&n); err != nil {
+		return fmt.Errorf("统计 AI 规则: %w", err)
+	}
+	if n > 0 {
+		return nil
+	}
+	_, err := s.CreateRule(models.Rule{
+		Name: "靠谱个人房源", Type: models.RuleTypeAINatural, Value: models.BuiltInAIRuleValue,
+		Enabled: true, Priority: 50,
+	})
+	if err != nil {
+		return fmt.Errorf("种子默认 AI 规则: %w", err)
 	}
 	return nil
 }

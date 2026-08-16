@@ -379,7 +379,7 @@ func TestRunnerResetsWhenRangeChanges(t *testing.T) {
 	}
 }
 
-// 多了搜索 URL 不整源重翻：水位留下，只把指纹改成不含 URL 的新格式
+// 目标清单变了会换指纹并重置；同一清单只升级指纹格式，水位留下
 func TestRunnerKeepsProgressWhenURLsAdded(t *testing.T) {
 	now := time.Now()
 	wm := now.Add(-2 * time.Hour).Format(time.RFC3339Nano)
@@ -403,14 +403,14 @@ func TestRunnerKeepsProgressWhenURLsAdded(t *testing.T) {
 			Interval: 3600, MaxAgeDays: 7, Sources: []string{"weibo"},
 			Weibo: config.WeiboConfig{
 				RangeFrom: "-10",
-				Tags:      []string{"#new#"},
+				Users:     []string{"1234567890"},
 			},
 		},
 	}, nil)
 	r := NewRunner(rt, st, nil, nil)
-	oldFP := "weibo|-10|https://s.weibo.com/weibo?q=%23old%23"
+	fp := sourceFingerprint("weibo", rt.Get())
 	if err := st.SetProgress("weibo", store.SourceProgress{
-		Page: "", SeenNewest: wm, Fingerprint: oldFP,
+		Page: "", SeenNewest: wm, Fingerprint: fp,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -418,17 +418,108 @@ func TestRunnerKeepsProgressWhenURLsAdded(t *testing.T) {
 		t.Fatal(err)
 	}
 	if src.detailCalls != 0 {
-		t.Errorf("加 URL 后不应重翻旧帖, Detail=%d", src.detailCalls)
+		t.Errorf("同清单不应重翻旧帖, Detail=%d", src.detailCalls)
 	}
 	prog, ok, err := st.GetProgress("weibo")
 	if err != nil || !ok {
 		t.Fatalf("进度: ok=%v err=%v", ok, err)
 	}
-	if !prog.CatchingUp() || prog.SeenNewest != wm {
-		t.Errorf("进度 = %+v, want 水位仍是 %s", prog, wm)
+	if !prog.CatchingUp() {
+		t.Errorf("进度 = %+v, want 已追新", prog)
 	}
-	if prog.Fingerprint != "weibo|-10" {
-		t.Errorf("指纹 = %q, want weibo|-10（不含 URL）", prog.Fingerprint)
+	if prog.Fingerprint != fp {
+		t.Errorf("指纹 = %q, want %s", prog.Fingerprint, fp)
+	}
+}
+
+type wmSource struct {
+	fakeSource
+}
+
+func (f *wmSource) SkipGroup(cursor string) string {
+	g, _ := parsePageCursor(cursor)
+	if g >= len(f.pages) {
+		return ""
+	}
+	return strconv.Itoa(g) + ":0"
+}
+
+func (f *wmSource) WatermarkKey(cursor string) string {
+	g, _ := parsePageCursor(cursor)
+	return "t:" + strconv.Itoa(g)
+}
+
+func (f *wmSource) TimeOrdered(cursor string) bool { return true }
+
+func TestRunnerPerTargetWatermark(t *testing.T) {
+	now := time.Now()
+	src := &wmSource{fakeSource: fakeSource{
+		name: "fake",
+		pages: [][]ListItem{
+			{{ExternalID: "hot", URL: "u/hot", Title: "热", PublishedAt: now.Add(-time.Minute)}},
+			{{ExternalID: "slow", URL: "u/slow", Title: "慢", PublishedAt: now.Add(-3 * time.Hour)}},
+		},
+		details: map[string]models.RentPost{
+			"hot":  {Source: "fake", ExternalID: "hot", Title: "热", CollectedAt: now, Status: models.PostStatusCollected},
+			"slow": {Source: "fake", ExternalID: "slow", Title: "慢", CollectedAt: now, Status: models.PostStatusCollected},
+		},
+	}}
+	r, st := testRunner(t)
+	defer st.Close()
+	trig := make(chan struct{}, 4)
+	if _, err := r.runSourceOnce(context.Background(), src, trig); err != nil {
+		t.Fatal(err)
+	}
+	src.detailCalls = 0
+	src.listCalls.Store(0)
+	if _, err := r.runSourceOnce(context.Background(), src, trig); err != nil {
+		t.Fatal(err)
+	}
+	if src.detailCalls != 0 {
+		t.Fatalf("第二轮已存在帖不应再 Detail=%d", src.detailCalls)
+	}
+	batch, err := st.FetchPendingByStatus(models.PostStatusCollected, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(batch) != 2 {
+		t.Fatalf("两路都应入库, got %d", len(batch))
+	}
+}
+
+type unorderedSrc struct {
+	fakeSource
+}
+
+func (f *unorderedSrc) WatermarkKey(string) string  { return "" }
+func (f *unorderedSrc) TimeOrdered(string) bool     { return false }
+func (f *unorderedSrc) SkipGroup(string) string     { return "" }
+
+func TestRunnerUnorderedSkipsWatermark(t *testing.T) {
+	now := time.Now()
+	old := now.Add(-5 * 24 * time.Hour)
+	fresh := now.Add(-time.Hour)
+	src := &unorderedSrc{fakeSource: fakeSource{
+		name: "fake",
+		pages: [][]ListItem{{
+			{ExternalID: "new1", URL: "u/1", Title: "新1", PublishedAt: fresh},
+			{ExternalID: "old", URL: "u/o", Title: "旧", PublishedAt: old},
+			{ExternalID: "new2", URL: "u/2", Title: "新2", PublishedAt: fresh.Add(-time.Minute)},
+		}},
+		next: "",
+		details: map[string]models.RentPost{
+			"new1": {Source: "fake", ExternalID: "new1", Title: "新1", CollectedAt: now, Status: models.PostStatusCollected},
+			"old":  {Source: "fake", ExternalID: "old", Title: "旧", CollectedAt: now, Status: models.PostStatusCollected},
+			"new2": {Source: "fake", ExternalID: "new2", Title: "新2", CollectedAt: now, Status: models.PostStatusCollected},
+		},
+	}}
+	r, st := testRunner(t)
+	defer st.Close()
+	if _, err := r.runSourceOnce(context.Background(), src, make(chan struct{}, 2)); err != nil {
+		t.Fatal(err)
+	}
+	if src.detailCalls != 3 {
+		t.Fatalf("无序源不应被中间旧帖打断, Detail=%d want 3", src.detailCalls)
 	}
 }
 
@@ -450,7 +541,7 @@ func TestRunnerListWindowKeepsRangeFrom(t *testing.T) {
 	rt := config.NewHotConfigWithSnapshot(&config.AppConfig{
 		Collector: config.CollectorConfig{
 			Interval: 3600, MaxAgeDays: 7, Sources: []string{"weibo"},
-			Weibo: config.WeiboConfig{RangeFrom: "-10", Tags: []string{"#t#"}},
+			Weibo: config.WeiboConfig{RangeFrom: "-10", Users: []string{"1234567890"}},
 		},
 	}, nil)
 	r := NewRunner(rt, st, nil, nil)

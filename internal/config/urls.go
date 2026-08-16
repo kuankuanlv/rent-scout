@@ -39,55 +39,115 @@ func parseSourceURLLine(line string) (string, bool) {
 	return "", false
 }
 
-// WeiboTags 抽出高级搜索用的话题。# 话题 #、纯词、旧版搜索 URL 的 q 都能认；# 空格 当注释。
-func WeiboTags(lines []string) []string {
+func WeiboUIDs(lines []string) []string {
 	var out []string
 	seen := map[string]bool{}
 	for _, line := range lines {
-		tag, ok := parseWeiboTagLine(line)
-		if !ok || seen[tag] {
+		id, ok := parseWeiboUIDLine(line)
+		if !ok || seen[id] {
 			continue
 		}
-		seen[tag] = true
-		out = append(out, tag)
+		seen[id] = true
+		out = append(out, id)
 	}
 	return out
 }
 
-func parseWeiboTagLine(line string) (string, bool) {
-	s := strings.TrimSpace(line)
-	if s == "" || strings.HasPrefix(s, "//") {
+func parseWeiboUIDLine(line string) (string, bool) {
+	s := trimConfigLine(line)
+	if s == "" {
 		return "", false
-	}
-	if strings.HasPrefix(s, "#") && len(s) > 1 && (s[1] == ' ' || s[1] == '\t') {
-		return "", false
-	}
-	if i := indexInlineHashComment(s); i >= 0 {
-		s = strings.TrimSpace(s[:i])
 	}
 	if strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://") {
 		u, err := url.Parse(s)
 		if err != nil {
 			return "", false
 		}
-		q := strings.TrimSpace(u.Query().Get("q"))
-		if q == "" {
-			return "", false
-		}
-		if dec, err := url.QueryUnescape(q); err == nil {
-			q = dec
-		}
-		return normalizeWeiboTag(q)
+		s = u.Path
 	}
-	return normalizeWeiboTag(s)
-}
-
-func normalizeWeiboTag(q string) (string, bool) {
-	q = strings.TrimSpace(strings.Trim(q, "#"))
-	if q == "" {
+	s = strings.Trim(s, "/")
+	if i := strings.Index(s, "/u/"); i >= 0 {
+		s = s[i+3:]
+	} else if strings.HasPrefix(s, "u/") {
+		s = s[2:]
+	}
+	if i := strings.IndexAny(s, "/?#"); i >= 0 {
+		s = s[:i]
+	}
+	if !isDigits(s) {
 		return "", false
 	}
-	return "#" + q + "#", true
+	return s, true
+}
+
+func WeiboContainerIDs(lines []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, line := range lines {
+		id, ok := parseWeiboContainerLine(line)
+		if !ok || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return out
+}
+
+func parseWeiboContainerLine(line string) (string, bool) {
+	s := trimConfigLine(line)
+	if s == "" {
+		return "", false
+	}
+	if strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://") {
+		u, err := url.Parse(s)
+		if err != nil {
+			return "", false
+		}
+		s = u.Path
+	}
+	s = strings.Trim(s, "/")
+	if i := strings.Index(s, "/p/"); i >= 0 {
+		s = s[i+3:]
+	} else if strings.HasPrefix(s, "p/") {
+		s = s[2:]
+	}
+	if i := strings.IndexAny(s, "/?#"); i >= 0 {
+		s = s[:i]
+	}
+	if i := strings.Index(s, "_-_"); i > 0 {
+		s = s[:i]
+	}
+	if len(s) < 10 {
+		return "", false
+	}
+	return s, true
+}
+
+func trimConfigLine(line string) string {
+	s := strings.TrimSpace(line)
+	if s == "" || strings.HasPrefix(s, "//") {
+		return ""
+	}
+	if strings.HasPrefix(s, "#") && len(s) > 1 && (s[1] == ' ' || s[1] == '\t') {
+		return ""
+	}
+	if i := indexInlineHashComment(s); i >= 0 {
+		s = strings.TrimSpace(s[:i])
+	}
+	return s
+}
+
+func isDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func indexInlineHashComment(s string) int {

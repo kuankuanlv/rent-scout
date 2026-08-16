@@ -136,8 +136,8 @@ func TestConfigTabs(t *testing.T) {
 	if !strings.Contains(body, "cc-pass-plain") {
 		t.Errorf("CookieCloud 密码应明文回显")
 	}
-	if !strings.Contains(body, "按话题走高级搜索") {
-		t.Errorf("微博子 tab 应说明高级搜索采集")
+	if !strings.Contains(body, "超话和租房博主") {
+		t.Errorf("微博子 tab 应说明超话与博主采集")
 	}
 	if strings.Contains(body, "豆瓣截断") || strings.Contains(body, "trim_limits") {
 		t.Errorf("不应再出现 trim_limits UI")
@@ -440,20 +440,20 @@ func TestConfigHistorySnapshotPage(t *testing.T) {
 func TestParseSectionFormGroupKeepsOtherSource(t *testing.T) {
 	keep := map[string]string{
 		"collector.sources":         "douban,weibo",
-		"collector.weibo.tags":      "#北京租房#",
+		"collector.weibo.users":     "6342026928",
 		"collector.douban.groups":   "https://www.douban.com/group/1/",
 	}
 	form := url.Values{
 		"section":               {"collector"},
 		"group":                 {"weibo"},
 		"collector.sources":     {"weibo"},
-		"collector.weibo.tags":   {"#北京合租#"},
+		"collector.weibo.users":  {"1111111111"},
 		"collector.interval":     {"300"},
 		"collector.jitter_ratio": {"0.2"},
 	}
 	got := ParseSectionForm(form, "collector", keep)
-	if got["collector.weibo.tags"] != "#北京合租#" {
-		t.Errorf("weibo tags = %q", got["collector.weibo.tags"])
+	if got["collector.weibo.users"] != "1111111111" {
+		t.Errorf("weibo users = %q", got["collector.weibo.users"])
 	}
 	if _, ok := got["collector.douban.groups"]; ok {
 		t.Errorf("不应提交豆瓣字段: %v", got)

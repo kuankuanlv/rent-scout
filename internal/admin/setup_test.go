@@ -59,8 +59,8 @@ func TestSetupFinishSeedsDefaultRule(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rules) != 2 {
-		t.Fatalf("启用规则 = %d, want 2", len(rules))
+	if len(rules) != 3 {
+		t.Fatalf("启用规则 = %d, want 3", len(rules))
 	}
 	m, _ := store.GetConfigMap(s)
 	if m[config.KeySetupCompleted] != "true" {
@@ -97,8 +97,8 @@ func TestSetupSkipLastStepFinishes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rules) != 2 {
-		t.Fatalf("启用规则 = %d, want 2", len(rules))
+	if len(rules) != 3 {
+		t.Fatalf("启用规则 = %d, want 3", len(rules))
 	}
 }
 

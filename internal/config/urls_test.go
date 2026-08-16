@@ -21,15 +21,23 @@ func TestHTTPURLsSkipsComments(t *testing.T) {
 	}
 }
 
-func TestWeiboTagsFromMixedLines(t *testing.T) {
-	got := WeiboTags([]string{
-		"#北京租房",
-		"https://s.weibo.com/weibo?q=%23%E5%8C%97%E4%BA%AC%E7%A7%9F%E6%88%BF%23",
-		"# 这是注释",
-		"租房",
-		"",
+func TestWeiboUIDsAndContainerIDs(t *testing.T) {
+	uids := WeiboUIDs([]string{
+		"https://weibo.com/u/6342026928",
+		"https://m.weibo.cn/u/6342026928?is_ori=1",
+		"111",
+		"# 注释",
+		"https://weibo.com/u/6342026928",
 	})
-	if len(got) != 2 || got[0] != "#北京租房#" || got[1] != "#租房#" {
-		t.Fatalf("WeiboTags = %#v", got)
+	if len(uids) != 2 || uids[0] != "6342026928" || uids[1] != "111" {
+		t.Fatalf("UIDs=%v", uids)
+	}
+	cids := WeiboContainerIDs([]string{
+		"https://weibo.com/p/100808453110d9ea6a7b6fd15e79788cf55186/super_index",
+		"100808453110d9ea6a7b6fd15e79788cf55186_-_recommend",
+		"# skip",
+	})
+	if len(cids) != 1 || cids[0] != "100808453110d9ea6a7b6fd15e79788cf55186" {
+		t.Fatalf("CIDs=%v", cids)
 	}
 }

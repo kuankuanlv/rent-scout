@@ -49,9 +49,6 @@ func TestDefaultValues(t *testing.T) {
 	if n := len(HTTPURLs(cfg.Collector.Douban.Groups)); n != 7 {
 		t.Errorf("内置豆瓣小组 URL = %d, want 7", n)
 	}
-	if n := len(WeiboTags(cfg.Collector.Weibo.Tags)); n != 13 {
-		t.Errorf("内置微博话题 = %d, want 13", n)
-	}
 }
 
 func TestKVBatchSizeFallback(t *testing.T) {

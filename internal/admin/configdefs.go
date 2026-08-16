@@ -29,7 +29,7 @@ const NotifyTestPath = "/admin/config/notify/test"
 
 const aiSectionDesc = `本配置当前版本仅用于审核帖子：大模型不参与采集，也不改帖子主状态（collected / passed / rejected）。硬规则（白名单地点、黑名单词）先筛一遍，通过的帖再交给 AI 打徽章，并尽量补全月租、联系方式、通勤描述。
 
-系统提示词固定为「租房信息筛选助手」。规则页里启用的自然语言规则整批写入 system，和判定标准共用一次：满足任一条即通过；只依据帖文、不做无依据推测；不确定时倾向通过。同时要求抽出月租金（整数元，区间取下限，没有填 0）、微信/手机等原文、通勤/交通原文。理由限中文约 30 字。user 侧只放本批精简帖，不重复规则。
+系统提示词固定为「租房信息筛选助手」，筛选标准内置（靠谱个人房源，不确定宁可拒绝），规则页 AI 条目只作开关、文案只读。只依据帖文、不做无依据推测。同时要求抽出月租金（整数元，区间取下限，没有填 0）、微信/手机等原文、通勤/交通原文。理由限中文约 30 字。user 侧只放本批精简帖，不重复规则。
 
 为省 token：详情 HTML 去掉标签和图片链接，正文按 500 字截断；同一批共用一份 system，多帖拼进一次请求（凑满 AI 批大小或等到超时再调）。请求带 json_schema，约束返回 {"verdicts":[...]}；temperature 0.1，不塞 few-shot 示例。
 
@@ -215,7 +215,7 @@ func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[stri
 				Title: "日志", Hint: "级别、落盘、控制台滚动缓冲", Class: "bg-indigo-50/70 border-indigo-100",
 				Items: []configField{
 					{Key: "log.level", Label: "日志级别", Value: strings.ToLower(get("log.level", app.Log.Level)), Type: "select", Options: []string{"debug", "info", "warn", "error"}, OptionLabels: []string{"DEBUG", "INFO", "WARN", "ERROR"}, Hint: "低于此级的日志不输出"},
-					{Key: "log.path", Label: "日志文件", Value: get("log.path", app.Log.Path), Type: "text", Hint: "留空=stdout"},
+					{Key: "log.path", Label: "日志文件", Value: get("log.path", app.Log.Path), Type: "text", Hint: "额外落盘路径。主日志和数据库一样相对工作目录，默认 logs/rent-scout-日期.log；可用环境变量 LOG_DIR 改目录。控制台也会打一份"},
 					{Key: "log.memory_lines", Label: "内存日志条数", Value: get("log.memory_lines", strconv.Itoa(app.Log.MemoryLines)), Type: "number", Wide: true, Hint: "控制台「日志」页在内存里保留的条数，默认 1000。探测类 raw 单条可到数 KB，1000 条约 1–8MB；调大更占内存，调小历史翻得少。范围 100–10000"},
 				},
 			},
@@ -249,7 +249,7 @@ func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[stri
 				},
 			},
 			{
-				Title: "微博", Hint: "按话题走高级搜索；Cookie 失效本轮结束。", Class: "bg-slate-50 border-slate-200", Group: "weibo",
+				Title: "微博", Hint: "超话和租房博主共用这一个启用开关、一份采集间隔和一份时间窗，想停掉某条渠道就把它的清单留空。Cookie 失效本轮结束。", Class: "bg-slate-50 border-slate-200", Group: "weibo",
 				Items: sourceBase(models.SourceWeibo.String(), "weibo"),
 			},
 			{
@@ -259,17 +259,18 @@ func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[stri
 				},
 			},
 			{
-				Title: "微博话题与请求节奏", Hint: "每行一个超话/话题，当作高级搜索的 q。采集会带上时间范围并按时间排序。旧的搜索网址保存过也能抽 q。", Class: "bg-emerald-50/80 border-emerald-200", Group: "weibo",
+				Title: "微博采集渠道与请求节奏", Hint: "按「超话 → 博主」的顺序轮流采集，每条渠道各自记自己的进度。两个全空则微博源不执行。", Class: "bg-emerald-50/80 border-emerald-200", Group: "weibo",
 				Items: []configField{
-					{Key: "collector.weibo.tags", Label: "话题 / 超话", Value: get("collector.weibo.tags", strings.Join(app.Collector.Weibo.Tags, "\n")), Type: "textarea", Hint: "每行一个，如 #北京租房#。# 空格开头当注释。不要再贴整段搜索 URL。", Group: "weibo"},
+					{Key: "collector.weibo.supertopics", Label: "超话", Value: get("collector.weibo.supertopics", strings.Join(app.Collector.Weibo.SuperTopics, "\n")), Type: "textarea", Hint: "每行一个超话，粘超话主页地址或直接填 containerid。行首「# 空格」当注释。走 PC 最新流，按时间往旧翻，水位到了就停。需要 weibo.com Cookie（cookiecloud 或 raw 均可）。", Group: "weibo"},
+					{Key: "collector.weibo.users", Label: "租房博主", Value: get("collector.weibo.users", strings.Join(app.Collector.Weibo.Users, "\n")), Type: "textarea", Hint: "每行一个博主，粘主页地址或只填 UID。行首「# 空格」当注释。走博主专属接口，服务端按时间窗过滤。", Group: "weibo"},
 					{Key: "collector.weibo.interval", Label: "请求间隔(秒)", Value: get("collector.weibo.interval", strconv.Itoa(app.Collector.Weibo.Interval)), Type: "number", Group: "weibo", Wide: true, Hint: "同一轮里两次访问微博停几秒，默认 5。不是上面的采集间隔。"},
 				},
 			},
 			{
-				Title: "微博 Cookie", Hint: "raw 直接贴原文，保存即写入该源 cookie；cookiecloud 只填地址、UUID、密码。CookieCloud 只拼 weibo.com。", Class: "bg-amber-50 border-amber-200", Group: "weibo", Tools: "cookie",
+				Title: "微博 Cookie", Hint: "超话最新流和博主接口用 weibo.com Cookie。长微博全文和超话评论兜底还会打 weibo.cn，cookiecloud 会按域各存一份。raw 只填 weibo.com 时，超话列表仍可用，cn 域的评论/全文会跳过。", Class: "bg-amber-50 border-amber-200", Group: "weibo", Tools: "cookie",
 				Items: []configField{
 					{Key: config.KeyWeiboCookieMode, Label: "Cookie 模式", Value: get(config.KeyWeiboCookieMode, env.Collector.Weibo.CookieMode), Type: "select", Options: []string{config.CookieModeNone.String(), config.CookieModeRaw.String(), config.CookieModeCookieCloud.String()}, Hint: "none 不带 cookie；raw 粘贴原文；cookiecloud 只填三元组", Group: "weibo"},
-					{Key: config.KeyWeiboCookieRaw, Label: "Cookie 原文", Value: "", Type: "textarea", CanClear: true, Hint: cookieRawHint(env.Collector.Weibo), ShowWhen: config.CookieModeRaw.String(), Group: "weibo"},
+					{Key: config.KeyWeiboCookieRaw, Label: "Cookie 原文", Value: "", Type: "textarea", CanClear: true, Hint: cookieRawHint(env.Collector.Weibo) + " 填 weibo.com 域。", ShowWhen: config.CookieModeRaw.String(), Group: "weibo"},
 					{Key: config.KeyWeiboCookieCloudURL, Label: "CookieCloud 地址", Value: get(config.KeyWeiboCookieCloudURL, env.Collector.Weibo.CookiecloudURL), Type: "text", Hint: "如 https://cc.example.com；检测用当前输入，不读库", CanClear: true, ShowWhen: config.CookieModeCookieCloud.String(), Group: "weibo"},
 					{Key: config.KeyWeiboCookieCloudKey, Label: "CookieCloud UUID", Value: get(config.KeyWeiboCookieCloudKey, env.Collector.Weibo.CookiecloudKey), Type: "text", CanClear: true, ShowWhen: config.CookieModeCookieCloud.String(), Group: "weibo"},
 					{Key: config.KeyWeiboCookieCloudPwd, Label: "CookieCloud 密码", Value: weiboCCPass, Type: "text", CanClear: true, Hint: "明文回显；勾选清空可删除", ShowWhen: config.CookieModeCookieCloud.String(), Group: "weibo", Wide: true},
@@ -354,18 +355,18 @@ func ParseSectionForm(form url.Values, section string, keepSecrets map[string]st
 	for _, k := range config.SectionKeys[section] {
 		allowed[k] = true
 	}
-		group := strings.TrimSpace(form.Get("group"))
-		updates := map[string]string{}
-		for key, values := range form {
-			if key == "section" || key == "group" {
-				continue
-			}
-			if !allowed[key] || len(values) == 0 {
-				continue
-			}
-			if group != "" && !keyInConfigGroup(key, group) {
-				continue
-			}
+	group := strings.TrimSpace(form.Get("group"))
+	updates := map[string]string{}
+	for key, values := range form {
+		if key == "section" || key == "group" {
+			continue
+		}
+		if !allowed[key] || len(values) == 0 {
+			continue
+		}
+		if group != "" && !keyInConfigGroup(key, group) {
+			continue
+		}
 		if form.Get("clear_"+key) == "on" {
 			updates[key] = config.EmptySentinel
 			continue

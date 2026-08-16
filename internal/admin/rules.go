@@ -97,7 +97,16 @@ func (s *Server) createRule(w http.ResponseWriter, r *http.Request) {
 	mode := r.PostFormValue("mode") // 废弃：不校验，落库兼容旧表单
 	value := r.PostFormValue("value")
 	priority, err := strconv.Atoi(r.PostFormValue("priority"))
-	if err != nil || name == "" || !ruleTypes[rtype] || value == "" {
+	if err != nil || name == "" || !ruleTypes[rtype] {
+		http.Error(w, "参数无效", http.StatusBadRequest)
+		return
+	}
+	if rtype == models.RuleTypeAINatural {
+		value = models.BuiltInAIRuleValue
+		if name == "" {
+			name = "靠谱个人房源"
+		}
+	} else if value == "" {
 		http.Error(w, "参数无效", http.StatusBadRequest)
 		return
 	}
@@ -158,6 +167,9 @@ func (s *Server) updateRule(w http.ResponseWriter, r *http.Request, id int64) {
 		mode = existing.Mode
 	}
 	value := firstNonEmpty(r.PostFormValue("value"), existing.Value)
+	if rtype == models.RuleTypeAINatural {
+		value = models.BuiltInAIRuleValue
+	}
 	name := firstNonEmpty(r.PostFormValue("name"), existing.Name)
 	priority := existing.Priority
 	if raw := strings.TrimSpace(r.PostFormValue("priority")); raw != "" {
@@ -168,7 +180,7 @@ func (s *Server) updateRule(w http.ResponseWriter, r *http.Request, id int64) {
 		}
 	}
 	enabled := r.PostFormValue("enabled") != ""
-	if name == "" || !ruleTypes[rtype] || value == "" {
+	if name == "" || !ruleTypes[rtype] || (rtype != models.RuleTypeAINatural && value == "") {
 		s.replyRule(w, r, http.StatusBadRequest, "参数无效")
 		return
 	}

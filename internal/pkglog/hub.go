@@ -149,8 +149,18 @@ func pushHub(duty string, r slog.Record) {
 		Level:   strings.ToLower(r.Level.String()),
 		Duty:    duty,
 		Message: r.Message,
-		Attrs:   b.String(),
+		Attrs:   clipHubAttrs(b.String()),
 	})
+}
+
+const maxHubAttrs = 4000
+
+func clipHubAttrs(s string) string {
+	r := []rune(s)
+	if len(r) <= maxHubAttrs {
+		return s
+	}
+	return string(r[:maxHubAttrs]) + "…(完整内容见 logs 目录文件)"
 }
 
 // ResetHubForTest 单测清空 ring，避免串扰

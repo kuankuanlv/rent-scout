@@ -7,6 +7,7 @@ import (
 
 	"rent-scout/internal/filter/llm"
 	"rent-scout/internal/models"
+	"rent-scout/internal/pkglog"
 )
 
 // llmChat LLM 对话接口（llm.Client/Pool 均满足；测试注入 fake）
@@ -46,12 +47,16 @@ func (e *AIBatchEvaluator) EvaluateBatch(ctx context.Context, posts []models.Ren
 			sb.WriteString("---\n")
 		}
 	}
-	raw, model, err := e.chat(ctx, buildSystemPrompt(aiRules), sb.String())
+	system := buildSystemPrompt(aiRules)
+	user := sb.String()
+	raw, model, err := e.chat(ctx, system, user)
+	logAITurn(len(posts), model, system, user, raw, err)
 	if err != nil {
 		return nil, fmt.Errorf("AI 批量判定请求失败: %w", err)
 	}
 	parsed, err := llm.ParseAIResults(raw, len(posts))
 	if err != nil {
+		pkglog.Component(pkglog.AIReview).Error("LLM 返回解析失败", "posts", len(posts), "reply", raw, "err", err)
 		return nil, fmt.Errorf("AI 批量判定解析失败: %w", err)
 	}
 	// index → PostID 对齐；回填实际命中的模型名（规格 3.2 Model = 实际使用的模型）
@@ -78,27 +83,32 @@ func (e *AIBatchEvaluator) chat(ctx context.Context, system, user string) (strin
 	return raw, "", err
 }
 
+func logAITurn(n int, model, system, user, reply string, err error) {
+	log := pkglog.Component(pkglog.AIReview)
+	args := []any{"posts", n, "model", model, "system", system, "user", user, "reply", reply}
+	if err != nil {
+		log.Error("LLM 一轮对话失败", append(args, "err", err)...)
+		return
+	}
+	log.Info("LLM 一轮对话", args...)
+}
+
 // buildSystemPrompt 固定 system prompt（规则集共享一次，调整规格 C）：
 // 规则 + 判定标准 + 输出 Schema（简洁指令，无示例膨胀）
 func buildSystemPrompt(aiRules []models.Rule) string {
-	var rules []string
-	for _, r := range aiRules {
-		rules = append(rules, fmt.Sprintf("- %s（规则#%d）", r.Value, r.ID))
-	}
-	return fmt.Sprintf(`你是租房信息筛选助手。根据用户设定的筛选规则判断每套房源帖子是否合格，并抽取关键字段。
+	_ = aiRules
+	return fmt.Sprintf(`你是租房信息筛选助手。按内置标准判断每套房源是否合格，并抽取关键字段。
 帖子若含月租、联系方式，一并在 JSON 中返回。数组长度必须与输入帖子数量相同。
 
-筛选规则：
+内置筛选标准：
 %s
 
-判定标准：
-- 帖子满足任一规则的要求即通过（passed=true），否则拒绝
-- 只依据帖子内容与规则判定，不做无依据推测
-- 不确定时倾向通过
+抽取约定：
+- 只依据帖子内容判定，不做无依据推测
 - 价格：月租金整数（元）。月租3000填3000，房租2500/月填2500，2000-2500填2000。无法确定填 0
 - 联系：提取微信/手机号等原文，没有填空串
 - 通勤：提取帖子中提到的通勤/交通描述，没有填空串
 
 只输出纯 JSON，不要 markdown 或解释。优先输出 {"verdicts":[...]}，每项：
-{"index":序号从0起,"passed":true或false,"reason":"中文30字内","price":整数,"contact":"字符串","commuting":"字符串","confidence":0到1}`, strings.Join(rules, "\n"))
+{"index":序号从0起,"passed":true或false,"reason":"中文30字内","price":整数,"contact":"字符串","commuting":"字符串","confidence":0到1}`, models.BuiltInAIRuleValue)
 }

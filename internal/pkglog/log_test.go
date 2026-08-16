@@ -3,6 +3,8 @@ package pkglog
 import (
 	"bytes"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -57,11 +59,46 @@ func TestDutyJSONField(t *testing.T) {
 	}
 }
 
-func TestSourceCollector(t *testing.T) {
-	if got := SourceCollector("douban"); got != "douban_collector" {
-		t.Errorf("got %q", got)
+func TestDefaultLogDir(t *testing.T) {
+	t.Setenv("LOG_DIR", "")
+	if got := defaultLogDir(); got != defaultLogsRel {
+		t.Fatalf("got %q", got)
 	}
-	if got := SourceCollector(""); got != Collector {
-		t.Errorf("空源兜底 = %q", got)
+	t.Setenv("LOG_DIR", "/tmp/mylogs")
+	if got := defaultLogDir(); got != "/tmp/mylogs" {
+		t.Fatalf("env got %q", got)
+	}
+}
+
+func TestDailyFileWrites(t *testing.T) {
+	dir := t.TempDir()
+	w := newDailyFile(dir)
+	if _, err := w.Write([]byte("hello\n")); err != nil {
+		t.Fatal(err)
+	}
+	matches, err := filepath.Glob(filepath.Join(dir, logFilePrefix+"*.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("files=%v", matches)
+	}
+	b, err := os.ReadFile(matches[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != "hello\n" {
+		t.Fatalf("content=%q", b)
+	}
+}
+
+func TestClipHubAttrs(t *testing.T) {
+	if got := clipHubAttrs("short"); got != "short" {
+		t.Fatalf("got %q", got)
+	}
+	long := strings.Repeat("啊", maxHubAttrs+10)
+	got := clipHubAttrs(long)
+	if !strings.Contains(got, "完整内容见 logs") {
+		t.Fatalf("应截断: %s", got[len(got)-40:])
 	}
 }

@@ -51,6 +51,7 @@ func (s *Syncer) syncOnce(ctx context.Context) {
 	col := s.rt.Secrets().Collector
 	s.syncSource(ctx, "douban", col.Douban)
 	s.syncSource(ctx, "weibo", col.Weibo)
+	s.syncSource(ctx, "weibo.cn", col.Weibo)
 }
 
 func (s *Syncer) syncSource(ctx context.Context, source string, dc config.DoubanCookieConfig) {
@@ -65,7 +66,11 @@ func (s *Syncer) syncSource(ctx context.Context, source string, dc config.Douban
 		return
 	}
 	rawKey := config.CookieRawKey(source)
-	if ins.Cookie == dc.CookieRaw {
+	local := dc.CookieRaw
+	if config.CookieSource(source) == "weibo.cn" {
+		local = dc.CookieRawCN
+	}
+	if ins.Cookie == local {
 		log.Info("cookie 无变化，不写库", "names", ins.Names)
 		return
 	}

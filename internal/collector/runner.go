@@ -2,6 +2,8 @@ package collector
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -238,8 +240,8 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 		return roundResult{}, err
 	}
 	fp := sourceFingerprint(src.Name(), cfg)
-	if prog.Fingerprint != "" && fingerprintRangeKey(prog.Fingerprint) != fingerprintRangeKey(fp) {
-		log.Info("时间窗变了，重置采集进度", "source", src.Name(), "old", prog.Fingerprint, "new", fp)
+	if prog.Fingerprint != "" && fingerprintIdentity(prog.Fingerprint) != fingerprintIdentity(fp) {
+		log.Info("时间窗或目标清单变了，重置采集进度", "source", src.Name(), "old", prog.Fingerprint, "new", fp)
 		prog = store.SourceProgress{}
 	}
 	prog.Fingerprint = fp
@@ -255,15 +257,22 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 	log.Info(fmt.Sprintf("【%s 第%d轮 时间窗=%s~%s 水位=%s %s】",
 		src.Name(), round, winFrom, winTo, formatWatermark(prog.SeenNewest), scope))
 
+	wms := store.DecodeWatermarks(prog.SeenNewest)
 	var wm time.Time
-	if prog.SeenNewest != "" {
-		wm = parseWatermark(prog.SeenNewest)
+	wmKey := ""
+	wmOrdered := false
+	loadGroupWM := func(cursor string) {
+		wmKey, wmOrdered = watermarkMeta(src, cursor)
+		if !wmOrdered || wmKey == "" {
+			wm = time.Time{}
+			return
+		}
+		wm = store.LookupWatermark(wms, wmKey)
 	}
+	loadGroupWM(listCursor)
 	persist := func() error {
 		prog.Fingerprint = fp
-		if !wm.IsZero() {
-			prog.SeenNewest = wm.Format(time.RFC3339Nano)
-		}
+		prog.SeenNewest = store.EncodeWatermarks(wms)
 		return r.store.SetProgress(src.Name(), prog)
 	}
 	newPosts := 0
@@ -322,13 +331,14 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 			activeG = g
 			groupNew = 0
 			pagesInGroup = 0
+			loadGroupWM(listCursor)
 			log.Info(fmt.Sprintf("【%s 第%d轮 开始%s】", src.Name(), round, describeCursor(src, listCursor)))
 		}
 		if pagesInGroup >= maxPagesPerGroup {
 			ng := skipGroup(src, listCursor)
 			if ng == "" {
 				leaveGroup("", "本组页数用尽", groupNew == 0)
-				prog = sealProgress(prog, wm, end)
+				prog = sealProgress(prog, wms, end)
 				if err := persist(); err != nil {
 					return roundResult{}, err
 				}
@@ -366,7 +376,7 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 		hitWm, hitOld := false, false
 		tooNew := 0
 		for i, it := range items {
-			if catchUp && !wm.IsZero() && !it.PublishedAt.After(wm) {
+			if wmOrdered && catchUp && !wm.IsZero() && !it.PublishedAt.After(wm) {
 				stop = true
 				hitWm = true
 				break
@@ -381,8 +391,9 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 				continue
 			}
 			fresh = append(fresh, numbered{idx: i + 1, it: it})
-			if it.PublishedAt.After(wm) {
+			if wmOrdered && wmKey != "" && it.PublishedAt.After(wm) {
 				wm = it.PublishedAt
+				wms[wmKey] = wm.Format(time.RFC3339Nano)
 			}
 		}
 		if len(fresh) == 0 {
@@ -411,7 +422,7 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 					continue
 				}
 				leaveGroup("", idleReason, groupNew == 0)
-				prog = sealProgress(prog, wm, end)
+				prog = sealProgress(prog, wms, end)
 				if err := persist(); err != nil {
 					return roundResult{}, err
 				}
@@ -419,7 +430,7 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 			}
 			if next == "" {
 				leaveGroup("", idleReason, groupNew == 0)
-				prog = sealProgress(prog, wm, end)
+				prog = sealProgress(prog, wms, end)
 				if err := persist(); err != nil {
 					return roundResult{}, err
 				}
@@ -471,10 +482,10 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 			if err != nil {
 				return roundResult{}, fmt.Errorf("入库: %w", err)
 			}
-				if added {
-					newPosts++
-					groupNew++
-				}
+			if added {
+				newPosts++
+				groupNew++
+			}
 		}
 		if skip := formatSkipSummary(existN, tooNew, hitWm, hitOld); skip != "" {
 			log.Info(fmt.Sprintf("【%s 第%d轮 %s 跳过 %s】", src.Name(), round, pageLabel, skip))
@@ -500,7 +511,7 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 				continue
 			}
 			leaveGroup("", idleReason, groupNew == 0)
-			prog = sealProgress(prog, wm, end)
+			prog = sealProgress(prog, wms, end)
 			if err := persist(); err != nil {
 				return roundResult{}, err
 			}
@@ -510,7 +521,7 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 			if groupNew == 0 {
 				log.Info(fmt.Sprintf("【%s 第%d轮 %s 本组结束，未收集到任何新帖】", src.Name(), round, pageLabel))
 			}
-			prog = sealProgress(prog, wm, end)
+			prog = sealProgress(prog, wms, end)
 			if err := persist(); err != nil {
 				return roundResult{}, err
 			}
@@ -535,13 +546,12 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 	return out(), nil
 }
 
-func sealProgress(p store.SourceProgress, wm, end time.Time) store.SourceProgress {
+func sealProgress(p store.SourceProgress, wms map[string]string, end time.Time) store.SourceProgress {
 	p.Page = ""
-	if !wm.IsZero() {
-		p.SeenNewest = wm.Format(time.RFC3339Nano)
-	} else if p.SeenNewest == "" {
-		p.SeenNewest = end.Format(time.RFC3339Nano)
+	if len(wms) == 0 {
+		wms = map[string]string{"*": end.Format(time.RFC3339Nano)}
 	}
+	p.SeenNewest = store.EncodeWatermarks(wms)
 	return p
 }
 
@@ -558,22 +568,46 @@ func sourceFingerprint(name string, cfg *config.AppConfig) string {
 		return name
 	}
 	if name == models.SourceDouban.String() {
-		return name + "|" + cfg.Collector.Douban.RangeFrom
+		return name + "|" + cfg.Collector.Douban.RangeFrom + "|" + hashLines(config.HTTPURLs(cfg.Collector.Douban.Groups))
 	}
 	if name == models.SourceWeibo.String() {
-		return name + "|" + cfg.Collector.Weibo.RangeFrom
+		return name + "|" + cfg.Collector.Weibo.RangeFrom + "|" + hashLines(weiboTargetKeys(cfg))
 	}
 	return name + "|from=" + strconv.Itoa(cfg.Collector.MaxAgeDays)
 }
 
-// fingerprintRangeKey 旧指纹可能还带着 URL 列表，只拿前两段比时间窗
-func fingerprintRangeKey(fp string) string {
+func weiboTargetKeys(cfg *config.AppConfig) []string {
+	var keys []string
+	for _, id := range config.WeiboContainerIDs(cfg.Collector.Weibo.SuperTopics) {
+		keys = append(keys, "super:"+id)
+	}
+	for _, id := range config.WeiboUIDs(cfg.Collector.Weibo.Users) {
+		keys = append(keys, "user:"+id)
+	}
+	return keys
+}
+
+func hashLines(lines []string) string {
+	sum := sha256.Sum256([]byte(strings.Join(lines, "\n")))
+	return hex.EncodeToString(sum[:8])
+}
+
+// fingerprintIdentity 比时间窗和目标清单；旧指纹第三段若是 URL 则忽略
+func fingerprintIdentity(fp string) string {
 	fp = strings.TrimSpace(fp)
 	parts := strings.Split(fp, "|")
-	if len(parts) >= 2 {
-		return parts[0] + "|" + parts[1]
+	if len(parts) < 2 {
+		return fp
 	}
-	return fp
+	id := parts[0] + "|" + parts[1]
+	if len(parts) >= 3 {
+		third := parts[2]
+		if strings.Contains(third, "://") || strings.HasPrefix(third, "http") {
+			return id
+		}
+		id += "|" + third
+	}
+	return id
 }
 
 // sourceTimeWindow 起点用相对天数（如 -10）；终点永远是 now，不进指纹
@@ -648,14 +682,23 @@ func listItems(ctx context.Context, src Source, cursor string, start, end time.T
 }
 
 func formatWatermark(s string) string {
-	t := parseWatermark(s)
-	if t.IsZero() {
+	m := store.DecodeWatermarks(s)
+	if len(m) == 0 {
 		if strings.TrimSpace(s) == "" {
 			return "无"
 		}
 		return s
 	}
-	return t.Format("01-02 15:04")
+	if len(m) == 1 {
+		for _, v := range m {
+			t := parseWatermark(v)
+			if t.IsZero() {
+				return v
+			}
+			return t.Format("01-02 15:04")
+		}
+	}
+	return fmt.Sprintf("%d个目标", len(m))
 }
 
 // formatPageCursor 豆瓣游标转成人话：组从 1 数，页=offset/25+1

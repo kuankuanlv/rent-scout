@@ -55,8 +55,8 @@ func TestAIBatchEvaluate(t *testing.T) {
 		t.Errorf("post 2 结果错误: %+v", r)
 	}
 	// system 含规则文本（共享一次）；user 含两条帖子且去 HTML
-	if !strings.Contains(fl.system, "地铁1公里") {
-		t.Error("system 应含自然语言规则")
+	if !strings.Contains(fl.system, "靠谱的个人") || strings.Contains(fl.system, "地铁1公里") {
+		t.Error("system 应含内置标准，不含用户自定义 value")
 	}
 	if strings.Contains(fl.user, "<p>") || !strings.Contains(fl.user, "望京整租") {
 		t.Error("user 应为精简帖（无 HTML，含标题）")

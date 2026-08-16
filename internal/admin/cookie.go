@@ -3,7 +3,6 @@ package admin
 import (
 	"context"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -208,21 +207,27 @@ func cookieProbeURL(r *http.Request, rt *config.HotConfig) string {
 	source := cookieSource(r)
 	if source == "weibo" {
 		raw := firstNonEmpty(
-			r.PostFormValue("collector.weibo.tags"),
-			r.PostFormValue("collector.weibo.urls"),
+			r.PostFormValue("collector.weibo.supertopics"),
+			r.PostFormValue("collector.weibo.users"),
 			r.PostFormValue("urls"),
 		)
-		if tags := config.WeiboTags(strings.Split(raw, "\n")); len(tags) > 0 {
-			return weiboProbeSearchURL(tags[0])
+		if ids := config.WeiboContainerIDs(strings.Split(raw, "\n")); len(ids) > 0 {
+			return "https://weibo.com/p/" + ids[0]
+		}
+		if uids := config.WeiboUIDs(strings.Split(raw, "\n")); len(uids) > 0 {
+			return "https://weibo.com/u/" + uids[0]
 		}
 		if rt != nil {
 			if app := rt.Get(); app != nil {
-				if tags := config.WeiboTags(app.Collector.Weibo.Tags); len(tags) > 0 {
-					return weiboProbeSearchURL(tags[0])
+				if ids := config.WeiboContainerIDs(app.Collector.Weibo.SuperTopics); len(ids) > 0 {
+					return "https://weibo.com/p/" + ids[0]
+				}
+				if uids := config.WeiboUIDs(app.Collector.Weibo.Users); len(uids) > 0 {
+					return "https://weibo.com/u/" + uids[0]
 				}
 			}
 		}
-		return "https://s.weibo.com/"
+		return "https://weibo.com/"
 	}
 	raw := firstNonEmpty(
 		r.PostFormValue("collector.douban.groups"),
@@ -239,20 +244,6 @@ func cookieProbeURL(r *http.Request, rt *config.HotConfig) string {
 		}
 	}
 	return "https://www.douban.com/"
-}
-
-func weiboProbeSearchURL(tag string) string {
-	u, err := url.Parse("https://s.weibo.com/weibo")
-	if err != nil {
-		return "https://s.weibo.com/"
-	}
-	q := u.Query()
-	q.Set("q", tag)
-	q.Set("typeall", "1")
-	q.Set("suball", "1")
-	q.Set("Refer", "g")
-	u.RawQuery = q.Encode()
-	return u.String()
 }
 
 const errCookieMissing = cookieMissingError("本地 cookie 为空")

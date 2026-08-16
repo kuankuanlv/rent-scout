@@ -74,6 +74,7 @@ func Bootstrap(opts Options) (*Resources, func(), error) {
 	})
 	boot = pkglog.Component(pkglog.Main)
 	boot.Info("服务启动",
+		"log_dir", pkglog.LogDir(),
 		"addr", cfg.Server.Addr,
 		"sources", cfg.Collector.Sources,
 		"config_keys", cnt,

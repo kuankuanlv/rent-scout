@@ -2,9 +2,11 @@ package pkglog
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"gopkg.in/natefinch/lumberjack.v2"
@@ -61,14 +63,23 @@ func Component(name string) *slog.Logger {
 // format=json → JSONHandler；path 非空 → 文件轮转输出（50MB×5），空 → stdout
 func New(cfg Options) *slog.Logger {
 	level := parseLevel(cfg.Level)
-	var out io.Writer = os.Stdout
+	writers := []io.Writer{os.Stdout}
+	if dir, err := ensureLogDir(defaultLogDir()); err == nil {
+		writers = append(writers, newDailyFile(dir))
+		if abs, err := filepath.Abs(dir); err == nil {
+			fmt.Fprintf(os.Stderr, "日志写入 %s\n", abs)
+		}
+	} else {
+		fmt.Fprintf(os.Stderr, "日志目录不可用，只打控制台: %v\n", err)
+	}
 	if cfg.Path != "" {
-		out = &lumberjack.Logger{
+		writers = append(writers, &lumberjack.Logger{
 			Filename:   cfg.Path,
 			MaxSize:    50,
 			MaxBackups: 5,
-		}
+		})
 	}
+	out := io.MultiWriter(writers...)
 	opts := &slog.HandlerOptions{Level: level}
 	var inner slog.Handler
 	json := strings.EqualFold(cfg.Format, "json")

@@ -1,8 +1,6 @@
 package config
 
 import (
-	"net/url"
-
 	"rent-scout/internal/models"
 )
 
@@ -63,12 +61,13 @@ type DoubanConfig struct {
 	RangeTo   string   // 只抓此时间之前发的帖，单位天，可正可负；默认 now
 }
 
-	// WeiboConfig 微博源公开配置
-	type WeiboConfig struct {
-		Tags      []string // 话题/超话，作高级搜索 q；可夹注释行，旧搜索 URL 也能抽 q
-		Interval  int      // 同一轮里两次访问微博的间隔（秒），默认 5；不是轮次间隔
-		RangeFrom string   // 只抓此时间之后发的帖，单位天，只能为负；默认 -10，与豆瓣相同
-	}
+// WeiboConfig 微博源公开配置
+type WeiboConfig struct {
+	Users       []string // 博主 UID / 主页地址
+	SuperTopics []string // 超话 containerid / 主页地址
+	Interval    int      // 同一轮里两次访问微博的间隔（秒），默认 5；不是轮次间隔
+	RangeFrom   string   // 只抓此时间之后发的帖，单位天，只能为负；默认 -10，与豆瓣相同
+}
 
 // FilterConfig 过滤：AI 开关与效率
 type FilterConfig struct {
@@ -107,16 +106,23 @@ type SecretsCollector struct {
 
 // CookieFor 按采集源取 cookie 配置；未知源当豆瓣
 func (c SecretsCollector) CookieFor(source string) DoubanCookieConfig {
-	if CookieSource(source) == "weibo" {
+	switch CookieSource(source) {
+	case "weibo.cn":
+		dc := c.Weibo
+		dc.CookieRaw = dc.CookieRawCN
+		return dc
+	case "weibo":
 		return c.Weibo
+	default:
+		return c.Douban
 	}
-	return c.Douban
 }
 
 // DoubanCookieConfig 单源 cookie 三模式 none|raw|cookiecloud；豆瓣/微博共用
 type DoubanCookieConfig struct {
 	CookieMode      string
 	CookieRaw       string
+	CookieRawCN     string // weibo.cn 域；仅微博用
 	CookieFile      string // 废弃：旧 file 模式 KV 兼容字段，读库时忽略
 	CookiecloudURL  string
 	CookiecloudKey  string
@@ -193,39 +199,6 @@ var defaultDoubanGroups = []string{
 	"https://www.douban.com/group/596202/discussion",
 }
 
-func weiboTagURL(tag string) string {
-	return "https://s.weibo.com/weibo?q=" + url.QueryEscape(tag)
-}
-
-var defaultWeiboTags = []string{
-	"#北京租房",
-	weiboTagURL("#北京租房#"),
-	"#北京市租房",
-	weiboTagURL("#北京市租房#"),
-	"#租房",
-	weiboTagURL("#租房#"),
-	"#北京租房大全",
-	weiboTagURL("#北京租房大全#"),
-	"#北京租房合租",
-	weiboTagURL("#北京租房合租#"),
-	"#北京合租",
-	weiboTagURL("#北京合租#"),
-	"#北京合租房",
-	weiboTagURL("#北京合租房#"),
-	"#北京租房找室友",
-	weiboTagURL("#北京租房找室友#"),
-	"#北京租房转租",
-	weiboTagURL("#北京租房转租#"),
-	"#北京无中介租房",
-	weiboTagURL("#北京无中介租房#"),
-	"#北京短租",
-	weiboTagURL("#北京短租#"),
-	"#北京石景山租房",
-	weiboTagURL("#北京石景山租房#"),
-	"#北京租房大师",
-	weiboTagURL("#北京租房大师#"),
-}
-
 // DefaultApp 内置默认公开配置（SQLite 空库时使用）
 func DefaultApp() *AppConfig {
 	cfg := &AppConfig{}
@@ -279,20 +252,17 @@ func applyDefaults(cfg *AppConfig) {
 	if len(cfg.Collector.Douban.Groups) == 0 {
 		cfg.Collector.Douban.Groups = defaultDoubanGroups
 	}
-	if len(WeiboTags(cfg.Collector.Weibo.Tags)) == 0 {
-		cfg.Collector.Weibo.Tags = append([]string(nil), defaultWeiboTags...)
+	if cfg.Collector.Douban.Interval == 0 {
+		cfg.Collector.Douban.Interval = 3
 	}
-		if cfg.Collector.Douban.Interval == 0 {
-			cfg.Collector.Douban.Interval = 3
-		}
-		if cfg.Collector.Weibo.Interval == 0 {
-			cfg.Collector.Weibo.Interval = 5
-		}
-		if cfg.Collector.Weibo.RangeFrom == "" {
-			cfg.Collector.Weibo.RangeFrom = "-10"
-		} else {
-			cfg.Collector.Weibo.RangeFrom = CanonicalDayOffset(cfg.Collector.Weibo.RangeFrom)
-		}
+	if cfg.Collector.Weibo.Interval == 0 {
+		cfg.Collector.Weibo.Interval = 5
+	}
+	if cfg.Collector.Weibo.RangeFrom == "" {
+		cfg.Collector.Weibo.RangeFrom = "-10"
+	} else {
+		cfg.Collector.Weibo.RangeFrom = CanonicalDayOffset(cfg.Collector.Weibo.RangeFrom)
+	}
 	if cfg.Collector.Douban.RangeFrom == "" {
 		cfg.Collector.Douban.RangeFrom = "-10"
 	} else {

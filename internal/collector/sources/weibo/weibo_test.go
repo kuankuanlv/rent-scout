@@ -13,20 +13,15 @@ import (
 	"rent-scout/internal/collector/cookie"
 )
 
-const listPageHTML = `<html><body>
-<div class="card-wrap" mid="0"><p class="txt">广告</p></div>
-<div class="card-wrap" action-type="feed_list_item" mid="5123456789">
-  <a class="name" nick-name="租房君">租房君</a>
-  <p class="txt" node-type="feed_list_content">展开前摘要</p>
-  <p class="txt" node-type="feed_list_content_full">望京整租两居 8000 微信 abc</p>
-  <p class="from"><a href="//weibo.com/123/AbCdEf" title="2026-08-16 10:00">今天 10:00</a></p>
-</div>
-<div class="card-wrap" action-type="feed_list_item" mid="5123456790">
-  <a class="name" nick-name="user2">user2</a>
-  <p class="txt" node-type="feed_list_content">回龙观精装一居</p>
-  <p class="from"><a href="/u/456" title="2026-08-15 09:00">昨天 09:00</a></p>
-</div>
-</body></html>`
+const chaohuaPageJSON = `{
+  "items":[{"mblog":{
+    "id":"5123456789","mid":"5123456789","bid":"AbCdEf",
+    "created_at":"Sun Aug 16 10:00:00 +0800 2026",
+    "text":"望京整租两居 8000 微信 abc","isLongText":false,
+    "user":{"id":123,"screen_name":"租房君"}
+  }}],
+  "moreInfo":{"params":{"since_id":"{\"max_id\":5123456788}","max_id":0}}
+}`
 
 type staticCookie string
 
@@ -34,80 +29,105 @@ func (s staticCookie) Get(context.Context, string) (string, error) { return stri
 
 func TestWeiboListParse(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/weibo" {
-			t.Errorf("path=%s want /weibo", r.URL.Path)
+		if r.URL.Path != "/ajax_proxy/chaohua/page" {
+			t.Errorf("path=%s", r.URL.Path)
 		}
-		if r.URL.Query().Get("page") != "2" {
-			t.Errorf("page=%s want 2", r.URL.Query().Get("page"))
+		if !strings.Contains(r.URL.Query().Get("flowId"), "_-_feed") {
+			t.Errorf("flowId=%s", r.URL.Query().Get("flowId"))
 		}
-		if r.URL.Query().Get("q") != "#北京租房#" {
-			t.Errorf("q=%s", r.URL.Query().Get("q"))
-		}
-		if r.URL.Query().Get("typeall") != "1" || r.URL.Query().Get("suball") != "1" {
-			t.Errorf("query=%s", r.URL.RawQuery)
-		}
-		if r.URL.Query().Has("xsort") {
-			t.Errorf("不应带 xsort，那是实时流不是高级搜索列表")
-		}
-		if !strings.HasPrefix(r.URL.Query().Get("timescope"), "custom:") {
-			t.Errorf("timescope=%s", r.URL.Query().Get("timescope"))
+		if r.URL.Query().Get("since_id") != "" {
+			t.Errorf("首页不应带 since_id")
 		}
 		if r.Header.Get("Cookie") == "" {
 			t.Error("缺少 Cookie")
 		}
-		w.Write([]byte(listPageHTML))
+		w.Write([]byte(chaohuaPageJSON))
 	}))
 	defer srv.Close()
 
 	s := New(Options{
-		Tags:   []string{"北京租房"},
-		Base:   srv.URL,
-		Cookie: staticCookie("SUB=x"),
-		Client: srv.Client(),
+		SuperTopics: []string{"100808453110d9ea6a7b6fd15e79788cf55186"},
+		AjaxBase:    srv.URL,
+		Cookie:      staticCookie("SUB=x"),
+		Client:      srv.Client(),
 	})
-	items, next, err := s.List(context.Background(), "0:25")
+	start := time.Date(2026, 8, 1, 0, 0, 0, 0, time.Local)
+	end := time.Date(2026, 8, 17, 0, 0, 0, 0, time.Local)
+	items, next, err := s.ListInWindow(context.Background(), "", start, end)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 2 {
+	if len(items) != 1 {
 		t.Fatalf("items=%d", len(items))
 	}
 	it := items[0]
-	if it.ExternalID != "5123456789" || it.Author != "租房君" {
+	if it.ExternalID != "5123456789" || it.Author != "租房君" || it.Kind != "super" {
 		t.Errorf("条目 %+v", it)
 	}
 	if !strings.Contains(it.Content, "望京整租两居") {
-		t.Errorf("应取全文: %q", it.Content)
-	}
-	if it.NeedDetail {
-		t.Error("有全文节点时不应再打详情")
+		t.Errorf("content=%q", it.Content)
 	}
 	if it.URL != "https://weibo.com/123/AbCdEf" {
 		t.Errorf("url=%q", it.URL)
 	}
-	if it.PublishedAt.Format("2006-01-02 15:04") != "2026-08-16 10:00" {
-		t.Errorf("time=%v", it.PublishedAt)
-	}
-	if next != "0:50" {
+	if next != "0:2" {
 		t.Errorf("next=%q", next)
+	}
+}
+
+func TestChaohuaSecondPageSendsSince(t *testing.T) {
+	var sawSince string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("since_id") == "" {
+			w.Write([]byte(chaohuaPageJSON))
+			return
+		}
+		sawSince = r.URL.Query().Get("since_id")
+		if r.URL.Query().Get("page_common_ext") == "" {
+			t.Error("第二页应带 page_common_ext")
+		}
+		w.Write([]byte(`{"items":[],"moreInfo":{"params":{}}}`))
+	}))
+	defer srv.Close()
+	s := New(Options{
+		SuperTopics: []string{"100808453110d9ea6a7b6fd15e79788cf55186"},
+		AjaxBase:    srv.URL,
+		Cookie:      staticCookie("SUB=x"),
+		Client:      srv.Client(),
+	})
+	start := time.Date(2026, 8, 1, 0, 0, 0, 0, time.Local)
+	end := time.Date(2026, 8, 17, 0, 0, 0, 0, time.Local)
+	_, next, err := s.ListInWindow(context.Background(), "", start, end)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = s.ListInWindow(context.Background(), next, start, end)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(sawSince, "max_id") {
+		t.Errorf("since_id=%q", sawSince)
 	}
 }
 
 func TestWeiboMultiURLRotation(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("q") == "#空#" {
-			w.Write([]byte(`<html><body><div class="card-wrap" mid="0"></div></body></html>`))
+		if strings.Contains(r.URL.Query().Get("flowId"), "aaaaaaaaaa") {
+			w.Write([]byte(`{"items":[]}`))
 			return
 		}
-		w.Write([]byte(listPageHTML))
+		w.Write([]byte(chaohuaPageJSON))
 	}))
 	defer srv.Close()
 	s := New(Options{
-		Tags:   []string{"空", "满"},
-		Base:   srv.URL,
-		Client: srv.Client(),
+		SuperTopics: []string{"aaaaaaaaaaaaaaaaaaaa", "100808453110d9ea6a7b6fd15e79788cf55186"},
+		AjaxBase:    srv.URL,
+		Cookie:      staticCookie("SUB=x"),
+		Client:      srv.Client(),
 	})
-	items, next, err := s.List(context.Background(), "")
+	start := time.Date(2026, 8, 1, 0, 0, 0, 0, time.Local)
+	end := time.Date(2026, 8, 17, 0, 0, 0, 0, time.Local)
+	items, next, err := s.ListInWindow(context.Background(), "", start, end)
 	if err != nil || len(items) != 0 || next != "1:0" {
 		t.Fatalf("空页应变下一组: items=%d next=%q err=%v", len(items), next, err)
 	}
@@ -124,10 +144,45 @@ func TestWeiboLoginWall(t *testing.T) {
 		w.Write([]byte(`<html><body>请先登录后查看 passport.weibo.com</body></html>`))
 	}))
 	defer srv.Close()
-	s := New(Options{Tags: []string{"x"}, Base: srv.URL, Client: srv.Client()})
+	s := New(Options{
+		SuperTopics: []string{"100808453110d9ea6a7b6fd15e79788cf55186"},
+		AjaxBase:    srv.URL,
+		Cookie:      staticCookie("SUB=x"),
+		Client:      srv.Client(),
+	})
 	_, _, err := s.List(context.Background(), "")
 	if !errors.Is(err, cookie.ErrCookieInvalid) {
 		t.Fatalf("登录墙应判定 cookie 失效, err=%v", err)
+	}
+}
+
+func TestOwnerCommentsOK0DoesNotFailDetail(t *testing.T) {
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		if strings.Contains(r.URL.Path, "/comments/hotflow") {
+			w.Write([]byte(`{"ok":0}`))
+			return
+		}
+		t.Errorf("unexpected %s", r.URL.Path)
+	}))
+	defer srv.Close()
+	s := New(Options{Client: srv.Client(), MobileBase: srv.URL, AjaxBase: srv.URL})
+	post, err := s.Detail(context.Background(), collector.ListItem{
+		ExternalID:  "5332468150307044",
+		Kind:        "super",
+		AuthorID:    "1",
+		Content:     "只有图没有联系方式",
+		PublishedAt: time.Date(2026, 8, 16, 10, 0, 0, 0, time.Local),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if post.Content != "只有图没有联系方式" {
+		t.Errorf("content=%q", post.Content)
+	}
+	if hits != 1 {
+		t.Errorf("应打一次评论接口, hits=%d", hits)
 	}
 }
 
@@ -155,32 +210,6 @@ func TestWeiboDetailUsesListContentNoHTTP(t *testing.T) {
 	}
 	if post.Content != "列表正文" || post.Source != "weibo" {
 		t.Errorf("post=%+v", post)
-	}
-}
-
-func TestWeiboTruncatedListNeedsDetail(t *testing.T) {
-	html := `<html><body>
-<div class="card-wrap" action-type="feed_list_item" mid="5123456791">
-  <a class="name" nick-name="租房君">租房君</a>
-  <p class="txt" node-type="feed_list_content">望京摘要展开</p>
-  <a action-type="fl_unfold" href="javascript:void(0);">展开</a>
-  <p class="from"><a href="//weibo.com/1/x" title="2026-08-16 10:00">今天 10:00</a></p>
-</div>
-</body></html>`
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(html))
-	}))
-	defer srv.Close()
-	s := New(Options{Tags: []string{"x"}, Base: srv.URL, Client: srv.Client()})
-	items, _, err := s.List(context.Background(), "")
-	if err != nil || len(items) != 1 {
-		t.Fatalf("items=%d err=%v", len(items), err)
-	}
-	if !items[0].NeedDetail {
-		t.Fatal("截断摘要应 NeedDetail")
-	}
-	if strings.Contains(items[0].Content, "展开") {
-		t.Errorf("摘要不应残留展开: %q", items[0].Content)
 	}
 }
 
@@ -212,43 +241,109 @@ func TestWeiboDetailExpandTruncated(t *testing.T) {
 	}
 }
 
-func TestWeiboTimescope(t *testing.T) {
-	start := time.Date(2026, 8, 1, 0, 0, 0, 0, time.Local)
-	end := time.Date(2026, 8, 16, 0, 0, 0, 0, time.Local)
-	got := weiboTimescope(start, end)
-	if got != "custom:2026-08-01-0:2026-08-16-0" {
-		t.Errorf("timescope=%s", got)
-	}
-	u, err := advancedSearchURL("https://s.weibo.com/weibo", "#北京租房#", start, end, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(u, "q=#") || strings.Contains(u, "#北京") {
-		t.Fatalf("q 未编码，浏览器会把 # 当锚点: %s", u)
-	}
-	if !strings.Contains(u, "q=%23") || !strings.Contains(u, "timescope=custom") {
-		t.Errorf("url=%s", u)
-	}
-	if strings.Contains(u, "xsort=") {
-		t.Errorf("不应带 xsort: %s", u)
-	}
-}
-
 func TestWeiboDescribeCursor(t *testing.T) {
-	s := New(Options{Tags: []string{"#北京租房#", "#北京合租#"}})
+	s := New(Options{
+		SuperTopics: []string{"100808aaaaaaaaaaaaaaaaaa", "100808bbbbbbbbbbbbbbbbbb"},
+	})
 	got := s.DescribeCursor("")
-	if !strings.Contains(got, "搜索1") || !strings.Contains(got, "北京租房") || !strings.Contains(got, "第1页") {
+	if !strings.Contains(got, "超话") || !strings.Contains(got, "第1页") {
 		t.Errorf("空游标 = %s", got)
 	}
-	got = s.DescribeCursor("1:25")
-	if !strings.Contains(got, "搜索2") || !strings.Contains(got, "北京合租") || !strings.Contains(got, "第2页") {
-		t.Errorf("1:25 = %s", got)
+	got = s.DescribeCursor("1:2")
+	if !strings.Contains(got, "第2页") {
+		t.Errorf("1:2 = %s", got)
 	}
 }
 
-func TestParseWeiboTime(t *testing.T) {
-	got, err := parseWeiboTime("2026-08-16 10:00", "今天 10:00")
-	if err != nil || got.Format("15:04") != "10:00" {
-		t.Fatalf("%v %v", got, err)
+func TestParseProfileList(t *testing.T) {
+	body := `{"ok":1,"data":{"list":[{
+		"id":"5331788828246627","idstr":"5331788828246627","mid":"5331788828246627",
+		"mblogid":"RdkYiyBk7","created_at":"Fri Aug 14 12:16:18 +0800 2026",
+		"text_raw":"7号线百子湾 2300 电话15711317999","isLongText":false,
+		"user":{"id":6342026928,"idstr":"6342026928","screen_name":"北京租房小编"}
+	}]}}`
+	items, err := parseProfileList(body, "6342026928")
+	if err != nil || len(items) != 1 {
+		t.Fatalf("items=%d err=%v", len(items), err)
+	}
+	it := items[0]
+	if it.ExternalID != "5331788828246627" || it.Kind != "user" || it.Author != "北京租房小编" {
+		t.Errorf("%+v", it)
+	}
+	if it.PublishedAt.Year() != 2026 || it.PublishedAt.Month() != 8 || it.PublishedAt.Day() != 14 {
+		t.Errorf("time=%v", it.PublishedAt)
+	}
+}
+
+func TestFilterWindow(t *testing.T) {
+	loc := time.FixedZone("CST", 8*3600)
+	mk := func(id string, t time.Time) collector.ListItem {
+		return collector.ListItem{ExternalID: id, PublishedAt: t}
+	}
+	start := time.Date(2026, 8, 6, 0, 0, 0, 0, loc)
+	end := time.Date(2026, 8, 16, 18, 0, 0, 0, loc)
+	in := []collector.ListItem{
+		mk("a", time.Date(2026, 8, 16, 14, 51, 0, 0, loc)),
+		mk("b", time.Date(2026, 7, 26, 22, 19, 0, 0, loc)),
+		mk("c", time.Date(2026, 8, 16, 15, 43, 0, 0, loc)),
+	}
+	out := filterWindow(in, start, end)
+	if len(out) != 2 {
+		t.Fatalf("len=%d want 2", len(out))
+	}
+}
+
+func TestParseChaohuaPage(t *testing.T) {
+	items, since, err := parseChaohuaPage(chaohuaPageJSON)
+	if err != nil || len(items) != 1 {
+		t.Fatalf("items=%d err=%v", len(items), err)
+	}
+	if items[0].Kind != "super" || !strings.Contains(items[0].Content, "8000") {
+		t.Errorf("%+v", items[0])
+	}
+	if !strings.Contains(since, "max_id") {
+		t.Errorf("since=%q", since)
+	}
+}
+
+func TestSuperSkipsWithoutCookie(t *testing.T) {
+	s := New(Options{SuperTopics: []string{"100808453110d9ea6a7b6fd15e79788cf55186"}})
+	items, next, err := s.ListInWindow(context.Background(), "", time.Now().Add(-10*24*time.Hour), time.Now())
+	if err != nil || len(items) != 0 {
+		t.Fatalf("应跳过超话 items=%d err=%v", len(items), err)
+	}
+	if next != "" {
+		t.Errorf("只有超话时应结束 next=%q", next)
+	}
+}
+
+func TestWeiboRiskHTTPAndJSON(t *testing.T) {
+	if err := weiboResponseErr(432, ""); err == nil || !errors.Is(err, cookie.ErrCookieInvalid) {
+		t.Fatalf("432: %v", err)
+	}
+	if err := weiboResponseErr(200, `{"ok":-100,"url":"https://passport.weibo.com/sso/signin"}`); err == nil || !errors.Is(err, cookie.ErrCookieInvalid) {
+		t.Fatalf("ok-100: %v", err)
+	}
+	if err := weiboResponseErr(200, `{"ok":0,"msg":"这里还没有内容","data":{"cards":[]}}`); err != nil {
+		t.Fatalf("没内容不应当错误: %v", err)
+	}
+	if err := weiboResponseErr(200, `{"ok":0,"error_code":20101}`); err != nil {
+		t.Fatalf("评论空结果不应当错误: %v", err)
+	}
+	if err := weiboResponseErr(200, `{"ok":1,"data":{}}`); err != nil {
+		t.Fatalf("ok1: %v", err)
+	}
+}
+
+func TestWeiboWatermarkMeta(t *testing.T) {
+	s := New(Options{
+		SuperTopics: []string{"100808453110d9ea6a7b6fd15e79788cf55186"},
+		Users:       []string{"6342026928"},
+	})
+	if !s.TimeOrdered("") || s.WatermarkKey("") != "super:100808453110d9ea6a7b6fd15e79788cf55186" {
+		t.Fatalf("超话应有序 key=%s ordered=%v", s.WatermarkKey(""), s.TimeOrdered(""))
+	}
+	if !s.TimeOrdered("1:0") || s.WatermarkKey("1:0") != "user:6342026928" {
+		t.Errorf("博主 key=%s ordered=%v", s.WatermarkKey("1:0"), s.TimeOrdered("1:0"))
 	}
 }

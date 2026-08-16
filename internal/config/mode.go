@@ -70,57 +70,74 @@ const (
 
 	KeyWeiboCookieMode     = "secret.collector.weibo.cookie_mode"
 	KeyWeiboCookieRaw      = "secret.collector.weibo.cookie_raw"
+	KeyWeiboCookieRawCN    = "secret.collector.weibo.cookie_raw_cn"
 	KeyWeiboCookieCloudURL = "secret.collector.weibo.cookiecloud_url"
 	KeyWeiboCookieCloudKey = "secret.collector.weibo.cookiecloud_key"
 	KeyWeiboCookieCloudPwd = "secret.collector.weibo.cookiecloud_password"
 )
 
-// CookieSource 归一化采集源名；只认 weibo，其余当 douban
+// CookieSource 归一化采集源名；weibo / weibo.cn 分开，其余当 douban
 func CookieSource(source string) string {
-	if strings.EqualFold(strings.TrimSpace(source), "weibo") {
+	s := strings.ToLower(strings.TrimSpace(source))
+	if s == "weibo.cn" {
+		return "weibo.cn"
+	}
+	if s == "weibo" {
 		return "weibo"
 	}
 	return "douban"
 }
 
-// CookieCloudDomain CookieCloud 明文里只拼这个域
 func CookieCloudDomain(source string) string {
-	if CookieSource(source) == "weibo" {
+	switch CookieSource(source) {
+	case "weibo.cn":
+		return "weibo.cn"
+	case "weibo":
 		return "weibo.com"
+	default:
+		return "douban.com"
 	}
-	return "douban.com"
+}
+
+func weiboCookieFamily(source string) bool {
+	s := CookieSource(source)
+	return s == "weibo" || s == "weibo.cn"
 }
 
 func CookieModeKey(source string) string {
-	if CookieSource(source) == "weibo" {
+	if weiboCookieFamily(source) {
 		return KeyWeiboCookieMode
 	}
 	return KeyDoubanCookieMode
 }
 
 func CookieRawKey(source string) string {
-	if CookieSource(source) == "weibo" {
+	switch CookieSource(source) {
+	case "weibo.cn":
+		return KeyWeiboCookieRawCN
+	case "weibo":
 		return KeyWeiboCookieRaw
+	default:
+		return KeyDoubanCookieRaw
 	}
-	return KeyDoubanCookieRaw
 }
 
 func CookieCloudURLKey(source string) string {
-	if CookieSource(source) == "weibo" {
+	if weiboCookieFamily(source) {
 		return KeyWeiboCookieCloudURL
 	}
 	return KeyDoubanCookieCloudURL
 }
 
 func CookieCloudKeyKey(source string) string {
-	if CookieSource(source) == "weibo" {
+	if weiboCookieFamily(source) {
 		return KeyWeiboCookieCloudKey
 	}
 	return KeyDoubanCookieCloudKey
 }
 
 func CookieCloudPwdKey(source string) string {
-	if CookieSource(source) == "weibo" {
+	if weiboCookieFamily(source) {
 		return KeyWeiboCookieCloudPwd
 	}
 	return KeyDoubanCookieCloudPwd

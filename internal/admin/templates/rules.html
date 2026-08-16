@@ -1,7 +1,7 @@
 {{define "rules_panel"}}
 <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 sm:p-6 mb-6">
   <h1 class="text-xl sm:text-2xl font-bold mb-2">📜 规则管理</h1>
-  <p class="text-sm text-gray-500">这是爬取过程中的留存规则：帖子先按时间窗抓入库，再用这里决定留下、拒绝还是送 AI。判定顺序：白名单 → 黑名单 → AI。同条内逗号分隔表示「或」；白名单命中会写入地点标签（全览「标签」列）。规则实时生效；改 value/优先级/启用后自动保存。</p>
+  <p class="text-sm text-gray-500">这是爬取过程中的留存规则：帖子先按时间窗抓入库，再用这里决定留下、拒绝还是送 AI。判定顺序：白名单 → 黑名单 → AI。同条内逗号分隔表示「或」；白名单命中会写入地点标签（全览「标签」列）。AI 筛选标准内置只读，这条规则当开关用。规则实时生效；改 value/优先级/启用后自动保存。</p>
 </div>
 <div class="desktop-table bg-white rounded-2xl shadow-sm border border-gray-100 overflow-x-auto mb-6">
   <table class="min-w-full text-sm divide-y divide-gray-100">
@@ -11,7 +11,7 @@
     </tr></thead>
     <tbody>{{range .Rules}}<tr class="border-t border-gray-50 hover:bg-gray-50" data-rule-row="{{.ID}}">
       <td class="px-3 py-2">{{.ID}}</td><td class="px-3 py-2">{{.Name}}</td><td class="px-3 py-2 text-xs">{{.TypeLabel}}</td>
-      <td class="px-3 py-2"><input form="f{{.ID}}" name="value" value="{{.Value}}" class="border rounded px-2 py-1 w-full max-w-xs text-xs rule-autosave"></td>
+      <td class="px-3 py-2">{{if eq .Type "ai_natural"}}<textarea readonly rows="6" class="border rounded px-2 py-1 w-full max-w-xs text-xs bg-gray-50 text-gray-600">{{$.BuiltInAIValue}}</textarea>{{else}}<input form="f{{.ID}}" name="value" value="{{.Value}}" class="border rounded px-2 py-1 w-full max-w-xs text-xs rule-autosave">{{end}}</td>
       <td class="px-3 py-2"><input form="f{{.ID}}" type="number" name="priority" value="{{.Priority}}" class="border rounded px-2 py-1 w-16 text-xs rule-autosave"></td>
       <td class="px-3 py-2 text-center"><input form="f{{.ID}}" type="checkbox" name="enabled" value="on" class="rule-autosave" {{if .Enabled}}checked{{end}}></td>
       <td class="px-3 py-2 text-center">{{.Hits}}</td><td class="px-3 py-2 text-center">{{.UselessCount}}</td>
@@ -31,7 +31,7 @@
   <div class="text-xs text-gray-500 mb-3">{{.TypeLabel}} · 命中 {{.Hits}}</div>
   <form method="post" action="/admin/rules/{{.ID}}{{if $.Token}}?token={{$.Token}}{{end}}" class="space-y-2 rule-update-form">
     <input type="hidden" name="name" value="{{.Name}}"><input type="hidden" name="type" value="{{.Type}}"><input type="hidden" name="rule_type" value="{{.Type}}">
-    <input name="value" value="{{.Value}}" class="w-full border rounded-lg px-3 py-2 text-sm rule-autosave">
+    {{if eq .Type "ai_natural"}}<textarea readonly rows="6" class="w-full border rounded-lg px-3 py-2 text-sm bg-gray-50 text-gray-600">{{$.BuiltInAIValue}}</textarea>{{else}}<input name="value" value="{{.Value}}" class="w-full border rounded-lg px-3 py-2 text-sm rule-autosave">{{end}}
     <div class="flex gap-2"><input type="number" name="priority" value="{{.Priority}}" class="w-20 border rounded-lg px-2 py-2 text-sm rule-autosave">
     <label class="flex items-center gap-1 text-sm"><input type="checkbox" name="enabled" value="on" class="rule-autosave" {{if .Enabled}}checked{{end}}> 启用</label></div>
     <p class="text-xs text-gray-400 rule-save-hint" hidden></p>
@@ -42,8 +42,8 @@
 </div>{{end}}</div>
 <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 sm:p-6">
   <h3 class="font-bold mb-1">新增规则</h3>
-  <p class="text-xs text-gray-500 mb-4">白名单：命中即通过并打地点 Tag · 黑名单：命中即拒绝 · AI审核：自然语言交给模型判定</p>
-  <form method="post" action="/admin/rules{{if .Token}}?token={{.Token}}{{end}}" class="space-y-4">
+  <p class="text-xs text-gray-500 mb-4">白名单：命中即通过并打地点 Tag · 黑名单：命中即拒绝 · AI审核：内置靠谱个人房源标准，只需启用</p>
+  <form method="post" action="/admin/rules{{if .Token}}?token={{.Token}}{{end}}" class="space-y-4" id="new-rule-form">
     <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
       <div>
         <label class="block text-sm font-medium text-gray-700 mb-1">名称</label>
@@ -51,16 +51,20 @@
       </div>
       <div>
         <label class="block text-sm font-medium text-gray-700 mb-1">类型</label>
-        <select name="type" class="w-full border rounded-xl px-3 py-2 text-sm">
+        <select name="type" id="new-rule-type" class="w-full border rounded-xl px-3 py-2 text-sm">
           <option value="blacklist">黑名单</option>
           <option value="whitelist">白名单</option>
           <option value="ai_natural">AI审核</option>
         </select>
       </div>
     </div>
-    <div>
+    <div id="new-rule-value-wrap">
       <label class="block text-sm font-medium text-gray-700 mb-1">规则值</label>
-      <input name="value" placeholder="白/黑：地点或关键词，逗号=或；AI：自然语言描述偏好" required class="w-full border rounded-xl px-3 py-2 text-sm">
+      <input name="value" id="new-rule-value" placeholder="地点或关键词，逗号=或" required class="w-full border rounded-xl px-3 py-2 text-sm">
+    </div>
+    <div id="new-rule-ai-tips" class="hidden">
+      <label class="block text-sm font-medium text-gray-700 mb-1">内置标准（只读）</label>
+      <textarea readonly rows="8" class="w-full border rounded-xl px-3 py-2 text-sm bg-gray-50 text-gray-600">{{.BuiltInAIValue}}</textarea>
     </div>
     <div class="max-w-xs">
       <label class="block text-sm font-medium text-gray-700 mb-1">优先级</label>
@@ -130,6 +134,19 @@
       });
     }
   });
+  var typeSel = document.getElementById('new-rule-type');
+  var valueWrap = document.getElementById('new-rule-value-wrap');
+  var valueInput = document.getElementById('new-rule-value');
+  var aiTips = document.getElementById('new-rule-ai-tips');
+  function syncNewRuleType(){
+    if (!typeSel || !valueWrap || !valueInput || !aiTips) return;
+    var isAI = typeSel.value === 'ai_natural';
+    valueWrap.classList.toggle('hidden', isAI);
+    aiTips.classList.toggle('hidden', !isAI);
+    valueInput.required = !isAI;
+    if (isAI) valueInput.value = '';
+  }
+  if (typeSel) typeSel.addEventListener('change', syncNewRuleType);
   document.querySelectorAll('.rule-delete-form').forEach(function(form){
     form.addEventListener('submit', function(e){
       var name = form.getAttribute('data-rule-name') || '该规则';

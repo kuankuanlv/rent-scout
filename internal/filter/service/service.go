@@ -139,7 +139,7 @@ func (s *Service) runReplay(ctx context.Context) {
 			}
 			cfg := s.rt.Get()
 			now := time.Now()
-			start, end, err := config.ResolveTimeRange(cfg.Collector.Douban.RangeFrom, "now", now)
+			start, end, err := config.CollectorReplayWindow(cfg, now)
 			if err != nil {
 				log.Warn("规则 replay 时间窗无效", "err", err)
 				continue
@@ -151,6 +151,9 @@ func (s *Service) runReplay(ctx context.Context) {
 			}
 			if err := s.consumer.ReplayHard(ctx, posts); err != nil {
 				log.Error("规则 replay 失败", "err", err)
+			}
+			if s.ai != nil {
+				s.ai.Signal()
 			}
 		}
 	}

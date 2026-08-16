@@ -642,6 +642,23 @@ func TestSaveFilterResult(t *testing.T) {
 	if got.AI == nil || got.AI.Price != 4500 || !got.AI.Passed {
 		t.Errorf("AI 详情丢失: %+v", got.AI)
 	}
+
+	r3 := models.FilterResult{PostID: postID, Status: models.PostStatusPassed,
+		Stage: models.StageHardRule, DecidedAt: time.Now(),
+		HardRules: []models.RuleHit{{RuleID: 1, Reason: "望京"}}}
+	if err := s.SaveFilterResult(r3); err != nil {
+		t.Fatalf("硬筛再写: %v", err)
+	}
+	got, ok, err = s.FilterResultByPostID(postID)
+	if err != nil || !ok {
+		t.Fatalf("硬筛后再读: ok=%v err=%v", ok, err)
+	}
+	if got.AI == nil || got.AI.Price != 4500 {
+		t.Errorf("硬筛重放不应清掉 AI: %+v", got.AI)
+	}
+	if got.Stage != models.StageHardRule || len(got.HardRules) != 1 {
+		t.Errorf("硬筛字段应更新: %+v", got)
+	}
 }
 
 // 地址标签写回：白名单命中后入库（调整规格 A）

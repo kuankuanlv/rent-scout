@@ -61,10 +61,12 @@
       </div>
       {{else if eq .Step 4}}
       <label class="flex items-center gap-2 text-sm"><input type="checkbox" name="filter.ai_enabled" value="on" checked> 启用 AI 筛选</label>
+      <div><label class="block text-sm font-medium mb-1">LLM Base URL</label>
+      <input name="secret.filter.llm.base_url" value="{{.Env.Filter.LLM.BaseURL}}" class="w-full border rounded-xl px-3 py-2 text-sm"></div>
       <div><label class="block text-sm font-medium mb-1">LLM API Key（可选）</label>
-      <input type="password" name="secret.filter.llm.api_key" class="w-full border rounded-xl px-3 py-2 text-sm"></div>
+      <input type="password" name="secret.filter.llm.api_key" class="w-full border rounded-xl px-3 py-2 text-sm" placeholder="本地 OmniRoute 填网关 Key"></div>
       <div><label class="block text-sm font-medium mb-1">模型</label>
-      <input name="secret.filter.llm.model" value="deepseek-chat" class="w-full border rounded-xl px-3 py-2 text-sm"></div>
+      <input name="secret.filter.llm.model" value="{{if .Env.Filter.LLM.Model}}{{.Env.Filter.LLM.Model}}{{else}}oc-chat{{end}}" class="w-full border rounded-xl px-3 py-2 text-sm"></div>
       {{else if eq .Step 5}}
       <div><label class="block text-sm font-medium mb-1">飞书 Webhook（可选）</label>
       <input type="password" name="secret.notifier.feishu.webhook" class="w-full border rounded-xl px-3 py-2 text-sm" placeholder="https://..."></div>

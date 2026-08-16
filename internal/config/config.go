@@ -199,6 +199,12 @@ var defaultDoubanGroups = []string{
 	"https://www.douban.com/group/596202/discussion",
 }
 
+// 本地 OmniRoute：oc-chat 是对话 comb，不强制 tool-call，适合批量 JSON 审核
+const (
+	DefaultLLMBaseURL = "http://127.0.0.1:20128/v1"
+	DefaultLLMModel   = "oc-chat"
+)
+
 // DefaultApp 内置默认公开配置（SQLite 空库时使用）
 func DefaultApp() *AppConfig {
 	cfg := &AppConfig{}
@@ -215,7 +221,8 @@ func DefaultSecrets() *Secrets {
 		},
 		Filter: SecretsFilter{
 			LLM: LLMConfig{
-				BaseURL:  "https://api.deepseek.com",
+				BaseURL:  DefaultLLMBaseURL,
+				Model:    DefaultLLMModel,
 				APIStyle: LLMStyleOpenAI.String(),
 			},
 		},

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"rent-scout/internal/config"
 	"rent-scout/internal/pkglog"
 )
 
@@ -151,7 +152,7 @@ func (s *Server) parseLLMDraft(r *http.Request) (llmDraft, error) {
 		baseURL = stored.BaseURL
 	}
 	if baseURL == "" && style == "openai" {
-		baseURL = "https://api.deepseek.com"
+		baseURL = config.DefaultLLMBaseURL
 	}
 	apiKey := firstNonEmpty(
 		r.PostFormValue("api_key"),

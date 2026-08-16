@@ -32,10 +32,11 @@ func (s *Store) SaveFilterResult(fr models.FilterResult) error {
 		aiJSON = string(b)
 	}
 	_, err = s.db.Exec(`INSERT INTO filter_results (post_id, status, stage, rejected_by, decided_at, hard_rules, ai_result)
-	    VALUES (?, ?, ?, ?, ?, ?, ?)
-	    ON CONFLICT(post_id) DO UPDATE SET status=excluded.status, stage=excluded.stage,
-	    rejected_by=excluded.rejected_by, decided_at=excluded.decided_at,
-	    hard_rules=excluded.hard_rules, ai_result=excluded.ai_result`,
+		    VALUES (?, ?, ?, ?, ?, ?, ?)
+		    ON CONFLICT(post_id) DO UPDATE SET status=excluded.status, stage=excluded.stage,
+		    rejected_by=excluded.rejected_by, decided_at=excluded.decided_at,
+		    hard_rules=excluded.hard_rules,
+		    ai_result=CASE WHEN excluded.ai_result='' THEN filter_results.ai_result ELSE excluded.ai_result END`,
 		fr.PostID, fr.Status, fr.Stage, fr.RejectedBy, fr.DecidedAt, string(hardJSON), aiJSON)
 	if err != nil {
 		return fmt.Errorf("保存筛选结果: %w", err)

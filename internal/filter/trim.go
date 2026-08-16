@@ -29,7 +29,7 @@ func BuildLLMView(post models.RentPost, limit int) LLMView {
 		Source:  post.Source,
 		Title:   post.Title,
 		URL:     post.URL,
-		Content: truncateRunes(stripHTML(post.Content), limit),
+		Content: truncateRunes(stripPageJunk(stripHTML(post.Content)), limit),
 	}
 }
 
@@ -72,4 +72,18 @@ func stripHTML(s string) string {
 		}
 	}
 	return strings.TrimSpace(b.String())
+}
+
+// stripPageJunk 豆瓣详情常把页面脚本拼进正文，截断前先砍掉，少占 token、也少干扰模型
+func stripPageJunk(s string) string {
+	for _, mark := range []string{
+		"$(function",
+		"var _topicOptConfig",
+		"window.createGroupReportButton",
+	} {
+		if i := strings.Index(s, mark); i >= 0 {
+			s = strings.TrimSpace(s[:i])
+		}
+	}
+	return s
 }

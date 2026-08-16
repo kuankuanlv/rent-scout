@@ -288,6 +288,86 @@ func containsIdx(s, sub string) bool {
 	return false
 }
 
+func TestReplayHardRejectedToPassedClearsNotifications(t *testing.T) {
+	st, err := store.Open(t.TempDir() + "/t.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	p := models.RentPost{Source: "douban", ExternalID: "old-rej", Title: "望京整租", Content: "近望京",
+		PublishedAt: time.Now(), CollectedAt: time.Now(), Status: models.PostStatusRejected}
+	if _, err := st.InsertPost(p); err != nil {
+		t.Fatal(err)
+	}
+	batch, err := st.ListPublishedBetween(time.Now().Add(-time.Hour), time.Now().Add(time.Hour), 10)
+	if err != nil || len(batch) != 1 {
+		t.Fatalf("拉帖: n=%d err=%v", len(batch), err)
+	}
+	if _, err := st.InsertNotification(batch[0].ID, "pushplus"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.MarkNotificationSent(batch[0].ID, "pushplus"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateRule(models.Rule{Name: "望京", Type: models.RuleTypeWhitelist,
+		Value: "望京", Enabled: true, Priority: 10}); err != nil {
+		t.Fatal(err)
+	}
+	c := NewConsumerWithOptions(NewRuleChain(nil), st, ConsumerOptions{})
+	if err := c.ReplayHard(context.Background(), batch); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.FetchPendingByStatus(models.PostStatusPassed, 10)
+	if err != nil || len(got) != 1 {
+		t.Fatalf("应变成 passed: n=%d err=%v", len(got), err)
+	}
+	notes, err := st.ListNotificationsByPost(got[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(notes) != 0 {
+		t.Errorf("拒绝变通过应清账本以便重推: %+v", notes)
+	}
+}
+
+func TestReplayHardStillPassedKeepsNotifications(t *testing.T) {
+	st, err := store.Open(t.TempDir() + "/t.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if _, err := st.CreateRule(models.Rule{Name: "望京", Type: models.RuleTypeWhitelist,
+		Value: "望京", Enabled: true, Priority: 10}); err != nil {
+		t.Fatal(err)
+	}
+	p := models.RentPost{Source: "douban", ExternalID: "keep-sent", Title: "望京整租", Content: "近望京",
+		PublishedAt: time.Now(), CollectedAt: time.Now(), Status: models.PostStatusPassed}
+	if _, err := st.InsertPost(p); err != nil {
+		t.Fatal(err)
+	}
+	batch, err := st.ListPublishedBetween(time.Now().Add(-time.Hour), time.Now().Add(time.Hour), 10)
+	if err != nil || len(batch) != 1 {
+		t.Fatalf("拉帖: n=%d err=%v", len(batch), err)
+	}
+	if _, err := st.InsertNotification(batch[0].ID, "pushplus"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.MarkNotificationSent(batch[0].ID, "pushplus"); err != nil {
+		t.Fatal(err)
+	}
+	c := NewConsumerWithOptions(NewRuleChain(nil), st, ConsumerOptions{})
+	if err := c.ReplayHard(context.Background(), batch); err != nil {
+		t.Fatal(err)
+	}
+	notes, err := st.ListNotificationsByPost(batch[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(notes) != 1 || notes[0].Status != models.NotifyStatusSent {
+		t.Errorf("仍通过不应重推: %+v", notes)
+	}
+}
+
 func TestFetchAwaitingAISkipsWhenDisabled(t *testing.T) {
 	st, err := store.Open(t.TempDir() + "/t.db")
 	if err != nil {

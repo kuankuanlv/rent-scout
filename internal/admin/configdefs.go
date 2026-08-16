@@ -31,7 +31,7 @@ const aiSectionDesc = `本配置当前版本仅用于审核帖子：大模型不
 
 系统提示词固定为「租房信息筛选助手」，筛选标准内置（靠谱个人房源，不确定宁可拒绝），规则页 AI 条目只作开关、文案只读。只依据帖文、不做无依据推测。同时要求抽出月租金（整数元，区间取下限，没有填 0）、微信/手机等原文、通勤/交通原文。理由限中文约 30 字。user 侧只放本批精简帖，不重复规则。
 
-为省 token：详情 HTML 去掉标签和图片链接，正文按 500 字截断；同一批共用一份 system，多帖拼进一次请求（凑满 AI 批大小或等到超时再调）。请求带 json_schema，约束返回 {"verdicts":[...]}；temperature 0.1，不塞 few-shot 示例。
+为省 token：详情 HTML 去掉标签和图片链接，豆瓣页脚脚本也裁掉，正文按 500 字截断；同一批共用一份 system，多帖拼进一次请求（凑满 AI 批大小或等到超时再调）。不传 json_schema/json_object（部分网关会卡住或不支持），靠提示词约束返回 {"verdicts":[...]}；temperature 0.1，不塞 few-shot 示例。单次请求最多等 5 分钟。
 
 入库时标题和正文还会用正则抠价格、联系方式。模型返回了有效价格或联系方式，再写回 posts。关闭本页开关或密钥为空时，审核协程仍在，本轮直接跳过。`
 
@@ -173,10 +173,13 @@ func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[stri
 	ppToken := get("secret.notifier.pushplus.token", env.Notifier.Pushplus.Token)
 	llmBase := get("secret.filter.llm.base_url", env.Filter.LLM.BaseURL)
 	if llmBase == "" {
-		llmBase = "https://api.deepseek.com"
+		llmBase = config.DefaultLLMBaseURL
 	}
 	llmKey := get("secret.filter.llm.api_key", env.Filter.LLM.APIKey)
 	llmModel := get("secret.filter.llm.model", env.Filter.LLM.Model)
+	if llmModel == "" {
+		llmModel = config.DefaultLLMModel
+	}
 	modelOpts := []string{""}
 	if llmModel != "" {
 		modelOpts = append(modelOpts, llmModel)
@@ -207,8 +210,8 @@ func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[stri
 			{
 				Title: "服务", Hint: "进程监听", Class: "bg-slate-50 border-slate-200",
 				Items: []configField{
-					{Key: "server.addr", Label: "监听地址", Value: get("server.addr", app.Server.Addr), Type: "text", Hint: "进程绑定，默认 :7777（所有网卡）。不要填局域网 IP，否则本机 127.0.0.1 会连不上"},
-					{Key: "server.public_base", Label: "对外访问地址", Value: get("server.public_base", app.Server.PublicBase), Type: "text", Wide: true, Hint: "通知里「有用/无用/已处理」三条链接的前缀。留空则发送时自动用本机局域网 IPv4 + 监听端口，例如 http://192.168.1.8:7777。手机点开卡片需要这个"},
+					{Key: "server.addr", Label: "监听地址", Value: get("server.addr", app.Server.Addr), Type: "text", Hint: "进程绑定，默认 :7777（所有网卡）"},
+					{Key: "server.public_base", Label: "对外访问地址", Value: get("server.public_base", app.Server.PublicBase), Type: "text", Wide: true, Hint: "通知里「有用/无用/已处理」三条链接的前缀。主要是对帖子做反馈、做已读标记的，因此需要能放到到该服务，若局域网就局域网ip，部署到服务器就想办法用公网ip或域名，如果不用该功能就忽略"},
 				},
 			},
 			{
@@ -283,9 +286,9 @@ func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[stri
 				Items: []configField{
 					{Key: "filter.ai_enabled", Label: "启用", Value: ai, Type: "checkbox", Wide: true, Hint: "关闭后跳过 AI 审核"},
 					{Key: "secret.filter.llm.api_style", Label: "LLM 提供方", Value: apiStyle, Type: "readonly", OptionLabels: []string{"OpenAI"}},
-					{Key: "secret.filter.llm.base_url", Label: "Base URL", Value: llmBase, Type: "text", CanClear: true, Hint: "默认 https://api.deepseek.com"},
-					{Key: "secret.filter.llm.api_key", Label: "API Key", Value: llmKey, Type: "text", CanClear: true},
-					{Key: "secret.filter.llm.model", Label: "主模型", Value: llmModel, Type: "model_select", Options: modelOpts, Wide: true, Hint: "先填 Base URL 与 Key，再拉取列表"},
+					{Key: "secret.filter.llm.base_url", Label: "Base URL", Value: llmBase, Type: "text", CanClear: true, Hint: "默认本地 OmniRoute " + config.DefaultLLMBaseURL},
+					{Key: "secret.filter.llm.api_key", Label: "API Key", Value: llmKey, Type: "text", CanClear: true, Hint: "本地 OmniRoute 填网关 Key"},
+					{Key: "secret.filter.llm.model", Label: "主模型", Value: llmModel, Type: "model_select", Options: modelOpts, Wide: true, Hint: "审核用 oc-chat（对话 comb，不强制 tool-call）；先填 URL 与 Key 再拉取列表"},
 				},
 			},
 			{

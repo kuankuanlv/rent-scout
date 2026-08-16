@@ -24,6 +24,14 @@ func (r *Repo) InsertNotification(postID int64, channel string) (bool, error) {
 	return n == 1, nil
 }
 
+// ClearByPost 清掉该帖全部渠道账本，规则重放后重新推送用
+func (r *Repo) ClearByPost(postID int64) error {
+	if _, err := r.DB.Exec(`DELETE FROM notifications WHERE post_id=?`, postID); err != nil {
+		return fmt.Errorf("清帖通知账本: %w", err)
+	}
+	return nil
+}
+
 // FetchPendingNotifications 拉取指定渠道待发送/可重试的通知（pending 或 failed），限量
 func (r *Repo) FetchPendingNotifications(channel string, limit int) ([]models.Notification, error) {
 	rows, err := r.DB.Query(`SELECT id, post_id, channel, status, attempts, last_error, sent_at

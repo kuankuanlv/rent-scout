@@ -67,3 +67,14 @@ func TestBuildLLMViewStripsTruncates(t *testing.T) {
 		t.Errorf("关键字段丢失: %+v", v2)
 	}
 }
+
+func TestBuildLLMViewStripsDoubanPageScript(t *testing.T) {
+	content := "房东直租精装电梯一居季付3500 电话V同步13070140506 $(function () { addTooltipToDoulistBtn('#link-report .topic-content a'); }) var _topicOptConfig = { topic: { title: \"x\" } }"
+	v := BuildLLMView(models.RentPost{Content: content}, DefaultTrimLimit)
+	if strings.Contains(v.Content, "addTooltipToDoulistBtn") || strings.Contains(v.Content, "_topicOptConfig") {
+		t.Errorf("页面脚本应去掉: %q", v.Content)
+	}
+	if !strings.Contains(v.Content, "季付3500") {
+		t.Errorf("正文应保留: %q", v.Content)
+	}
+}

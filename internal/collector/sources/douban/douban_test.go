@@ -180,20 +180,21 @@ func TestDoubanDetail(t *testing.T) {
 	if post.Source != "douban" || post.ExternalID != "111" {
 		t.Errorf("源标识错误: %+v", post)
 	}
-	if !strings.Contains(post.Content, "望京西园四区") || !strings.Contains(post.Content, "4500") {
-		t.Errorf("正文缺失: %s", post.Content)
-	}
-	// 图片链接保留（正文 HTML 含 img）
-	if !strings.Contains(post.Content, "img.example.com") {
-		t.Error("正文应保留图片链接")
-	}
-	if post.Title != "望京整租两居" || post.Author != "user1" {
-		t.Errorf("标题/作者错误: %+v", post)
-	}
-	// Raw 保留原文（重放/排查，规格 3.1）
-	if !strings.Contains(post.Raw, "topic-content") {
-		t.Error("Raw 应保留原始 HTML")
-	}
+		if !strings.Contains(post.Content, "望京西园四区") || !strings.Contains(post.Content, "4500") {
+			t.Errorf("正文缺失: %s", post.Content)
+		}
+		if strings.Contains(post.Content, "img.example.com") || strings.Contains(post.Content, "<img") {
+			t.Error("正文不应保留图片")
+		}
+		if strings.Contains(post.Raw, "img.example.com") || strings.Contains(post.Raw, "<img") {
+			t.Error("Raw 不应保留图片")
+		}
+		if post.Title != "望京整租两居" || post.Author != "user1" {
+			t.Errorf("标题/作者错误: %+v", post)
+		}
+		if !strings.Contains(post.Raw, "topic-content") {
+			t.Error("Raw 应保留去图后的详情 HTML")
+		}
 }
 
 // 真实豆瓣链接带 _spm_id 查询串：topicID 提取应忽略查询串（冒烟验证发现）

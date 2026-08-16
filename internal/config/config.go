@@ -1,6 +1,10 @@
 package config
 
-import "rent-scout/internal/models"
+import (
+	"net/url"
+
+	"rent-scout/internal/models"
+)
 
 // AppConfig 公开配置，按规格 7.2 四类组织
 type AppConfig struct {
@@ -59,10 +63,12 @@ type DoubanConfig struct {
 	RangeTo   string   // 只抓此时间之前发的帖，单位天，可正可负；默认 now
 }
 
-// WeiboConfig 微博源公开配置
-type WeiboConfig struct {
-	URLs []string // 超话/搜索 URL；可夹注释行
-}
+	// WeiboConfig 微博源公开配置
+	type WeiboConfig struct {
+		Tags      []string // 话题/超话，作高级搜索 q；可夹注释行，旧搜索 URL 也能抽 q
+		Interval  int      // 同一轮里两次访问微博的间隔（秒），默认 5；不是轮次间隔
+		RangeFrom string   // 只抓此时间之后发的帖，单位天，只能为负；默认 -10，与豆瓣相同
+	}
 
 // FilterConfig 过滤：AI 开关与效率
 type FilterConfig struct {
@@ -169,44 +175,55 @@ type CustomWebhookConfig struct {
 	Template string
 }
 
-// 内置默认豆瓣小组（迁移自现有系统，北京热门）
+// 内置默认豆瓣小组（迁移自现有系统，北京热门）；# 行是小组名，采集只认下面的网址
 var defaultDoubanGroups = []string{
+	"#北京租房（35417）",
 	"https://www.douban.com/group/35417/discussion",
+	"#北京无中介租房（262626）",
 	"https://www.douban.com/group/262626/discussion",
+	"#北京租房（232413）",
 	"https://www.douban.com/group/232413/discussion",
+	"#北京租房联盟（338147）",
 	"https://www.douban.com/group/338147/discussion",
+	"#北京租房（331294）",
 	"https://www.douban.com/group/331294/discussion",
+	"#北京租房大全（550436）",
 	"https://www.douban.com/group/550436/discussion",
+	"#北京租房（596202）",
 	"https://www.douban.com/group/596202/discussion",
 }
 
-var defaultWeiboURLs = []string{
+func weiboTagURL(tag string) string {
+	return "https://s.weibo.com/weibo?q=" + url.QueryEscape(tag)
+}
+
+var defaultWeiboTags = []string{
 	"#北京租房",
-	"https://s.weibo.com/weibo?q=%23%E5%8C%97%E4%BA%AC%E7%A7%9F%E6%88%BF%23",
+	weiboTagURL("#北京租房#"),
 	"#北京市租房",
-	"https://s.weibo.com/weibo?q=%23%E5%8C%97%E4%BA%AC%E5%B8%82%E7%A7%9F%E6%88%BF%23",
-	"租房",
-	"https://s.weibo.com/weibo?q=%23%E7%A7%9F%E6%88%BF%23",
+	weiboTagURL("#北京市租房#"),
+	"#租房",
+	weiboTagURL("#租房#"),
 	"#北京租房大全",
-	"https://s.weibo.com/weibo?q=%23%E5%8C%97%E4%BA%AC%E7%A7%9F%E6%88%BF%E5%A4%A7%E5%85%A8%23",
+	weiboTagURL("#北京租房大全#"),
 	"#北京租房合租",
-	"https://s.weibo.com/weibo?q=%23%E5%8C%97%E4%BA%AC%E7%A7%9F%E6%88%BF%E5%90%88%E7%A7%9F%23",
+	weiboTagURL("#北京租房合租#"),
 	"#北京合租",
-	"https://s.weibo.com/weibo?q=%23%E5%8C%97%E4%BA%AC%E5%90%88%E7%A7%9F%23",
+	weiboTagURL("#北京合租#"),
 	"#北京合租房",
-	"https://s.weibo.com/weibo?q=%23%E5%8C%97%E4%BA%AC%E5%90%88%E7%A7%9F%E6%88%BF%23",
+	weiboTagURL("#北京合租房#"),
 	"#北京租房找室友",
-	"https://s.weibo.com/weibo?q=%23%E5%8C%97%E4%BA%AC%E7%A7%9F%E6%88%BF%E6%89%BE%E5%AE%A4%E5%8F%8B%23",
+	weiboTagURL("#北京租房找室友#"),
 	"#北京租房转租",
-	"https://s.weibo.com/weibo?q=%23%E5%8C%97%E4%BA%AC%E7%A7%9F%E6%88%BF%E8%BD%AC%E7%A7%9F%23",
+	weiboTagURL("#北京租房转租#"),
 	"#北京无中介租房",
-	"https://s.weibo.com/weibo?q=%23%E5%8C%97%E4%BA%AC%E6%97%A0%E4%B8%AD%E4%BB%8B%E7%A7%9F%E6%88%BF%23",
+	weiboTagURL("#北京无中介租房#"),
 	"#北京短租",
-	"https://s.weibo.com/weibo?q=%23%E5%8C%97%E4%BA%AC%E7%9F%AD%E7%A7%9F%23",
+	weiboTagURL("#北京短租#"),
 	"#北京石景山租房",
-	"https://s.weibo.com/weibo?q=%23%E5%8C%97%E4%BA%AC%E7%9F%B3%E6%99%AF%E5%B1%B1%E7%A7%9F%E6%88%BF%23",
+	weiboTagURL("#北京石景山租房#"),
 	"#北京租房大师",
-	"https://s.weibo.com/weibo?q=%23%E5%8C%97%E4%BA%AC%E7%A7%9F%E6%88%BF%E5%A4%A7%E5%B8%88%23",
+	weiboTagURL("#北京租房大师#"),
 }
 
 // DefaultApp 内置默认公开配置（SQLite 空库时使用）
@@ -262,12 +279,20 @@ func applyDefaults(cfg *AppConfig) {
 	if len(cfg.Collector.Douban.Groups) == 0 {
 		cfg.Collector.Douban.Groups = defaultDoubanGroups
 	}
-	if len(cfg.Collector.Weibo.URLs) == 0 {
-		cfg.Collector.Weibo.URLs = append([]string(nil), defaultWeiboURLs...)
+	if len(WeiboTags(cfg.Collector.Weibo.Tags)) == 0 {
+		cfg.Collector.Weibo.Tags = append([]string(nil), defaultWeiboTags...)
 	}
-	if cfg.Collector.Douban.Interval == 0 {
-		cfg.Collector.Douban.Interval = 3
-	}
+		if cfg.Collector.Douban.Interval == 0 {
+			cfg.Collector.Douban.Interval = 3
+		}
+		if cfg.Collector.Weibo.Interval == 0 {
+			cfg.Collector.Weibo.Interval = 5
+		}
+		if cfg.Collector.Weibo.RangeFrom == "" {
+			cfg.Collector.Weibo.RangeFrom = "-10"
+		} else {
+			cfg.Collector.Weibo.RangeFrom = CanonicalDayOffset(cfg.Collector.Weibo.RangeFrom)
+		}
 	if cfg.Collector.Douban.RangeFrom == "" {
 		cfg.Collector.Douban.RangeFrom = "-10"
 	} else {

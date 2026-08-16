@@ -64,10 +64,10 @@
           </div>
           {{if eq .Tools "cookie"}}
           <div class="mt-3 space-y-3">
-            <div>
+            <div data-show-when="cookiecloud">
               <button type="button" class="cookiecloud-test-btn px-4 py-2 border border-amber-300 text-amber-900 hover:bg-amber-100 rounded-xl text-sm font-medium bg-white">检测 CookieCloud 连通性</button>
             </div>
-            <div>
+            <div data-show-when="raw">
               <button type="button" class="cookie-test-btn px-4 py-2 border border-amber-300 text-amber-900 hover:bg-amber-100 rounded-xl text-sm font-medium bg-white">检测 Cookie</button>
             </div>
           </div>
@@ -102,10 +102,10 @@
           </div>
           {{if eq .Tools "cookie"}}
           <div class="mt-3 space-y-3">
-            <div>
+            <div data-show-when="cookiecloud">
               <button type="button" class="cookiecloud-test-btn px-4 py-2 border border-amber-300 text-amber-900 hover:bg-amber-100 rounded-xl text-sm font-medium bg-white">检测 CookieCloud 连通性</button>
             </div>
-            <div>
+            <div data-show-when="raw">
               <button type="button" class="cookie-test-btn px-4 py-2 border border-amber-300 text-amber-900 hover:bg-amber-100 rounded-xl text-sm font-medium bg-white">检测 Cookie</button>
             </div>
           </div>
@@ -138,7 +138,7 @@
       </div>
     </form>
   </div>
-  {{if or (eq .Tab "sources") (eq .Tab "ai")}}
+  {{if .Section}}
   <div id="config-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
     <div class="bg-white rounded-2xl shadow-xl max-w-lg w-full p-5 max-h-[80vh] overflow-y-auto">
       <div class="flex items-center justify-between mb-3">
@@ -157,34 +157,23 @@
       return attr.split(',').map(function(s){ return s.trim(); }).indexOf(mode) >= 0;
     }
     var currentSource = 'douban';
-    function activeSourcePanel(){
-      return document.querySelector('[data-source-group="' + currentSource + '"]');
-    }
     function activeCookieSelect(){
-      var panel = activeSourcePanel();
-      return panel ? panel.querySelector('.cookie-mode-select') : null;
+      return document.querySelector('[data-source-group="' + currentSource + '"] .cookie-mode-select');
     }
     function syncCookiePanels(){
       var sel = activeCookieSelect();
       var mode = sel ? (sel.value || 'none') : 'none';
-      var panel = activeSourcePanel();
-      if (!panel) return;
-      panel.querySelectorAll('[data-show-when]').forEach(function(el){
-        var sw = el.getAttribute('data-show-when');
-        if (!sw) return;
-        if (sw.indexOf('openai') >= 0 || sw.indexOf('other') >= 0) return;
-        el.style.display = matchShowWhen(sw, mode) ? '' : 'none';
+      document.querySelectorAll('[data-source-group="' + currentSource + '"]').forEach(function(panel){
+        panel.querySelectorAll('[data-show-when]').forEach(function(el){
+          var sw = el.getAttribute('data-show-when');
+          if (!sw) return;
+          if (sw.indexOf('openai') >= 0 || sw.indexOf('other') >= 0) return;
+          el.style.display = matchShowWhen(sw, mode) ? '' : 'none';
+        });
       });
     }
     function syncCookieTools(){
-      var sel = activeCookieSelect();
-      var mode = sel ? (sel.value || 'none') : 'none';
-      var hasCookie = mode === 'raw' || mode === 'cookiecloud';
-      var cc = mode === 'cookiecloud';
-      var panel = activeSourcePanel();
-      if (!panel) return;
-      panel.querySelectorAll('.cookie-test-btn').forEach(function(btn){ btn.style.display = hasCookie ? '' : 'none'; });
-      panel.querySelectorAll('.cookiecloud-test-btn').forEach(function(btn){ btn.style.display = cc ? '' : 'none'; });
+      syncCookiePanels();
     }
     function syncSourcePanelInputs(active){
       document.querySelectorAll('[data-source-group]').forEach(function(el){
@@ -255,19 +244,22 @@
 
     var form = document.getElementById('config-section-form');
     function cookieFD(){
-      var fd = new FormData();
+      var params = new URLSearchParams();
       var src = currentSource || 'douban';
       var p = 'secret.collector.' + src + '.';
-      function v(name){ var el = form.querySelector('[name="'+name+'"]'); return el ? el.value : ''; }
-      fd.set('source', src);
-      fd.set('cookie_mode', v(p + 'cookie_mode'));
-      fd.set('cookie_raw', v(p + 'cookie_raw'));
-      fd.set('cookiecloud_url', v(p + 'cookiecloud_url'));
-      fd.set('cookiecloud_key', v(p + 'cookiecloud_key'));
-      fd.set('cookiecloud_password', v(p + 'cookiecloud_password'));
-      fd.set('collector.douban.groups', v('collector.douban.groups'));
-      fd.set('collector.weibo.urls', v('collector.weibo.urls'));
-      return fd;
+      function v(name){
+        var el = form.querySelector('[name="'+name+'"]');
+        return el ? el.value : '';
+      }
+      params.set('source', src);
+      params.set('cookie_mode', v(p + 'cookie_mode'));
+      params.set('cookie_raw', v(p + 'cookie_raw'));
+      params.set('cookiecloud_url', v(p + 'cookiecloud_url'));
+      params.set('cookiecloud_key', v(p + 'cookiecloud_key'));
+      params.set('cookiecloud_password', v(p + 'cookiecloud_password'));
+      params.set('collector.douban.groups', v('collector.douban.groups'));
+      params.set('collector.weibo.tags', v('collector.weibo.tags'));
+      return params;
     }
     function showModal(title, bodyHtml){
       var overlay = document.getElementById('config-modal');
@@ -285,7 +277,7 @@
     document.querySelectorAll('.cookiecloud-test-btn').forEach(function(ccBtn){
       ccBtn.addEventListener('click', function(){
         showModal('CookieCloud 检测', '<p class="text-gray-600">检测中…</p>');
-        fetch('/admin/config/cookiecloud/test{{if $.Token}}?token={{$.Token}}{{end}}', {method:'POST', body: cookieFD(), credentials:'same-origin'})
+        fetch('/admin/config/cookiecloud/test{{if $.Token}}?token={{$.Token}}{{end}}', {method:'POST', body: cookieFD(), headers: {'Content-Type':'application/x-www-form-urlencoded'}, credentials:'same-origin'})
           .then(function(r){ return r.json().then(function(j){ return {ok:r.ok, j:j}; }); })
           .then(function(x){
             var j = x.j || {};
@@ -307,7 +299,7 @@
     document.querySelectorAll('.cookie-test-btn').forEach(function(btn){
       btn.addEventListener('click', function(){
         showModal('Cookie 检测', '<p class="text-gray-600">检测中…</p>');
-        fetch('/admin/config/cookie/test{{if $.Token}}?token={{$.Token}}{{end}}', {method:'POST', body: cookieFD(), credentials:'same-origin'})
+        fetch('/admin/config/cookie/test{{if $.Token}}?token={{$.Token}}{{end}}', {method:'POST', body: cookieFD(), headers: {'Content-Type':'application/x-www-form-urlencoded'}, credentials:'same-origin'})
           .then(function(r){ return r.json().then(function(j){ return {ok:r.ok, j:j}; }); })
           .then(function(x){
             var j = x.j || {};
@@ -466,6 +458,79 @@
             if (box) { box.textContent = '请求失败: ' + e; box.className = 'notify-probe-summary text-sm font-medium text-red-700'; }
           });
       });
+    });
+  })();
+  </script>
+  {{end}}
+  {{if .Section}}
+  <script>
+  (function(){
+    var form = document.getElementById('config-section-form');
+    if (!form) return;
+    function currentGroup(){
+      var s = document.querySelector('.source-tab.font-semibold');
+      if (s && s.getAttribute('data-source-tab')) return s.getAttribute('data-source-tab');
+      var n = document.querySelector('.notify-tab.font-semibold');
+      if (n && n.getAttribute('data-notify-tab')) return n.getAttribute('data-notify-tab');
+      return '';
+    }
+    function showModal(title, bodyHtml){
+      var overlay = document.getElementById('config-modal');
+      if (!overlay) return;
+      document.getElementById('config-modal-title').textContent = title || '提示';
+      document.getElementById('config-modal-body').innerHTML = bodyHtml || '';
+      overlay.classList.remove('hidden');
+    }
+    function hideModal(){
+      var overlay = document.getElementById('config-modal');
+      if (overlay) overlay.classList.add('hidden');
+    }
+    var modalClose = document.getElementById('config-modal-close');
+    if (modalClose) modalClose.addEventListener('click', hideModal);
+    form.addEventListener('submit', function(e){
+      e.preventDefault();
+      var group = currentGroup();
+      var params = new URLSearchParams();
+      var sec = form.querySelector('[name="section"]');
+      if (sec) params.set('section', sec.value);
+      if (group) params.set('group', group);
+      var nodes;
+      if (group) {
+        nodes = form.querySelectorAll('[data-source-group="'+group+'"] input, [data-source-group="'+group+'"] select, [data-source-group="'+group+'"] textarea, [data-notify-group="'+group+'"] input, [data-notify-group="'+group+'"] select, [data-notify-group="'+group+'"] textarea');
+      } else {
+        nodes = form.querySelectorAll('input,select,textarea');
+      }
+      var seen = {};
+      nodes.forEach(function(el){
+        if (!el.name || el.disabled) return;
+        if (el.name === 'section' || el.name === 'group') return;
+        if (el.type === 'checkbox') {
+          if (el.checked) params.append(el.name, el.value || 'on');
+          return;
+        }
+        if (seen[el.name]) return;
+        seen[el.name] = true;
+        params.set(el.name, el.value);
+      });
+      fetch(form.action, {
+        method: 'POST',
+        body: params,
+        headers: {'Accept':'application/json','Content-Type':'application/x-www-form-urlencoded'},
+        credentials: 'same-origin'
+      }).then(function(r){ return r.json().then(function(j){ return {ok:r.ok, j:j}; }); })
+        .then(function(x){
+          var j = x.j || {};
+          if (j.ok) {
+            var html = '<p class="font-medium text-green-700">' + (j.summary || '保存成功') + '</p>';
+            if (j.need_restart) html += '<p class="mt-2 text-amber-800 text-xs">部分配置需重启服务后生效</p>';
+            showModal('保存', html);
+            return;
+          }
+          showModal('保存失败', '<p class="text-red-700">' + (j.error || '未知错误') + '</p>');
+        })
+        .catch(function(err){
+          showModal('保存失败', '<p class="text-red-700">请求失败: ' + err + '</p>');
+        });
     });
   })();
   </script>

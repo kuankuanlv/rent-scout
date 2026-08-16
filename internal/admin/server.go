@@ -33,6 +33,7 @@ func NewServer(db *store.Store, rt *config.HotConfig, ctrl SourceController) *Se
 	t := template.New("").Funcs(template.FuncMap{
 		"percent":        percent,
 		"statusLabel":    statusLabel,
+		"sourceLabel":    sourceLabel,
 		"setupStepTitle": setupStepTitle,
 		"csvHas":         csvHas,
 		"seq": func(n int) []int {

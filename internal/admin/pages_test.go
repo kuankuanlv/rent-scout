@@ -78,6 +78,25 @@ func TestAdminPage(t *testing.T) {
 			t.Errorf("passed 过滤混入非 passed 帖")
 		}
 	}
+
+	if _, err := s.InsertPost(models.RentPost{Source: "weibo", ExternalID: "wb-page", Title: "微博全览帖", Status: models.PostStatusPassed}); err != nil {
+		t.Fatal(err)
+	}
+	if code, body := get("/admin/posts"); code != http.StatusOK {
+		t.Errorf("GET /admin/posts 含微博 status=%d", code)
+	} else if !strings.Contains(body, "信息源") || !strings.Contains(body, "豆瓣") || !strings.Contains(body, "微博") {
+		t.Errorf("全览应有信息源筛选")
+	}
+	if code, body := get("/admin/posts?source=weibo"); code != http.StatusOK {
+		t.Errorf("source=weibo status=%d", code)
+	} else {
+		if !strings.Contains(body, "微博全览帖") {
+			t.Errorf("weibo 过滤缺微博帖")
+		}
+		if strings.Contains(body, "标题0") {
+			t.Errorf("weibo 过滤混入豆瓣帖")
+		}
+	}
 }
 
 // TestAdminPageFilters q/tag/handled 筛选 + AddressTags chips + 已处理按钮

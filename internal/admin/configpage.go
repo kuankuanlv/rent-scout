@@ -69,12 +69,20 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleConfigSectionSave(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
+	if err := parseAdminForm(r); err != nil {
+		if wantsJSON(r) {
+			writeJSONStatus(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "解析表单失败"})
+			return
+		}
 		http.Error(w, "解析表单失败", http.StatusBadRequest)
 		return
 	}
 	section := r.FormValue("section")
 	if _, ok := config.SectionKeys[section]; !ok {
+		if wantsJSON(r) {
+			writeJSONStatus(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "未知配置分区"})
+			return
+		}
 		http.Error(w, "未知配置分区", http.StatusBadRequest)
 		return
 	}
@@ -83,6 +91,10 @@ func (s *Server) handleConfigSectionSave(w http.ResponseWriter, r *http.Request)
 	updates := ParseSectionForm(r.Form, section, rawKV)
 	needRestart := len(ChangedRestartKeys(rawKV, updates)) > 0
 	if err := s.saveSectionUpdates(section, updates); err != nil {
+		if wantsJSON(r) {
+			writeJSONStatus(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
+			return
+		}
 		q := url.Values{"tab": {tab}, "err": {err.Error()}}
 		if tok := r.URL.Query().Get("token"); tok != "" {
 			q.Set("token", tok)
@@ -90,7 +102,11 @@ func (s *Server) handleConfigSectionSave(w http.ResponseWriter, r *http.Request)
 		http.Redirect(w, r, "/admin/config?"+q.Encode(), http.StatusSeeOther)
 		return
 	}
-	pkglog.Component(pkglog.Admin).Info("配置已保存", "section", section, "keys", len(updates), "need_restart", needRestart)
+	pkglog.Component(pkglog.Admin).Info("配置已保存", "section", section, "group", r.FormValue("group"), "keys", len(updates), "need_restart", needRestart)
+	if wantsJSON(r) {
+		writeJSON(w, map[string]any{"ok": true, "need_restart": needRestart, "summary": "保存成功"})
+		return
+	}
 	q := url.Values{"tab": {tab}, "ok": {section}}
 	if needRestart {
 		q.Set("restart", "1")

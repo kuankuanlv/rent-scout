@@ -45,6 +45,14 @@ func AppToKV(cfg *AppConfig) map[string]string {
 	if doubanInterval <= 0 {
 		doubanInterval = 3
 	}
+	weiboInterval := cfg.Collector.Weibo.Interval
+	if weiboInterval <= 0 {
+		weiboInterval = 5
+	}
+	weiboFrom := CanonicalDayOffset(cfg.Collector.Weibo.RangeFrom)
+	if weiboFrom == "" {
+		weiboFrom = "-10"
+	}
 	kv := map[string]string{
 		"server.addr":                  cfg.Server.Addr,
 		"server.public_base":           cfg.Server.PublicBase,
@@ -60,7 +68,9 @@ func AppToKV(cfg *AppConfig) map[string]string {
 		"collector.douban.interval":    strconv.Itoa(doubanInterval),
 		"collector.douban.range_from":  rangeFrom,
 		"collector.douban.range_to":    rangeTo,
-		"collector.weibo.urls":         strings.Join(cfg.Collector.Weibo.URLs, "\n"),
+		"collector.weibo.tags":         strings.Join(cfg.Collector.Weibo.Tags, "\n"),
+		"collector.weibo.interval":     strconv.Itoa(weiboInterval),
+		"collector.weibo.range_from":   weiboFrom,
 		"filter.ai_enabled":            ai,
 		"filter.batch_size":            strconv.Itoa(cfg.Filter.BatchSize),
 		"filter.ai_batch_size":         strconv.Itoa(cfg.Filter.AIBatchSize),
@@ -128,7 +138,7 @@ var SectionKeys = map[string][]string{
 		"collector.sources", "collector.interval", "collector.jitter_ratio", "collector.max_age_days",
 		"collector.douban.groups", "collector.douban.interval",
 		"collector.douban.range_from", "collector.douban.range_to",
-		"collector.weibo.urls",
+			"collector.weibo.tags", "collector.weibo.interval", "collector.weibo.range_from",
 		"secret.collector.douban.cookie_mode", "secret.collector.douban.cookie_raw",
 		"secret.collector.douban.cookie_file",
 		"secret.collector.douban.cookiecloud_url", "secret.collector.douban.cookiecloud_key",
@@ -196,8 +206,16 @@ func KVToApp(kv map[string]string) *AppConfig {
 	if v := kv["collector.douban.groups"]; v != "" {
 		cfg.Collector.Douban.Groups = splitLines(v)
 	}
-	if v := kv["collector.weibo.urls"]; v != "" {
-		cfg.Collector.Weibo.URLs = splitLines(v)
+	if v := kv["collector.weibo.tags"]; v != "" {
+		cfg.Collector.Weibo.Tags = splitLines(v)
+	} else if v := kv["collector.weibo.urls"]; v != "" {
+		cfg.Collector.Weibo.Tags = WeiboTags(splitLines(v))
+	}
+	if v := kv["collector.weibo.interval"]; v != "" {
+		cfg.Collector.Weibo.Interval = atoi(v, 0)
+	}
+	if v, ok := kv["collector.weibo.range_from"]; ok {
+		cfg.Collector.Weibo.RangeFrom = CanonicalDayOffset(v)
 	}
 	if v := kv["collector.douban.interval"]; v != "" {
 		cfg.Collector.Douban.Interval = atoi(v, 0)

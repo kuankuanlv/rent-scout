@@ -62,7 +62,7 @@ func (p SourceProgress) CatchingUp() bool {
 func (p SourceProgress) Encode() string {
 	p = p.normalized()
 	b, err := json.Marshal(struct {
-		Fingerprint string `json:"fp"`
+		Fingerprint string `json:"fp"` // 只钉时间窗；加小组/搜索不换这份
 		Page        string `json:"page"`
 		SeenNewest  string `json:"seen_newest"`
 	}{p.Fingerprint, p.Page, p.SeenNewest})

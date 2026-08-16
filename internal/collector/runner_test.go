@@ -43,6 +43,16 @@ func (f *fakeSource) Detail(ctx context.Context, item ListItem) (models.RentPost
 	return f.details[item.ExternalID], nil
 }
 
+type windowSpy struct {
+	fakeSource
+	winStart, winEnd time.Time
+}
+
+func (f *windowSpy) ListInWindow(ctx context.Context, cursor string, start, end time.Time) ([]ListItem, string, error) {
+	f.winStart, f.winEnd = start, end
+	return f.List(ctx, cursor)
+}
+
 func fakePageIndex(cursor string) int {
 	cursor = strings.TrimSpace(cursor)
 	if cursor == "" {
@@ -139,15 +149,14 @@ func TestRunnerSkipsExisting(t *testing.T) {
 	}
 }
 
-// 空页游标推进：空组（items 空 + next="1:0"）→ 游标保存为 "1:0"，不调 Detail，
-// 避免多组配置下每轮卡死在空组（P2-9 审查发现）
+// 空页不卡死：同一轮走进下一组并采集
 func TestRunnerAdvancesPastEmptyPage(t *testing.T) {
+	now := time.Now()
 	src := &fakeSource{
 		name:  "fake",
-		pages: [][]ListItem{{}, {{ExternalID: "a", URL: "u/a", Title: "t", PublishedAt: time.Now()}}},
-		next:  "1:0", // 空页指向下一组
+		pages: [][]ListItem{{}, {{ExternalID: "a", URL: "u/a", Title: "t", PublishedAt: now}}},
 		details: map[string]models.RentPost{
-			"a": {Source: "fake", ExternalID: "a", Title: "t", CollectedAt: time.Now(), Status: models.PostStatusCollected},
+			"a": {Source: "fake", ExternalID: "a", Title: "t", CollectedAt: now, Status: models.PostStatusCollected},
 		},
 	}
 	r, st := testRunner(t)
@@ -156,16 +165,15 @@ func TestRunnerAdvancesPastEmptyPage(t *testing.T) {
 	if _, err := r.runSourceOnce(context.Background(), src, make(chan struct{}, 10)); err != nil {
 		t.Fatal(err)
 	}
+	if src.detailCalls != 1 {
+		t.Errorf("空组后应在同一轮抓下一组, Detail=%d want 1", src.detailCalls)
+	}
 	prog, ok, err := st.GetProgress("fake")
 	if err != nil || !ok {
 		t.Fatalf("进度未保存: ok=%v err=%v", ok, err)
 	}
-	if prog.Page != "1:0" || prog.CatchingUp() {
-		t.Errorf("进度 = %+v, want page=1:0 未追新", prog)
-	}
-	// 空页无新帖 → 不调 Detail
-	if src.detailCalls != 0 {
-		t.Errorf("Detail 调用 = %d, want 0", src.detailCalls)
+	if !prog.CatchingUp() {
+		t.Errorf("进度 = %+v, want 已追新", prog)
 	}
 }
 
@@ -320,6 +328,32 @@ func TestRunnerIncrementalSkipsOldPages(t *testing.T) {
 	}
 }
 
+// 翻历史进度停在搜索5，也不能证明搜索1～4本轮不用采；每轮仍从第1组列表头开始
+func TestRunnerAlwaysStartsFromFirstGroup(t *testing.T) {
+	now := time.Now()
+	src := &fakeSource{
+		name:  "fake",
+		pages: [][]ListItem{{{ExternalID: "a", URL: "u/a", Title: "t", PublishedAt: now}}},
+		details: map[string]models.RentPost{
+			"a": {Source: "fake", ExternalID: "a", Title: "t", CollectedAt: now, Status: models.PostStatusCollected},
+		},
+	}
+	r, st := testRunner(t)
+	defer st.Close()
+	if err := st.SetProgress("fake", store.SourceProgress{
+		Page: "4:0", SeenNewest: now.Add(-24 * time.Hour).Format(time.RFC3339Nano),
+		Fingerprint: sourceFingerprint("fake", r.rt.Get()),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.runSourceOnce(context.Background(), src, make(chan struct{}, 4)); err != nil {
+		t.Fatal(err)
+	}
+	if len(src.cursors) == 0 || src.cursors[0] != "" {
+		t.Errorf("本轮首个 cursor = %v, want 空串（搜索1第1页）", src.cursors)
+	}
+}
+
 // 时间窗/源配置变了：旧 page 作废，从列表头重新回填
 func TestRunnerResetsWhenRangeChanges(t *testing.T) {
 	now := time.Now()
@@ -345,6 +379,96 @@ func TestRunnerResetsWhenRangeChanges(t *testing.T) {
 	}
 }
 
+// 多了搜索 URL 不整源重翻：水位留下，只把指纹改成不含 URL 的新格式
+func TestRunnerKeepsProgressWhenURLsAdded(t *testing.T) {
+	now := time.Now()
+	wm := now.Add(-2 * time.Hour).Format(time.RFC3339Nano)
+	src := &fakeSource{
+		name: models.SourceWeibo.String(),
+		pages: [][]ListItem{{{
+			ExternalID: "old", URL: "u/old", Title: "旧",
+			PublishedAt: now.Add(-3 * time.Hour),
+		}}},
+		details: map[string]models.RentPost{
+			"old": {Source: "weibo", ExternalID: "old", Title: "旧", CollectedAt: now, Status: models.PostStatusCollected},
+		},
+	}
+	st, err := store.Open(t.TempDir() + "/t.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	rt := config.NewHotConfigWithSnapshot(&config.AppConfig{
+		Collector: config.CollectorConfig{
+			Interval: 3600, MaxAgeDays: 7, Sources: []string{"weibo"},
+			Weibo: config.WeiboConfig{
+				RangeFrom: "-10",
+				Tags:      []string{"#new#"},
+			},
+		},
+	}, nil)
+	r := NewRunner(rt, st, nil, nil)
+	oldFP := "weibo|-10|https://s.weibo.com/weibo?q=%23old%23"
+	if err := st.SetProgress("weibo", store.SourceProgress{
+		Page: "", SeenNewest: wm, Fingerprint: oldFP,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.runSourceOnce(context.Background(), src, make(chan struct{}, 4)); err != nil {
+		t.Fatal(err)
+	}
+	if src.detailCalls != 0 {
+		t.Errorf("加 URL 后不应重翻旧帖, Detail=%d", src.detailCalls)
+	}
+	prog, ok, err := st.GetProgress("weibo")
+	if err != nil || !ok {
+		t.Fatalf("进度: ok=%v err=%v", ok, err)
+	}
+	if !prog.CatchingUp() || prog.SeenNewest != wm {
+		t.Errorf("进度 = %+v, want 水位仍是 %s", prog, wm)
+	}
+	if prog.Fingerprint != "weibo|-10" {
+		t.Errorf("指纹 = %q, want weibo|-10（不含 URL）", prog.Fingerprint)
+	}
+}
+
+// 追新水位只过滤帖，不改高级搜索 timescope；链接仍是 range_from→now
+func TestRunnerListWindowKeepsRangeFrom(t *testing.T) {
+	now := time.Now()
+	src := &windowSpy{fakeSource: fakeSource{
+		name:  models.SourceWeibo.String(),
+		pages: [][]ListItem{{{ExternalID: "a", URL: "u", Title: "t", PublishedAt: now.Add(-time.Hour)}}},
+		details: map[string]models.RentPost{
+			"a": {Source: "weibo", ExternalID: "a", Title: "t", CollectedAt: now, Status: models.PostStatusCollected},
+		},
+	}}
+	st, err := store.Open(t.TempDir() + "/t.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	rt := config.NewHotConfigWithSnapshot(&config.AppConfig{
+		Collector: config.CollectorConfig{
+			Interval: 3600, MaxAgeDays: 7, Sources: []string{"weibo"},
+			Weibo: config.WeiboConfig{RangeFrom: "-10", Tags: []string{"#t#"}},
+		},
+	}, nil)
+	r := NewRunner(rt, st, nil, nil)
+	if err := st.SetProgress("weibo", store.SourceProgress{
+		Page: "", SeenNewest: now.Add(-24 * time.Hour).Format(time.RFC3339Nano),
+		Fingerprint: "weibo|-10",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.runSourceOnce(context.Background(), src, make(chan struct{}, 2)); err != nil {
+		t.Fatal(err)
+	}
+	wantStart := now.Add(-10 * 24 * time.Hour)
+	if src.winStart.IsZero() || src.winStart.After(wantStart.Add(2*time.Minute)) || src.winStart.Before(wantStart.Add(-2*time.Minute)) {
+		t.Errorf("列表窗起点 = %v, want 约 %v（-10 天），不应是水位昨天", src.winStart, wantStart)
+	}
+}
+
 func TestFormatPageCursor(t *testing.T) {
 	if got := formatPageCursor(""); got != "组1第1页" {
 		t.Errorf("空游标 = %s", got)
@@ -358,14 +482,22 @@ func TestFormatPageCursor(t *testing.T) {
 	if got := formatNextPos(store.SourceProgress{SeenNewest: "x"}); got != "追新·组1第1页" {
 		t.Errorf("追新下次 = %s", got)
 	}
-	if got := formatSkipSummary(8, 2, true, false); got != "已存在8 超窗新2 撞水位" {
+	if got := formatSkipSummary(8, 2, true, false); got != "已存在8 超窗新2 到水位线" {
 		t.Errorf("跳过摘要 = %s", got)
 	}
-	if got := nextGroupMsg("douban", 3, "0:0", "1:0"); !strings.Contains(got, "小组串行") || !strings.Contains(got, "组2") {
+	if got := nextGroupMsg("douban", 3, "0:0", "1:0", nil); !strings.Contains(got, "执行完成") || !strings.Contains(got, "组2") {
 		t.Errorf("换组日志 = %s", got)
 	}
-	if got := nextGroupMsg("douban", 3, "0:0", "0:25"); got != "" {
+	if got := nextGroupMsg("douban", 3, "0:0", "0:25", nil); got != "" {
 		t.Errorf("同组翻页不应打串行日志, got %s", got)
+	}
+}
+
+func TestFormatRoundScope(t *testing.T) {
+	src := &fakeSource{name: "fake"}
+	got := formatRoundScope(src)
+	if !strings.Contains(got, "组1") || !strings.Contains(got, "范围共") {
+		t.Errorf("范围 = %s", got)
 	}
 }
 

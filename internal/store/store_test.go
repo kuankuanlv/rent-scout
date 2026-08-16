@@ -781,6 +781,18 @@ func TestListPosts(t *testing.T) {
 	if len(page) != 1 || page[0].Status != models.PostStatusPassed {
 		t.Errorf("分页 = %+v, want 1 帖 passed", page)
 	}
+
+	if _, err := s.InsertPost(models.RentPost{Source: "weibo", ExternalID: "wb1", Title: "微博帖",
+		CollectedAt: time.Now(), Status: models.PostStatusCollected}); err != nil {
+		t.Fatal(err)
+	}
+	wb, err := s.ListPosts(PostListFilter{Source: "weibo"}, 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(wb) != 1 || wb[0].ExternalID != "wb1" {
+		t.Errorf("source=weibo = %+v", wb)
+	}
 }
 
 // ListPosts 按发布时间倒序：id 更大但发布时间更早的帖应排在后面（回归 datetime() 解不了 Go 时间格式）

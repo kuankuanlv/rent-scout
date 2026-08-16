@@ -40,8 +40,17 @@ func TestDefaultValues(t *testing.T) {
 	if len(cfg.Collector.Douban.Groups) < 5 {
 		t.Error("内置豆瓣小组应至少 5 个")
 	}
-	if n := len(HTTPURLs(cfg.Collector.Weibo.URLs)); n != 13 {
-		t.Errorf("内置微博超话 URL = %d, want 13", n)
+	if cfg.Collector.Weibo.RangeFrom != "-10" {
+		t.Errorf("微博默认范围 = %q, want -10", cfg.Collector.Weibo.RangeFrom)
+	}
+	if cfg.Collector.Weibo.Interval != 5 {
+		t.Errorf("默认微博间隔 = %d, want 5", cfg.Collector.Weibo.Interval)
+	}
+	if n := len(HTTPURLs(cfg.Collector.Douban.Groups)); n != 7 {
+		t.Errorf("内置豆瓣小组 URL = %d, want 7", n)
+	}
+	if n := len(WeiboTags(cfg.Collector.Weibo.Tags)); n != 13 {
+		t.Errorf("内置微博话题 = %d, want 13", n)
 	}
 }
 

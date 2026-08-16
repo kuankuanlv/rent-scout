@@ -30,6 +30,9 @@ func ValidateApp(cfg *AppConfig) []string {
 	if cfg.Collector.Douban.Interval <= 0 {
 		errs = append(errs, "collector.douban.interval 必须 > 0")
 	}
+	if cfg.Collector.Weibo.Interval <= 0 {
+		errs = append(errs, "collector.weibo.interval 必须 > 0")
+	}
 	if cfg.Collector.JitterRatio < 0 || cfg.Collector.JitterRatio > 1 {
 		errs = append(errs, "collector.jitter_ratio 必须在 [0,1] 范围内")
 	}
@@ -44,12 +47,15 @@ func ValidateApp(cfg *AppConfig) []string {
 		if src == models.SourceDouban.String() && len(HTTPURLs(cfg.Collector.Douban.Groups)) == 0 {
 			errs = append(errs, "collector.douban.groups 不能为空（源 douban 已启用）")
 		}
-		if src == models.SourceWeibo.String() && len(HTTPURLs(cfg.Collector.Weibo.URLs)) == 0 {
-			errs = append(errs, "collector.weibo.urls 不能为空（源 weibo 已启用）")
-		}
+			if src == models.SourceWeibo.String() && len(WeiboTags(cfg.Collector.Weibo.Tags)) == 0 {
+				errs = append(errs, "collector.weibo.tags 不能为空（源 weibo 已启用）")
+			}
 	}
 	if _, _, err := ResolveTimeRange(cfg.Collector.Douban.RangeFrom, "now", time.Now()); err != nil {
 		errs = append(errs, "collector.douban 拉取范围: "+err.Error())
+	}
+	if _, _, err := ResolveTimeRange(cfg.Collector.Weibo.RangeFrom, "now", time.Now()); err != nil {
+		errs = append(errs, "collector.weibo 拉取范围: "+err.Error())
 	}
 
 	// Filter

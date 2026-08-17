@@ -80,6 +80,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/sources", s.handleSources)
 	mux.HandleFunc("/api/sources/", s.handleSourceAction)
 	mux.HandleFunc("/admin/setup", s.handleSetup)
+	mux.HandleFunc("/admin/setup/import-defaults", s.handleImportDefaults)
 	mux.HandleFunc("/admin/posts", s.handleAdmin)
 	mux.HandleFunc("/admin", s.handleHome)
 	mux.HandleFunc("/admin/mark", s.handleMark)

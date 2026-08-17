@@ -199,10 +199,10 @@ var defaultDoubanGroups = []string{
 	"https://www.douban.com/group/596202/discussion",
 }
 
-// 本地 OmniRoute：oc-chat 是对话 comb，不强制 tool-call，适合批量 JSON 审核
+// DeepSeek 官方 OpenAI 兼容端点；key 由用户在配置页填写
 const (
-	DefaultLLMBaseURL = "http://127.0.0.1:20128/v1"
-	DefaultLLMModel   = "oc-chat"
+	DefaultLLMBaseURL = "https://api.deepseek.com"
+	DefaultLLMModel   = "deepseek-chat"
 )
 
 // DefaultApp 内置默认公开配置（SQLite 空库时使用）

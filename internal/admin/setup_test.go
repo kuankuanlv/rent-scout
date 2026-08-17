@@ -243,6 +243,44 @@ func TestSetupAllowsCookieTestDuringSetup(t *testing.T) {
 	}
 }
 
+// TestImportDefaults POST /admin/setup/import-defaults 一键导入默认配置
+func TestImportDefaults(t *testing.T) {
+	s := newAdminTestStore(t)
+	defer s.Close()
+	srv := newSetupInProgressServer(t, s, nil)
+
+	form := url.Values{"step": {"2"}}
+	req := httptest.NewRequest(http.MethodPost, "/admin/setup/import-defaults?token=setup-tok", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303, body=%s", rec.Code, rec.Body.String())
+	}
+	loc := rec.Header().Get("Location")
+	if !strings.HasPrefix(loc, "/admin/setup?") || !strings.Contains(loc, "step=2") {
+		t.Errorf("Location = %q, want /admin/setup?…step=2…", loc)
+	}
+	if !strings.Contains(loc, "token=setup-tok") {
+		t.Errorf("Location = %q, 应带回 token", loc)
+	}
+
+	m, err := store.GetConfigMap(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(m["collector.douban.groups"]) == "" {
+		t.Error("collector.douban.groups 应为非空")
+	}
+	if m["secret.filter.llm.base_url"] != "https://api.deepseek.com" {
+		t.Errorf("secret.filter.llm.base_url = %q, want https://api.deepseek.com", m["secret.filter.llm.base_url"])
+	}
+	// 预置 admin.token 不被覆盖（DefaultKV 不含 admin.*）
+	if m["admin.token"] != "setup-tok" {
+		t.Errorf("admin.token = %q, want 预置值 setup-tok", m["admin.token"])
+	}
+}
+
 // TestCookieCloudTestUsesFormNotDB 页面没填 url/key/password 时不得用库里的凭证
 func TestCookieCloudTestUsesFormNotDB(t *testing.T) {
 	s := newAdminTestStore(t)

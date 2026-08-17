@@ -169,7 +169,7 @@ func (s *Server) setupGate(next http.Handler) http.Handler {
 			return
 		}
 		path := r.URL.Path
-		if path == "/admin/setup" || path == "/admin/config/save" || path == CookieTestPath || path == CookieCloudTestPath || path == "/healthz" || path == "/metrics" || path == "/f" || path == "/h" {
+		if path == "/admin/setup" || path == "/admin/setup/import-defaults" || path == "/admin/config/save" || path == CookieTestPath || path == CookieCloudTestPath || path == "/healthz" || path == "/metrics" || path == "/f" || path == "/h" {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -179,6 +179,31 @@ func (s *Server) setupGate(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// handleImportDefaults 一键导入内置默认配置（POST /admin/setup/import-defaults）
+func (s *Server) handleImportDefaults(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "仅支持 POST", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := store.SetConfigBatch(s.db, config.DefaultKV()); err != nil {
+		http.Error(w, "导入默认配置失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	_ = s.rt.ReloadOnce()
+	q := url.Values{}
+	if tok := r.URL.Query().Get("token"); tok != "" {
+		q.Set("token", tok)
+	}
+	if step := r.PostFormValue("step"); step != "" {
+		q.Set("step", step)
+	}
+	target := "/admin/setup"
+	if len(q) > 0 {
+		target += "?" + q.Encode()
+	}
+	http.Redirect(w, r, target, http.StatusSeeOther)
 }
 
 // setupStepTitle 引导步骤标题（模板 func）

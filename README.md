@@ -18,6 +18,16 @@
 
 **通知：** 飞书、钉钉、企业微信、PushPlus、Server酱、通用 Webhook；卡片上可点「有用 / 无用 / 已处理」，从群里就能回写控制台。
 
+## 界面预览
+
+**帖子列表**：采集的房源集中呈现，状态、标签、价格、联系方式一目了然。
+
+![帖子列表页](assets/screenshots/posts-list.png)
+
+**帖子查询**：丰富的筛选条件组合，快速定位目标房源。
+
+![帖子筛选条件](assets/screenshots/posts-filters.png)
+
 ## 快速开始
 
 ```bash

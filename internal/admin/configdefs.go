@@ -286,9 +286,9 @@ func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[stri
 				Items: []configField{
 					{Key: "filter.ai_enabled", Label: "启用", Value: ai, Type: "checkbox", Wide: true, Hint: "关闭后跳过 AI 审核"},
 					{Key: "secret.filter.llm.api_style", Label: "LLM 提供方", Value: apiStyle, Type: "readonly", OptionLabels: []string{"OpenAI"}},
-					{Key: "secret.filter.llm.base_url", Label: "Base URL", Value: llmBase, Type: "text", CanClear: true, Hint: "默认本地 OmniRoute " + config.DefaultLLMBaseURL},
-					{Key: "secret.filter.llm.api_key", Label: "API Key", Value: llmKey, Type: "text", CanClear: true, Hint: "本地 OmniRoute 填网关 Key"},
-					{Key: "secret.filter.llm.model", Label: "主模型", Value: llmModel, Type: "model_select", Options: modelOpts, Wide: true, Hint: "审核用 oc-chat（对话 comb，不强制 tool-call）；先填 URL 与 Key 再拉取列表"},
+					{Key: "secret.filter.llm.base_url", Label: "Base URL", Value: llmBase, Type: "text", CanClear: true, Hint: "默认 DeepSeek 官方 " + config.DefaultLLMBaseURL},
+					{Key: "secret.filter.llm.api_key", Label: "API Key", Value: llmKey, Type: "text", CanClear: true, Hint: "填 DeepSeek API Key（platform.deepseek.com 获取）"},
+					{Key: "secret.filter.llm.model", Label: "主模型", Value: llmModel, Type: "model_select", Options: modelOpts, Wide: true, Hint: "默认 deepseek-chat；先填 URL 与 Key 再拉取可用列表"},
 				},
 			},
 			{

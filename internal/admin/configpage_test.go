@@ -212,8 +212,8 @@ func TestConfigTabs(t *testing.T) {
 	if strings.Contains(body, "fallback_models") {
 		t.Errorf("ai 不应含 fallback")
 	}
-	if !strings.Contains(body, "127.0.0.1:20128") {
-		t.Errorf("ai Base URL 默认本地 OmniRoute")
+	if !strings.Contains(body, "api.deepseek.com") {
+		t.Errorf("ai Base URL 默认 DeepSeek")
 	}
 	if strings.Contains(body, "启用 AI") {
 		t.Errorf("ai 不应再有单独「启用 AI」checkbox")

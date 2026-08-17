@@ -37,7 +37,7 @@ func publicNoAuth(path string) bool {
 }
 
 func setupExempt(path string) bool {
-	return path == "/admin/setup" || path == CookieTestPath || path == CookieCloudTestPath
+	return path == "/admin/setup" || path == "/admin/setup/import-defaults" || path == CookieTestPath || path == CookieCloudTestPath
 }
 
 // validToken 校验 token：URL ?token= 或 Bearer，与 HotConfig 中 admin.token 比较

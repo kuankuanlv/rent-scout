@@ -14,6 +14,18 @@
     <div class="h-2 rounded-full {{if le $i $.Step}}bg-brand-600 w-8{{else}}bg-gray-200 w-4{{end}} transition-all"></div>
     {{end}}
   </div>
+  <div class="mb-6 rounded-2xl border border-brand-200 bg-white p-5 shadow-sm">
+    <div class="flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
+      <div>
+        <div class="font-semibold text-gray-900 mb-1">一键导入推荐默认配置</div>
+        <p class="text-sm text-gray-500">自动填入豆瓣小组、微博超话与博主、采集/筛选/日志等常用参数；Cookie、LLM Key、Webhook 等敏感项保持为空，需自行填写。仅覆盖同名配置，不影响鉴权设置。</p>
+      </div>
+      <form method="post" action="/admin/setup/import-defaults{{if .Token}}?token={{.Token}}{{end}}" onsubmit="return confirm('导入将覆盖已有的采集/筛选/通知参数（敏感项不受影响），确认导入？');">
+        <input type="hidden" name="step" value="{{.Step}}">
+        <button type="submit" class="shrink-0 px-4 py-2 rounded-xl bg-brand-50 border border-brand-200 text-brand-700 text-sm font-medium hover:bg-brand-100">一键导入</button>
+      </form>
+    </div>
+  </div>
   <div class="bg-white rounded-2xl shadow-lg border border-gray-100 p-6 sm:p-8">
     <h2 class="text-lg font-bold text-gray-900 mb-4">{{setupStepTitle .Step}}</h2>
     <form method="post" action="/admin/setup{{if .Token}}?token={{.Token}}{{end}}" class="space-y-4">
@@ -64,9 +76,9 @@
       <div><label class="block text-sm font-medium mb-1">LLM Base URL</label>
       <input name="secret.filter.llm.base_url" value="{{.Env.Filter.LLM.BaseURL}}" class="w-full border rounded-xl px-3 py-2 text-sm"></div>
       <div><label class="block text-sm font-medium mb-1">LLM API Key（可选）</label>
-      <input type="password" name="secret.filter.llm.api_key" class="w-full border rounded-xl px-3 py-2 text-sm" placeholder="本地 OmniRoute 填网关 Key"></div>
+      <input type="password" name="secret.filter.llm.api_key" class="w-full border rounded-xl px-3 py-2 text-sm" placeholder="填 DeepSeek API Key（platform.deepseek.com 获取）"></div>
       <div><label class="block text-sm font-medium mb-1">模型</label>
-      <input name="secret.filter.llm.model" value="{{if .Env.Filter.LLM.Model}}{{.Env.Filter.LLM.Model}}{{else}}oc-chat{{end}}" class="w-full border rounded-xl px-3 py-2 text-sm"></div>
+      <input name="secret.filter.llm.model" value="{{if .Env.Filter.LLM.Model}}{{.Env.Filter.LLM.Model}}{{else}}deepseek-chat{{end}}" class="w-full border rounded-xl px-3 py-2 text-sm"></div>
       {{else if eq .Step 5}}
       <div><label class="block text-sm font-medium mb-1">飞书 Webhook（可选）</label>
       <input type="password" name="secret.notifier.feishu.webhook" class="w-full border rounded-xl px-3 py-2 text-sm" placeholder="https://..."></div>

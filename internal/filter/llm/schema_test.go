@@ -54,10 +54,46 @@ func TestParseAIResultsIndexTolerance(t *testing.T) {
 	if err != nil || len(results) != 2 || results[1].Passed {
 		t.Errorf("缺 index 容错失败: %+v %v", results, err)
 	}
-	// 数量不匹配：报错（对齐失败宁可整批重试）
+	// 数量不足：报错；多出来的会截断保留有效 index
 	raw2 := `[{"index":0,"passed":true}]`
 	if _, err := ParseAIResults(raw2, 3); err == nil {
-		t.Error("数量不匹配应报错")
+		t.Error("数量不足应报错")
+	}
+	// 模型把一帖拆成多条：只取 index∈[0,expected)
+	raw3 := `{"verdicts":[
+		{"index":0,"passed":true,"reason":"房东直租"},
+		{"index":1,"passed":true,"reason":"采光好"},
+		{"index":2,"passed":false,"reason":"多余"}
+	]}`
+	got, err := ParseAIResults(raw3, 1)
+	if err != nil {
+		t.Fatalf("多出 verdict 应截断保留: %v", err)
+	}
+	if len(got) != 1 || !got[0].Passed || got[0].Reason != "房东直租" {
+		t.Errorf("应只保留 index=0: %+v", got)
+	}
+}
+
+func TestParseAIResultsTruncatedVerdicts(t *testing.T) {
+	raw := "```json\n{\n  \"verdicts\": [\n    {\n      \"index\": 0,\n      \"passed\": true,\n      \"reason\": \"个人房源描述详细\",\n      \"price\": 0,\n      \"contact\": \"\",\n      \"commuting\": \"紧邻地铁九号线，三分钟到地铁\",\n      \"confidence\": 0.9\n    },\n    {\n      \"index\": 1,\n      \"passed\": false,\n      \"reason\": \"联系方式疑似中介\",\n      \"price\": 4200,\n      \"contact\": \"17614031439\",\n      \"commuting\": \"苹果园地铁\",\n      \"confidence\": 0.8\n    },\n    {\n      \"index\": 2,\n      \"passed\": false,\n      \"reason\": \"内容过多，疑似中介\",\n      \"price\": 0,\n      \"contact\": \"\",\n      \"commuting\": \"地铁6号线通州北关站\",\n      \"confidence\": 0.8\n    },\n    {\n      \"index\": 3,\n      \"passed\": false,\n      \"reason\": \"内容过少，疑似钓鱼贴\",\n      \"price\": 0,\n      \"contact\": \"1730"
+	got, filled, err := ParseAIResultsPartial(raw, 6)
+	if err != nil {
+		t.Fatalf("截断应抢救完整项: %v", err)
+	}
+	if filled != 3 {
+		t.Fatalf("filled = %d, want 3", filled)
+	}
+	if !got[0].Passed || got[1].Passed || got[2].Passed {
+		t.Errorf("前三条判定错: %+v", got[:3])
+	}
+	if got[1].Contact != "17614031439" || got[1].Price != 4200 {
+		t.Errorf("index=1 字段错: %+v", got[1])
+	}
+	if _, err := ParseAIResults(raw, 6); err == nil {
+		t.Fatal("条数不齐时 ParseAIResults 应报错")
+	}
+	if _, err := ParseAIResults(raw, 3); err != nil {
+		t.Fatalf("恰好 3 条完整时应成功: %v", err)
 	}
 }
 

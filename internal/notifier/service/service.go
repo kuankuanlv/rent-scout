@@ -71,7 +71,9 @@ func (s *Service) fetch(ctx context.Context, limit int) ([]models.RentPost, erro
 	for i, c := range chs {
 		names[i] = c.Name()
 	}
-	return s.db.FetchNotifyBatch(names, limit)
+	// AI 开启时只通知已 AI 审核过的帖（通过/未通过都发，等 ai_result 落库）；未开启直接通知 passed
+	requireAI := app.Filter.AIEnabled != nil && *app.Filter.AIEnabled
+	return s.db.FetchNotifyBatch(names, limit, requireAI)
 }
 
 func liveChannels(app *config.AppConfig, env *config.Secrets) []notifier.Channel {

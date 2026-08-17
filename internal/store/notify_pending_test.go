@@ -24,7 +24,7 @@ func TestFetchNotifyBatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	channels := []string{"feishu", "wecom"}
-	batch, err := s.FetchNotifyBatch(channels, 10)
+	batch, err := s.FetchNotifyBatch(channels, 10, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestFetchNotifyBatchTerminalExcluded(t *testing.T) {
 	if err := s.MarkNotificationFailed(p3.ID, "wecom", "网络超时", 1); err != nil {
 		t.Fatal(err)
 	}
-	batch, err := s.FetchNotifyBatch([]string{"feishu", "wecom"}, 10)
+	batch, err := s.FetchNotifyBatch([]string{"feishu", "wecom"}, 10, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,6 +92,64 @@ func TestFetchNotifyBatchTerminalExcluded(t *testing.T) {
 	}
 	if !ids[p3.ID] {
 		t.Error("p3（feishu sent + wecom failed）应被拉出（failed 可重试）")
+	}
+}
+
+// requireAI=true：只拉已 AI 审核（ai_result 非空，通过与否都算）的 passed 帖；未审核/无结果的不拉
+func TestFetchNotifyBatchRequireAI(t *testing.T) {
+	s := newTestStore(t)
+	defer s.Close()
+	pPass := seedPostWithStatus(t, s, models.PostStatusPassed) // AI 通过
+	pFail := seedPostWithStatus(t, s, models.PostStatusPassed) // AI 未通过
+	pNone := seedPostWithStatus(t, s, models.PostStatusPassed) // 有 filter_results 行但无 ai_result（硬筛结果，未走 AI）
+	pEmpty := seedPostWithStatus(t, s, models.PostStatusPassed) // 无 filter_results 行
+	now := time.Now()
+	if err := s.SaveFilterResult(models.FilterResult{PostID: pPass.ID, Status: models.PostStatusPassed, Stage: models.StageAIRule, DecidedAt: now, AI: &models.AIResult{Passed: true, Reason: "靠谱"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveFilterResult(models.FilterResult{PostID: pFail.ID, Status: models.PostStatusPassed, Stage: models.StageAIRule, DecidedAt: now, AI: &models.AIResult{Passed: false, Reason: "像中介"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveFilterResult(models.FilterResult{PostID: pNone.ID, Status: models.PostStatusPassed, Stage: models.StageHardRule, DecidedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	channels := []string{"feishu"}
+
+	idsOf := func(batch []models.RentPost) map[int64]bool {
+		ids := map[int64]bool{}
+		for _, p := range batch {
+			ids[p.ID] = true
+		}
+		return ids
+	}
+
+	withAI, err := s.FetchNotifyBatch(channels, 10, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := idsOf(withAI)
+	if !ids[pPass.ID] {
+		t.Error("requireAI: AI 通过的帖应被拉出")
+	}
+	if !ids[pFail.ID] {
+		t.Error("requireAI: AI 未通过的帖也应被拉出")
+	}
+	if ids[pNone.ID] {
+		t.Error("requireAI: 有结果行但无 ai_result 的帖不应被拉出")
+	}
+	if ids[pEmpty.ID] {
+		t.Error("requireAI: 无 filter_results 行的帖不应被拉出")
+	}
+
+	noAI, err := s.FetchNotifyBatch(channels, 10, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	all := idsOf(noAI)
+	for name, p := range map[string]models.RentPost{"AI通过": pPass, "AI未通过": pFail, "未审核": pNone, "无结果行": pEmpty} {
+		if !all[p.ID] {
+			t.Errorf("不要求 AI 时 %s 帖应被拉出", name)
+		}
 	}
 }
 

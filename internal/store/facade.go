@@ -109,8 +109,8 @@ func (s *Store) ResetNotification(postID int64, channel string) (bool, error) {
 	return s.notify.ResetNotification(postID, channel)
 }
 
-func (s *Store) FetchNotifyBatch(channels []string, limit int) ([]models.RentPost, error) {
-	return s.notify.FetchNotifyBatch(channels, limit)
+func (s *Store) FetchNotifyBatch(channels []string, limit int, requireAI bool) ([]models.RentPost, error) {
+	return s.notify.FetchNotifyBatch(channels, limit, requireAI)
 }
 
 func (s *Store) NotificationStatuses(postIDs []int64, channels []string) (map[int64]map[string]string, error) {

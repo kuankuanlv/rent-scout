@@ -37,34 +37,91 @@ func (r *aiResultRaw) UnmarshalJSON(data []byte) error {
 }
 
 // ParseAIResults 解析批量判定输出：剥围栏、解包 {verdicts:[]}、抠 JSON 数组，再按 index 对齐。
+// 条数不足仍报错；多了（模型把一帖拆成多条）只保留 index∈[0,expected) 的先到项。
 func ParseAIResults(raw string, expected int) ([]models.AIResult, error) {
+	results, filled, err := ParseAIResultsPartial(raw, expected)
+	if err != nil {
+		return nil, err
+	}
+	if filled < expected {
+		return nil, fmt.Errorf("AI 有效输出 %d < 预期 %d", filled, expected)
+	}
+	return results, nil
+}
+
+// ParseAIResultsPartial 截断的 JSON 也尽量留下完整对象；一个都抠不出才报错。
+func ParseAIResultsPartial(raw string, expected int) ([]models.AIResult, int, error) {
+	raws, err := parseAIResultRaws(raw)
+	if err != nil {
+		return nil, 0, err
+	}
+	results, filled := alignAIResults(raws, expected, raw)
+	if filled == 0 {
+		return nil, 0, fmt.Errorf("AI 有效输出 0 < 预期 %d", expected)
+	}
+	return results, filled, nil
+}
+
+func parseAIResultRaws(raw string) ([]aiResultRaw, error) {
 	cleaned := unwrapAIArray(raw)
 	var raws []aiResultRaw
-	if err := json.Unmarshal([]byte(cleaned), &raws); err != nil {
+	if err := json.Unmarshal([]byte(cleaned), &raws); err == nil {
+		return raws, nil
+	} else if salvaged := salvageArrayObjects(raw); len(salvaged) > 0 {
+		return salvaged, nil
+	} else {
 		return nil, fmt.Errorf("AI 输出非 JSON 数组: %w", err)
 	}
-	if len(raws) != expected {
-		return nil, fmt.Errorf("AI 输出数量 %d != 预期 %d", len(raws), expected)
-	}
+}
+
+func alignAIResults(raws []aiResultRaw, expected int, raw string) ([]models.AIResult, int) {
 	results := make([]models.AIResult, expected)
+	filled := 0
 	for i, r := range raws {
 		idx := r.Index
 		if r.Index == 0 && i != 0 && !hasIndex(raws[i]) {
 			idx = i // 缺省 index：按顺序对齐
 		}
 		if idx < 0 || idx >= expected {
-			return nil, fmt.Errorf("AI 输出 index %d 越界", idx)
+			continue // 多出来的丢弃
 		}
 		if isDuplicate(results, idx) {
-			return nil, fmt.Errorf("AI 输出 index %d 重复", idx)
+			continue
 		}
 		results[idx] = models.AIResult{
 			Passed: r.Passed, Reason: r.Reason, Price: r.Price,
 			Contact: r.Contact, Commuting: r.Commuting, Confidence: r.Confidence,
 			Model: r.Model, RawResponse: raw,
 		}
+		filled++
 	}
-	return results, nil
+	return results, filled
+}
+
+// salvageArrayObjects 从截断数组里用 decoder 逐个抠完整对象，尾巴丢掉
+func salvageArrayObjects(raw string) []aiResultRaw {
+	s := stripJSONFence(raw)
+	start := strings.Index(s, "[")
+	if start < 0 {
+		return nil
+	}
+	dec := json.NewDecoder(strings.NewReader(s[start:]))
+	tok, err := dec.Token()
+	if err != nil {
+		return nil
+	}
+	if d, ok := tok.(json.Delim); !ok || d != '[' {
+		return nil
+	}
+	var out []aiResultRaw
+	for dec.More() {
+		var r aiResultRaw
+		if err := dec.Decode(&r); err != nil {
+			break
+		}
+		out = append(out, r)
+	}
+	return out
 }
 
 func unwrapAIArray(raw string) string {

@@ -12,7 +12,7 @@ import (
 	"rent-scout/internal/notifier"
 )
 
-// feishu：发送文本卡片 JSON；返回 sent=全部 PostID
+// feishu：发送 post 富文本 JSON；返回 sent=全部 PostID
 func TestFeishuChannelSend(t *testing.T) {
 	var mu sync.Mutex
 	var got map[string]interface{}
@@ -30,7 +30,10 @@ func TestFeishuChannelSend(t *testing.T) {
 	if ch.Name() != notifier.ChannelFeishu {
 		t.Fatalf("name: %s", ch.Name())
 	}
-	items := []notifier.NotifyItem{{PostID: 1, Title: "望京整租", URL: "https://x", AddressTag: "望京"}}
+	items := []notifier.NotifyItem{{
+		PostID: 1, Title: "望京整租", URL: "https://x", AddressTag: "望京",
+		FeedbackURL: "https://fb/useful", FeedbackUselessURL: "https://fb/useless", HandledURL: "https://fb/h",
+	}}
 	sent, failed, err := ch.Send(context.Background(), items)
 	if err != nil {
 		t.Fatal(err)
@@ -43,12 +46,22 @@ func TestFeishuChannelSend(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if got["msg_type"] != "text" {
+	if got["msg_type"] != "post" {
 		t.Errorf("msg_type: %v", got["msg_type"])
 	}
 	content := got["content"].(map[string]interface{})
-	if !strings.Contains(content["text"].(string), "望京") {
-		t.Errorf("text: %v", content["text"])
+	post := content["post"].(map[string]interface{})
+	zh := post["zh_cn"].(map[string]interface{})
+	if title, _ := zh["title"].(string); !strings.Contains(title, "望京") {
+		t.Errorf("title: %v", zh["title"])
+	}
+	raw, _ := json.Marshal(zh["content"])
+	blob := string(raw)
+	if !strings.Contains(blob, "打开原帖") || !strings.Contains(blob, "https://x") {
+		t.Errorf("content 缺原帖链接: %s", blob)
+	}
+	if !strings.Contains(blob, `"有用"`) || !strings.Contains(blob, "https://fb/useful") {
+		t.Errorf("content 缺有用链接: %s", blob)
 	}
 }
 

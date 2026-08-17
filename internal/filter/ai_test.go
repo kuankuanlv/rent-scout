@@ -136,3 +136,45 @@ func TestAIBatchEvaluatorModelBackfill(t *testing.T) {
 		}
 	})
 }
+
+type truncThenOKLLM struct {
+	calls int
+}
+
+func (f *truncThenOKLLM) Chat(ctx context.Context, system, user string) (string, error) {
+	f.calls++
+	if f.calls == 1 {
+		return "```json\n{\n  \"verdicts\": [\n    {\"index\":0,\"passed\":true,\"reason\":\"ok0\"},\n    {\"index\":1,\"passed\":false,\"reason\":\"ok1\"},\n    {\"index\":2,\"passed\":true,\"reason\":\"ok2\"},\n    {\"index\":3,\"passed\":false,\"reason\":\"截断\",\"contact\":\"1730", nil
+	}
+	n := strings.Count(user, "第")
+	var parts []string
+	for i := 0; i < n; i++ {
+		parts = append(parts, `{"index":`+itoa(i)+`,"passed":true,"reason":"retry"}`)
+	}
+	return "[" + strings.Join(parts, ",") + "]", nil
+}
+
+func TestAIBatchEvaluateRetriesTruncated(t *testing.T) {
+	fl := &truncThenOKLLM{}
+	ev := NewAIBatchEvaluator(fl)
+	posts := make([]models.RentPost, 6)
+	for i := range posts {
+		posts[i] = models.RentPost{ID: int64(i + 1), Source: "douban", Title: "t", Content: "c"}
+	}
+	results, err := ev.EvaluateBatch(context.Background(), posts, []models.Rule{{Type: models.RuleTypeAINatural, Enabled: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fl.calls != 2 {
+		t.Fatalf("calls = %d, want 2", fl.calls)
+	}
+	if len(results) != 6 {
+		t.Fatalf("结果数 = %d, want 6", len(results))
+	}
+	if results[1] == nil || results[1].Reason != "ok0" {
+		t.Errorf("首轮抢救的帖1: %+v", results[1])
+	}
+	if results[4] == nil || results[4].Reason != "retry" {
+		t.Errorf("补跑的帖4: %+v", results[4])
+	}
+}

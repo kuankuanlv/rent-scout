@@ -357,6 +357,112 @@ func TestRulesDelete(t *testing.T) {
 	}
 }
 
+func TestRuleNeedsReplay(t *testing.T) {
+	base := models.Rule{Type: models.RuleTypeBlacklist, Value: "中介,押一付一", Enabled: true, Priority: 1}
+	cases := []struct {
+		name   string
+		before models.Rule
+		after  models.Rule
+		want   bool
+	}{
+		{"只删关键字", base, models.Rule{Type: models.RuleTypeBlacklist, Value: "中介", Enabled: true}, false},
+		{"加关键字", base, models.Rule{Type: models.RuleTypeBlacklist, Value: "中介,押一付一,中介费", Enabled: true}, true},
+		{"换序不触发", base, models.Rule{Type: models.RuleTypeBlacklist, Value: "押一付一，中介", Enabled: true}, false},
+		{"禁用", base, models.Rule{Type: models.RuleTypeBlacklist, Value: base.Value, Enabled: false}, false},
+		{"启用", models.Rule{Type: models.RuleTypeBlacklist, Value: "中介", Enabled: false}, models.Rule{Type: models.RuleTypeBlacklist, Value: "中介", Enabled: true}, true},
+		{"只改优先级", base, models.Rule{Type: models.RuleTypeBlacklist, Value: base.Value, Enabled: true, Priority: 9}, false},
+		{"改类型", base, models.Rule{Type: models.RuleTypeWhitelist, Value: base.Value, Enabled: true}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ruleNeedsReplay(tc.before, tc.after); got != tc.want {
+				t.Fatalf("ruleNeedsReplay = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRulesChangedCallback 新建/加关键字会通知；删除、只删关键字、禁用不通知
+func TestRulesChangedCallback(t *testing.T) {
+	s := newAdminTestStore(t)
+	defer s.Close()
+	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
+	var n int
+	srv.SetOnRulesChanged(func() { n++ })
+
+	form := url.Values{"name": {"新黑"}, "type": {models.RuleTypeBlacklist}, "value": {"中介,押一付一"}, "priority": {"5"}}
+	req := httptest.NewRequest(http.MethodPost, "/admin/rules", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if n != 1 {
+		t.Fatalf("创建后通知次数 = %d, want 1", n)
+	}
+
+	rules, err := s.ListRules(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var id int64
+	for _, r := range rules {
+		if r.Name == "新黑" {
+			id = r.ID
+			break
+		}
+	}
+	if id == 0 {
+		t.Fatal("未找到新建规则")
+	}
+	if _, err := s.CreateRule(models.Rule{Name: "保底", Type: models.RuleTypeWhitelist, Value: "望京", Enabled: true, Priority: 1}); err != nil {
+		t.Fatal(err)
+	}
+
+	postUpdate := func(value string, enabled bool) {
+		t.Helper()
+		f := url.Values{"name": {"新黑"}, "type": {models.RuleTypeBlacklist}, "value": {value}, "priority": {"5"}}
+		if enabled {
+			f.Set("enabled", "on")
+		}
+		r := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/admin/rules/%d", id), strings.NewReader(f.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		r.Header.Set("Accept", "application/json")
+		w := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("update status = %d body=%s", w.Code, w.Body.String())
+		}
+	}
+
+	before := n
+	postUpdate("中介", true) // 只删关键字
+	if n != before {
+		t.Fatalf("只删关键字不应通知: n=%d before=%d", n, before)
+	}
+
+	before = n
+	postUpdate("中介,押一付一,中介费", true) // 加关键字
+	if n != before+1 {
+		t.Fatalf("加关键字应通知: n=%d before=%d", n, before)
+	}
+
+	before = n
+	postUpdate("中介,押一付一,中介费", false) // 禁用
+	if n != before {
+		t.Fatalf("禁用不应通知: n=%d before=%d", n, before)
+	}
+
+	before = n
+	reqDel := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/admin/rules/%d/delete", id), nil)
+	recDel := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(recDel, reqDel)
+	if recDel.Code != http.StatusSeeOther {
+		t.Fatalf("delete status = %d, want 302", recDel.Code)
+	}
+	if n != before {
+		t.Fatalf("删除不应通知: n=%d before=%d", n, before)
+	}
+}
+
 // TestRulesCreateInvalid 非法参数 → 400：坏 type / 空 value / 坏 priority（mode 废弃不校验）
 func TestRulesCreateInvalid(t *testing.T) {
 	s := newAdminTestStore(t)

@@ -49,7 +49,7 @@ func NewServer(db *store.Store, rt *config.HotConfig, ctrl SourceController) *Se
 	return &Server{db: db, rt: rt, ctrl: ctrl, tmpl: t}
 }
 
-// SetOnRulesChanged 规则增删改后回调（规则 replay，不重置采集进度）
+// SetOnRulesChanged 规则能力变强时回调（新建/启用/加关键字等触发 replay；纯删除/禁用不触发）
 func (s *Server) SetOnRulesChanged(fn func()) {
 	s.onRulesChanged = fn
 }

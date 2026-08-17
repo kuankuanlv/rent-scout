@@ -12,10 +12,17 @@ import (
 // FetchNotifyBatch 拉取 passed 且对任一启用渠道未发送（无记录或 pending/failed）的帖子。
 // 语义（规格 6.5）：批内帖子至少有一个渠道待发；终止态（sent/dead）渠道数 = 启用渠道数的帖子不再返回。
 // 实现：终止态渠道数 < 启用渠道数（notifications 表 UNIQUE(post_id, channel)，每帖每渠道至多一条）
+// requireAI=true 时仅返回已有 AI 审核结果（ai_result 非空）的帖——无论通过与否，未审核的帖等 AI 落库后下轮再拉；
+// 为 false 时不看 AI 结果，passed 直接可通知。
 // channels 为空时返回空批（防御，调用方恒传启用渠道列表；调用方不得传重复渠道名）
-func (r *Repo) FetchNotifyBatch(channels []string, limit int) ([]models.RentPost, error) {
+func (r *Repo) FetchNotifyBatch(channels []string, limit int, requireAI bool) ([]models.RentPost, error) {
 	if len(channels) == 0 {
 		return nil, nil
+	}
+	aiCond := ""
+	if requireAI {
+		aiCond = `AND EXISTS (SELECT 1 FROM filter_results fr
+		       WHERE fr.post_id = posts.id AND fr.ai_result IS NOT NULL AND fr.ai_result != '')`
 	}
 	ph := strings.Repeat("?,", len(channels))
 	ph = ph[:len(ph)-1]
@@ -24,10 +31,11 @@ func (r *Repo) FetchNotifyBatch(channels []string, limit int) ([]models.RentPost
 			       published_at, collected_at, status, address_tags, raw, price, contact
 			FROM posts
 			WHERE status = 'passed'
+			%s
 			AND (SELECT COUNT(*) FROM notifications n
 			       WHERE n.post_id = posts.id AND n.channel IN (%s) AND n.status IN ('sent','dead')) < ?
 			ORDER BY id
-			LIMIT ?`, ph)
+			LIMIT ?`, aiCond, ph)
 	args := make([]any, 0, len(channels)+2)
 	for _, c := range channels {
 		args = append(args, c)

@@ -43,6 +43,30 @@ func seedNotifierPost(t *testing.T, s *store.Store, status string) models.RentPo
 	return batch[len(batch)-1]
 }
 
+// 从飞书 post 富文本里抠 a 标签：链接文案 → href
+func feishuPostLinks(body map[string]interface{}) map[string]string {
+	out := map[string]string{}
+	content, _ := body["content"].(map[string]interface{})
+	post, _ := content["post"].(map[string]interface{})
+	zh, _ := post["zh_cn"].(map[string]interface{})
+	paras, _ := zh["content"].([]interface{})
+	for _, p := range paras {
+		nodes, _ := p.([]interface{})
+		for _, n := range nodes {
+			m, _ := n.(map[string]interface{})
+			if m["tag"] != "a" {
+				continue
+			}
+			text, _ := m["text"].(string)
+			href, _ := m["href"].(string)
+			if text != "" && href != "" {
+				out[text] = href
+			}
+		}
+	}
+	return out
+}
+
 // 全流程：2 帖 passed（望京/未分组）→ feishu 成功 → 状态 sent，分两组各发 1 条
 func TestNotifierProcessBatch(t *testing.T) {
 	s := newNotifierTestStore(t)
@@ -129,13 +153,8 @@ func TestNotifierGroupIsolation(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]interface{}
 		_ = json.NewDecoder(r.Body).Decode(&body)
-		content := ""
-		if c, ok := body["content"].(map[string]interface{}); ok {
-			if txt, ok := c["text"].(string); ok {
-				content = txt
-			}
-		}
-		if strings.Contains(content, "望京") {
+		raw, _ := json.Marshal(body)
+		if strings.Contains(string(raw), "望京") {
 			w.WriteHeader(200)
 			return
 		}
@@ -163,15 +182,11 @@ func TestDualFeedbackLinksPresent(t *testing.T) {
 	defer s.Close()
 	p := seedNotifierPost(t, s, models.PostStatusPassed)
 
-	var capturedText string
+	var links map[string]string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]interface{}
 		_ = json.NewDecoder(r.Body).Decode(&body)
-		if content, ok := body["content"].(map[string]interface{}); ok {
-			if text, ok := content["text"].(string); ok {
-				capturedText = text
-			}
-		}
+		links = feishuPostLinks(body)
 		w.WriteHeader(200)
 	}))
 	defer srv.Close()
@@ -182,22 +197,19 @@ func TestDualFeedbackLinksPresent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if capturedText == "" {
-		t.Fatal("未捕获到消息文本")
-	}
-
-	// 验证双链接都存在于消息文本中（textPayload 格式）
-	if !strings.Contains(capturedText, "反馈: 有用") {
+	if links["有用"] == "" {
 		t.Error("消息应包含「有用」反馈链接")
 	}
-	if !strings.Contains(capturedText, "反馈: 无用") {
+	if links["无用"] == "" {
 		t.Error("消息应包含「无用」反馈链接")
 	}
-	if !strings.Contains(capturedText, "已处理:") {
-		t.Error("消息应包含「已处理」链接")
+	if links["标记已读"] == "" {
+		t.Error("消息应包含「标记已读」链接")
 	}
-	if !strings.Contains(capturedText, "http://") {
-		t.Error("三条动作链接应带可点击的 http 前缀")
+	for name, href := range links {
+		if !strings.Contains(href, "http://") && !strings.Contains(href, "https://") {
+			t.Errorf("%s 链接应带可点击的 http(s) 前缀: %s", name, href)
+		}
 	}
 }
 
@@ -207,15 +219,11 @@ func TestDualFeedbackLinksWithSignature(t *testing.T) {
 	defer s.Close()
 	p := seedNotifierPost(t, s, models.PostStatusPassed)
 
-	var capturedText string
+	var links map[string]string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]interface{}
 		_ = json.NewDecoder(r.Body).Decode(&body)
-		if content, ok := body["content"].(map[string]interface{}); ok {
-			if text, ok := content["text"].(string); ok {
-				capturedText = text
-			}
-		}
+		links = feishuPostLinks(body)
 		w.WriteHeader(200)
 	}))
 	defer srv.Close()
@@ -227,22 +235,8 @@ func TestDualFeedbackLinksWithSignature(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if capturedText == "" {
-		t.Fatal("未捕获到消息文本")
-	}
-
-	// 验证两个 URL 都包含签名参数（exp 和 sig）
-	lines := strings.Split(capturedText, "\n")
-	var usefulURL, uselessURL string
-	for _, line := range lines {
-		if strings.Contains(line, "反馈: 有用") {
-			usefulURL = strings.TrimSpace(strings.TrimPrefix(line, "反馈: 有用 "))
-		}
-		if strings.Contains(line, "反馈: 无用") {
-			uselessURL = strings.TrimSpace(strings.TrimPrefix(line, "反馈: 无用 "))
-		}
-	}
-
+	usefulURL := links["有用"]
+	uselessURL := links["无用"]
 	if usefulURL == "" {
 		t.Fatal("未找到有用反馈 URL")
 	}
@@ -257,12 +251,7 @@ func TestDualFeedbackLinksWithSignature(t *testing.T) {
 		t.Errorf("无用 URL 应包含 exp 和 sig 参数: %s", uselessURL)
 	}
 
-	var handledURL string
-	for _, line := range lines {
-		if strings.Contains(line, "已处理:") {
-			handledURL = strings.TrimSpace(strings.TrimPrefix(line, "已处理: "))
-		}
-	}
+	handledURL := links["标记已读"]
 	if handledURL == "" {
 		t.Fatal("未找到已处理 URL")
 	}
@@ -280,15 +269,11 @@ func TestDualFeedbackLinksNoSignature(t *testing.T) {
 	defer s.Close()
 	p := seedNotifierPost(t, s, models.PostStatusPassed)
 
-	var capturedText string
+	var links map[string]string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]interface{}
 		_ = json.NewDecoder(r.Body).Decode(&body)
-		if content, ok := body["content"].(map[string]interface{}); ok {
-			if text, ok := content["text"].(string); ok {
-				capturedText = text
-			}
-		}
+		links = feishuPostLinks(body)
 		w.WriteHeader(200)
 	}))
 	defer srv.Close()
@@ -300,22 +285,8 @@ func TestDualFeedbackLinksNoSignature(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if capturedText == "" {
-		t.Fatal("未捕获到消息文本")
-	}
-
-	// 验证两个 URL 都不包含签名参数
-	lines := strings.Split(capturedText, "\n")
-	var usefulURL, uselessURL string
-	for _, line := range lines {
-		if strings.Contains(line, "反馈: 有用") {
-			usefulURL = strings.TrimSpace(strings.TrimPrefix(line, "反馈: 有用 "))
-		}
-		if strings.Contains(line, "反馈: 无用") {
-			uselessURL = strings.TrimSpace(strings.TrimPrefix(line, "反馈: 无用 "))
-		}
-	}
-
+	usefulURL := links["有用"]
+	uselessURL := links["无用"]
 	if usefulURL == "" {
 		t.Fatal("未找到有用反馈 URL")
 	}
@@ -339,24 +310,11 @@ func TestFeedbackSecretFollowsHotConfig(t *testing.T) {
 	app := &config.AppConfig{Admin: config.AdminConfig{AuthRequired: true, Token: "tok-v1"}}
 	rt := config.NewHotConfigWithSnapshot(app, nil)
 
-	extractUseful := func(text string) string {
-		for _, line := range strings.Split(text, "\n") {
-			if strings.Contains(line, "反馈: 有用") {
-				return strings.TrimSpace(strings.TrimPrefix(line, "反馈: 有用 "))
-			}
-		}
-		return ""
-	}
-
-	var captured string
+	var links map[string]string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]interface{}
 		_ = json.NewDecoder(r.Body).Decode(&body)
-		if content, ok := body["content"].(map[string]interface{}); ok {
-			if text, ok := content["text"].(string); ok {
-				captured = text
-			}
-		}
+		links = feishuPostLinks(body)
 		w.WriteHeader(200)
 	}))
 	defer srv.Close()
@@ -367,18 +325,18 @@ func TestFeedbackSecretFollowsHotConfig(t *testing.T) {
 	if err := n.ProcessBatch(context.Background(), []models.RentPost{p1}); err != nil {
 		t.Fatal(err)
 	}
-	u1 := extractUseful(captured)
+	u1 := links["有用"]
 	if u1 == "" || !strings.Contains(u1, "sig=") {
 		t.Fatalf("鉴权开应签名: %q", u1)
 	}
 
 	app.Admin.Token = "tok-v2"
 	p2 := seedNotifierPost(t, s, models.PostStatusPassed)
-	captured = ""
+	links = nil
 	if err := n.ProcessBatch(context.Background(), []models.RentPost{p2}); err != nil {
 		t.Fatal(err)
 	}
-	u2 := extractUseful(captured)
+	u2 := links["有用"]
 	if u2 == "" || !strings.Contains(u2, "sig=") {
 		t.Fatalf("换 token 后仍应签名: %q", u2)
 	}
@@ -388,11 +346,11 @@ func TestFeedbackSecretFollowsHotConfig(t *testing.T) {
 
 	app.Admin.AuthRequired = false
 	p3 := seedNotifierPost(t, s, models.PostStatusPassed)
-	captured = ""
+	links = nil
 	if err := n.ProcessBatch(context.Background(), []models.RentPost{p3}); err != nil {
 		t.Fatal(err)
 	}
-	u3 := extractUseful(captured)
+	u3 := links["有用"]
 	if u3 == "" {
 		t.Fatal("未找到有用反馈 URL")
 	}

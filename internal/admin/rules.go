@@ -184,7 +184,8 @@ func (s *Server) updateRule(w http.ResponseWriter, r *http.Request, id int64) {
 		s.replyRule(w, r, http.StatusBadRequest, "参数无效")
 		return
 	}
-	if err := s.db.UpdateRule(models.Rule{ID: id, Name: name, Type: rtype, Mode: mode, Value: value, Enabled: enabled, Priority: priority}); err != nil {
+	updated := models.Rule{ID: id, Name: name, Type: rtype, Mode: mode, Value: value, Enabled: enabled, Priority: priority}
+	if err := s.db.UpdateRule(updated); err != nil {
 		if errors.Is(err, store.ErrLastEnabledRule) {
 			s.replyRule(w, r, http.StatusBadRequest, err.Error())
 			return
@@ -194,7 +195,9 @@ func (s *Server) updateRule(w http.ResponseWriter, r *http.Request, id int64) {
 		return
 	}
 	pkglog.Component(pkglog.Admin).Info("规则已更新", "id", id, "value", value, "priority", priority, "enabled", enabled)
-	s.notifyRulesChanged()
+	if ruleNeedsReplay(existing, updated) {
+		s.notifyRulesChanged()
+	}
 	s.replyRuleOK(w, r)
 }
 
@@ -226,8 +229,51 @@ func (s *Server) deleteRule(w http.ResponseWriter, r *http.Request, id int64) {
 		return
 	}
 	pkglog.Component(pkglog.Admin).Info("规则已删除", "id", id)
-	s.notifyRulesChanged()
 	s.redirectRules(w, r)
+}
+
+// ruleNeedsReplay 更新后是否要重放：只在规则能力变强时（启用、加关键字、改类型）。
+// 纯删关键字、禁用、改名/优先级不触发；整条删除在 deleteRule 侧直接不通知。
+func ruleNeedsReplay(before, after models.Rule) bool {
+	if !after.Enabled {
+		return false
+	}
+	if !before.Enabled {
+		return true
+	}
+	if before.Type != after.Type {
+		return true
+	}
+	if after.Type == models.RuleTypeAINatural {
+		return false
+	}
+	return hasNewRuleKeywords(before.Value, after.Value)
+}
+
+func hasNewRuleKeywords(before, after string) bool {
+	old := ruleKeywordSet(before)
+	for k := range ruleKeywordSet(after) {
+		if _, ok := old[k]; !ok {
+			return true
+		}
+	}
+	return false
+}
+
+// ruleKeywordSet 与硬筛 splitKeywords 同一套分隔符，trim + 小写后做集合比较
+func ruleKeywordSet(value string) map[string]struct{} {
+	parts := strings.FieldsFunc(value, func(r rune) bool {
+		return r == ',' || r == '\n' || r == '，' || r == '、'
+	})
+	out := make(map[string]struct{}, len(parts))
+	for _, p := range parts {
+		p = strings.ToLower(strings.TrimSpace(p))
+		if p == "" {
+			continue
+		}
+		out[p] = struct{}{}
+	}
+	return out
 }
 
 // redirectRules GET/PRG：回到配置页规则 Tab；鉴权开启时把 token 带回，避免跳回后 401

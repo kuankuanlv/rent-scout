@@ -258,8 +258,8 @@ func TestImportDefaults(t *testing.T) {
 		t.Fatalf("status = %d, want 303, body=%s", rec.Code, rec.Body.String())
 	}
 	loc := rec.Header().Get("Location")
-	if !strings.HasPrefix(loc, "/admin/setup?") || !strings.Contains(loc, "step=2") {
-		t.Errorf("Location = %q, want /admin/setup?…step=2…", loc)
+	if !strings.HasPrefix(loc, "/admin/setup?") || !strings.Contains(loc, "step=6") {
+		t.Errorf("Location = %q, want /admin/setup?…step=6…", loc)
 	}
 	if !strings.Contains(loc, "token=setup-tok") {
 		t.Errorf("Location = %q, 应带回 token", loc)
@@ -278,6 +278,85 @@ func TestImportDefaults(t *testing.T) {
 	// 预置 admin.token 不被覆盖（DefaultKV 不含 admin.*）
 	if m["admin.token"] != "setup-tok" {
 		t.Errorf("admin.token = %q, want 预置值 setup-tok", m["admin.token"])
+	}
+}
+
+// TestSetupWelcomeChoice GET /admin/setup -> 200，body 含选择项
+func TestSetupWelcomeChoice(t *testing.T) {
+	s := newAdminTestStore(t)
+	defer s.Close()
+	srv := newSetupInProgressServer(t, s, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/setup?token=setup-tok", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "一键导入现成默认配置") {
+		t.Error("应包含一键导入按钮")
+	}
+	if !strings.Contains(body, "手动逐个设置") {
+		t.Error("应包含手动设置链接")
+	}
+}
+
+// TestSetupDoneWithToken POST /admin/setup (step=6 & admin.token) -> 303 /admin
+func TestSetupDoneWithToken(t *testing.T) {
+	s := newAdminTestStore(t)
+	defer s.Close()
+	srv := newSetupInProgressServer(t, s, nil)
+
+	form := url.Values{
+		"step":        {"6"},
+		"admin.token": {"new-tok"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/admin/setup?token=setup-tok", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303, body=%s", rec.Code, rec.Body.String())
+	}
+	m, _ := store.GetConfigMap(s)
+	if m["admin.auth_required"] != "true" {
+		t.Errorf("auth_required = %q, want true", m["admin.auth_required"])
+	}
+	if m["admin.token"] != "new-tok" {
+		t.Errorf("admin.token = %q, want new-tok", m["admin.token"])
+	}
+	if m[config.KeySetupCompleted] != "true" {
+		t.Error("应标记 setup 完成")
+	}
+}
+
+// TestSetupDoneNoToken POST /admin/setup (step=6, no token) -> 303 /admin
+func TestSetupDoneNoToken(t *testing.T) {
+	s := newAdminTestStore(t)
+	defer s.Close()
+	srv := newSetupInProgressServer(t, s, map[string]string{
+		"admin.auth_required": "false",
+	})
+
+	form := url.Values{
+		"step": {"6"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/admin/setup?token=setup-tok", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303, body=%s", rec.Code, rec.Body.String())
+	}
+	m, _ := store.GetConfigMap(s)
+	if m["admin.auth_required"] != "false" {
+		t.Errorf("auth_required = %q, want false", m["admin.auth_required"])
+	}
+	if m[config.KeySetupCompleted] != "true" {
+		t.Error("应标记 setup 完成")
 	}
 }
 

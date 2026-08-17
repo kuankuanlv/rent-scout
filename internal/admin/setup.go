@@ -11,7 +11,10 @@ import (
 	"rent-scout/internal/store"
 )
 
-const setupTotalSteps = 5
+const (
+	setupTotalSteps = 5
+	setupDoneStep   = 6
+)
 
 // handleSetup 首次引导：步骤1鉴权必填，后续可跳过
 func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
@@ -20,11 +23,11 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	step, _ := strconv.Atoi(r.URL.Query().Get("step"))
-	if step < 1 {
-		step = 1
+	if step < 0 {
+		step = 0
 	}
-	if step > setupTotalSteps {
-		step = setupTotalSteps
+	if step > setupDoneStep {
+		step = setupDoneStep
 	}
 	kv := CurrentConfigKV(s.db)
 	env := config.KVToSecrets(kv)
@@ -54,6 +57,22 @@ func (s *Server) handleSetupPost(w http.ResponseWriter, r *http.Request) {
 	step, _ := strconv.Atoi(r.PostFormValue("step"))
 	action := r.PostFormValue("action")
 	kv := CurrentConfigKV(s.db)
+
+	// step 6：导入后的完成页——可选填访问令牌开启鉴权，随后完成引导
+	if step == setupDoneStep {
+		if tok := strings.TrimSpace(r.PostFormValue("admin.token")); tok != "" {
+			if err := store.SetConfigBatch(s.db, map[string]string{
+				"admin.auth_required": "true",
+				"admin.token":         tok,
+			}); err != nil {
+				http.Error(w, "保存失败: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+			_ = s.rt.ReloadOnce()
+		}
+		s.finishSetup(w, r, kv)
+		return
+	}
 
 	if action == "skip" {
 		if step <= 1 {
@@ -193,11 +212,9 @@ func (s *Server) handleImportDefaults(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.rt.ReloadOnce()
 	q := url.Values{}
+	q.Set("step", strconv.Itoa(setupDoneStep))
 	if tok := r.URL.Query().Get("token"); tok != "" {
 		q.Set("token", tok)
-	}
-	if step := r.PostFormValue("step"); step != "" {
-		q.Set("step", step)
 	}
 	target := "/admin/setup"
 	if len(q) > 0 {
@@ -209,8 +226,12 @@ func (s *Server) handleImportDefaults(w http.ResponseWriter, r *http.Request) {
 // setupStepTitle 引导步骤标题（模板 func）
 func setupStepTitle(step int) string {
 	switch step {
+	case 0:
+		return "选择初始化方式"
 	case 1:
 		return "访问鉴权（必填）"
+	case 6:
+		return "完成设置"
 	case 2:
 		return "常规设置"
 	case 3:

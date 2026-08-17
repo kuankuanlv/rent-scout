@@ -35,7 +35,7 @@ make clean
 
 首次启动日志会提示 SQLite 配置为空，浏览器访问 `http://localhost:7777/admin/setup` 完成引导。
 
-**引导流程：** 首次进入先选择初始化方式——**一键导入推荐默认配置**（内置豆瓣小组、微博超话与博主、采集/筛选/日志等常用参数；Cookie、LLM Key、Webhook 等敏感项留空，需自行填写）或**手动逐项设置**；随后步骤 1 鉴权（必填，保存后继续）→ 步骤 2–5 可跳过，各步独立保存到 SQLite，再按需补 Cookie 与通知渠道。
+**引导流程：** 首次进入先选择初始化方式——**一键导入现成默认配置**（豆瓣小组、微博超话与博主、采集/筛选/日志参数即刻就绪；Cookie、LLM Key、Webhook 等敏感项留空，需自行填写）或**手动逐个设置**。导入后可选择填写访问令牌开启鉴权，不填直接完成；手动路径为步骤 1 鉴权（必填，保存后继续）→ 步骤 2–5 可跳过，各步独立保存到 SQLite。
 
 ## 环境变量
 
@@ -117,7 +117,7 @@ HotConfig 约每 10s 轮询 SQLite：**先 hash，变化才 COW**；未变跳过
 | interval / jitter / max_age、admin token、rules | 热生效 |
 | Cookie raw/cookiecloud、Douban groups | 下次 Get / 下一轮跟 HotConfig |
 | Cookie Test | 即时，不写库 |
-| LLM、webhook、`server.addr`、`log.path`、`collector.sources` 列表 | **需重启**（与 `RestartKeys` 一致；保存后黄条提示） |
+| LLM、webhook、`server.addr`、`log.path`、`collector.sources` 列表、`notifier.batch_size` | **需重启**（与 `RestartKeys` 一致；保存后黄条提示） |
 | 反馈签名密钥 | 跟 HotConfig 当前 admin token |
 
 ## 日志约定
@@ -161,7 +161,7 @@ go build ./cmd/rent-scout
 
 | 版本 | 时间 | 变更说明 |
 |------|------|----------|
-| v0.23 | 2026-08-17 | 第一阶段收尾：首次引导可选一键导入默认配置或手动设置、LLM 默认统一 DeepSeek（key 留空）、首页与 README 介绍同步优化、变更记录移至文末；AI 审核标准放宽不误杀、部分 JSON 容错补跑、规则重放按能力变化触发、飞书改富文本卡片 |
+| v0.23 | 2026-08-17 | 第一阶段收尾：首次引导二选一（一键导入现成默认配置，可选令牌后完成 / 手动设置）、LLM 默认统一 DeepSeek（key 留空）、首页与 README 介绍同步优化、变更记录移至文末；AI 审核标准放宽不误杀、部分 JSON 容错补跑、规则重放按能力变化触发、飞书改富文本卡片 |
 | v0.22 | 2026-08-16 05:00:00 | 润色项目介绍：作用/优势、已接入豆瓣与微博、即将小红书等、通知与硬规则+AI |
 | v0.21 | 2026-08-15 20:54:00 | 增加 Makefile：build / run / test / vet / clean |
 | v0.20 | 2026-08-15 20:51:00 | 本地二进制约定输出到 `bin/`，不入库 |

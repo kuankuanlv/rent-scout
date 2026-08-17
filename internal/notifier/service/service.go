@@ -35,11 +35,19 @@ func New(opts Options) (*Service, error) {
 	}
 	n := notifier.NewNotifier(db, notifier.NotifierOptions{HotConfig: rt, LiveChannels: live})
 	s := &Service{rt: rt, db: db}
+
+	batchSize := 20
+	if rt != nil {
+		if n := rt.Get().Notifier.BatchSize; n > 0 {
+			batchSize = n
+		}
+	}
+
 	s.pipe = pipeline.New(
 		s.fetch,
 		n.ProcessBatch,
 		pipeline.Options{
-			BatchSize: 20,
+			BatchSize: batchSize,
 			Linger:    pipeline.DefaultLinger,
 			Component: pkglog.Notifier,
 			WaitFull:  true,
@@ -64,9 +72,10 @@ func (s *Service) fetch(ctx context.Context, limit int) ([]models.RentPost, erro
 		log.Info("当前配置通知渠道密钥为空，无需执行")
 		return nil, nil
 	}
-	if n := app.Notifier.BatchSize; n > 0 {
-		limit = n
-	}
+
+	// 凑批由 pipeline 统一管理，不再在此动态覆盖 limit
+	// 若需变更 batch_size 请重启服务（与 aiPipe 模式一致）
+
 	names := make([]string, len(chs))
 	for i, c := range chs {
 		names[i] = c.Name()
@@ -111,6 +120,14 @@ func liveChannels(app *config.AppConfig, env *config.Secrets) []notifier.Channel
 		}
 	}
 	return chs
+}
+
+// Signal 上游落库后的非阻塞信号（AI 审核/硬筛完成 → 立即拉批，不足批继续等 linger）
+func (s *Service) Signal() {
+	if s == nil || s.pipe == nil {
+		return
+	}
+	s.pipe.Signal()
 }
 
 func (s *Service) Enabled() bool {

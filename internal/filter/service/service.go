@@ -26,19 +26,42 @@ type Options struct {
 
 // Service 硬筛、AI 筛和规则 replay
 type Service struct {
-	rt        *config.HotConfig
-	db        *store.Store
-	consumer  *filter.Consumer
-	hard      *pipeline.Consumer[models.RentPost]
-	ai        *pipeline.Consumer[models.RentPost]
-	collected chan struct{}
-	replay    chan struct{}
+	rt            *config.HotConfig
+	db            *store.Store
+	consumer      *filter.Consumer
+	hard          *pipeline.Consumer[models.RentPost]
+	ai            *pipeline.Consumer[models.RentPost]
+	collected     chan struct{}
+	replay        chan struct{}
+	onNotifyReady func() // 筛选落库完成回调（通知消费器用来立即拉批）
 }
 
 func New(opts Options) (*Service, error) {
 	rt, db := opts.Config, opts.Store
 	chain := filter.NewRuleChain(nil)
 	fc := filter.NewConsumerWithOptions(chain, db, filter.ConsumerOptions{HotConfig: rt})
+
+	// late bind：pipe 构造在前，Service 赋值在后；筛选成功落库后才触发通知拉批信号
+	var svc *Service
+	notifyHard := func(ctx context.Context, batch []models.RentPost) error {
+		if err := fc.ProcessHard(ctx, batch); err != nil {
+			return err
+		}
+		if svc != nil && svc.onNotifyReady != nil {
+			svc.onNotifyReady()
+		}
+		return nil
+	}
+	notifyAI := func(ctx context.Context, batch []models.RentPost) error {
+		if err := fc.ProcessAI(ctx, batch); err != nil {
+			return err
+		}
+		if svc != nil && svc.onNotifyReady != nil {
+			svc.onNotifyReady()
+		}
+		return nil
+	}
+
 	hardPipe := pipeline.New(
 		func(ctx context.Context, limit int) ([]models.RentPost, error) {
 			if rt != nil {
@@ -48,7 +71,7 @@ func New(opts Options) (*Service, error) {
 			}
 			return fc.FetchCollected(ctx, limit)
 		},
-		fc.ProcessHard,
+		notifyHard,
 		pipeline.Options{
 			BatchSize: 20,
 			Linger:    pipeline.DefaultLinger,
@@ -57,7 +80,7 @@ func New(opts Options) (*Service, error) {
 	)
 	aiPipe := pipeline.New(
 		fc.FetchAwaitingAI,
-		fc.ProcessAI,
+		notifyAI,
 		pipeline.Options{
 			BatchSize: 20,
 			Linger:    pipeline.DefaultLinger,
@@ -65,7 +88,7 @@ func New(opts Options) (*Service, error) {
 			WaitFull:  true,
 		},
 	)
-	return &Service{
+	svc = &Service{
 		rt:        rt,
 		db:        db,
 		consumer:  fc,
@@ -73,7 +96,16 @@ func New(opts Options) (*Service, error) {
 		ai:        aiPipe,
 		collected: make(chan struct{}, collectedCap),
 		replay:    make(chan struct{}, replayCap),
-	}, nil
+	}
+	return svc, nil
+}
+
+// SetOnNotifyReady 注册「筛选落库完成」回调（通知消费器用来立即拉批）
+func (s *Service) SetOnNotifyReady(fn func()) {
+	if s == nil {
+		return
+	}
+	s.onNotifyReady = fn
 }
 
 // SignalCollected 采集入库后的非阻塞信号；满则丢

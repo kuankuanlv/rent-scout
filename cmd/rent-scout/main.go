@@ -53,6 +53,8 @@ func main() {
 		pkglog.Component(pkglog.Main).Error("通知模块初始化失败", "err", err)
 		os.Exit(1)
 	}
+	// 筛选落库完成 → 立即拉批通知（不再等 linger 兜底）
+	filterSvc.SetOnNotifyReady(notifierSvc.Signal)
 
 	cfgSvc, err := configservice.New(configservice.Options{Hot: resources.Config})
 	if err != nil {

@@ -53,27 +53,27 @@ jobs:
             goos: linux
             goarch: amd64
             artifact_key: linux-amd64
-          - name: linux-aarch64
+          - name: linux-arm64
             goos: linux
             goarch: arm64
-            artifact_key: linux-aarch64
-          - name: macos-amd64
+            artifact_key: linux-arm64
+          - name: darwin-amd64
             goos: darwin
             goarch: amd64
-            artifact_key: macos-amd64
-          - name: macos-aarch64
+            artifact_key: darwin-amd64
+          - name: darwin-arm64
             goos: darwin
             goarch: arm64
-            artifact_key: macos-aarch64
+            artifact_key: darwin-arm64
           - name: windows-amd64
             goos: windows
             goarch: amd64
             artifact_key: windows-amd64
             ext: .exe
-          - name: windows-aarch64
+          - name: windows-arm64
             goos: windows
             goarch: arm64
-            artifact_key: windows-aarch64
+            artifact_key: windows-arm64
             ext: .exe
 
     steps:

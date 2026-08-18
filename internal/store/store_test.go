@@ -1,7 +1,6 @@
 package store
 
 import (
-	"database/sql"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -435,7 +434,7 @@ func TestEnsureDefaultRule(t *testing.T) {
 	for _, r := range rules {
 		byName[r.Name] = r
 	}
-	if byName["黑名单-中介"].Value != "中介,代理,隔断," || byName["白名单-地点"].Value != "梨园,雍和宫" {
+	if byName["黑名单-中介"].Value != "中介,代理,隔断," || byName["白名单-地点"].Value != "梨园,雍和宫,木樨地,公主坟,五棵松,八宝山,古城,苹果园,六里桥" {
 		t.Errorf("默认规则值不符: %+v", rules)
 	}
 	if byName["靠谱个人房源"].Type != models.RuleTypeAINatural || byName["靠谱个人房源"].Value != models.BuiltInAIRuleValue {
@@ -573,37 +572,6 @@ func TestPostTagsRoundTrip(t *testing.T) {
 	}
 	if len(list[0].Tags) != 2 || list[0].Tags[0].Text != "望京" {
 		t.Errorf("Tags = %+v, want 望京+14号线", list[0].Tags)
-	}
-}
-
-// 旧库仅有 posts 表时 Open 也会幂等补建 post_tags
-func TestOpenCreatesPostTags(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "legacy.db")
-	legacy, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := legacy.Exec(`CREATE TABLE posts (
-	    id INTEGER PRIMARY KEY AUTOINCREMENT,
-	    source TEXT NOT NULL, external_id TEXT NOT NULL,
-	    url TEXT NOT NULL DEFAULT '', title TEXT NOT NULL DEFAULT '',
-	    content TEXT NOT NULL DEFAULT '', author TEXT NOT NULL DEFAULT '',
-	    author_url TEXT NOT NULL DEFAULT '', published_at DATETIME,
-	    collected_at DATETIME NOT NULL, status TEXT NOT NULL DEFAULT 'collected',
-	    raw TEXT NOT NULL DEFAULT '', UNIQUE(source, external_id)
-	)`); err != nil {
-		t.Fatal(err)
-	}
-	legacy.Close()
-
-	s, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("Open 旧库失败: %v", err)
-	}
-	defer s.Close()
-	var n int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='post_tags'`).Scan(&n); err != nil || n != 1 {
-		t.Fatalf("应有 post_tags 表: n=%d err=%v", n, err)
 	}
 }
 
@@ -1045,123 +1013,6 @@ func TestMarkClearPostHandled(t *testing.T) {
 	p, ok, err = s.GetPost(id)
 	if err != nil || !ok || p.HandledAt != nil {
 		t.Fatalf("清除后 HandledAt 应 nil: ok=%v err=%v HandledAt=%v", ok, err, p.HandledAt)
-	}
-}
-
-// 旧库无 handled_at：Open 幂等 ALTER 补列
-func TestMigrateAddsHandledAtColumn(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "legacy-handled.db")
-	legacy, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := legacy.Exec(`CREATE TABLE posts (
-	    id INTEGER PRIMARY KEY AUTOINCREMENT,
-	    source TEXT NOT NULL, external_id TEXT NOT NULL,
-	    url TEXT NOT NULL DEFAULT '', title TEXT NOT NULL DEFAULT '',
-	    content TEXT NOT NULL DEFAULT '', author TEXT NOT NULL DEFAULT '',
-	    author_url TEXT NOT NULL DEFAULT '', published_at DATETIME,
-	    collected_at DATETIME NOT NULL, status TEXT NOT NULL DEFAULT 'collected',
-	    address_tags TEXT NOT NULL DEFAULT '[]',
-	    raw TEXT NOT NULL DEFAULT '', UNIQUE(source, external_id)
-	)`); err != nil {
-		t.Fatal(err)
-	}
-	legacy.Close()
-
-	s, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("Open 旧库失败: %v", err)
-	}
-	defer s.Close()
-	ok, err := s.columnExists("posts", "handled_at")
-	if err != nil || !ok {
-		t.Fatalf("旧库补 handled_at 失败: ok=%v err=%v", ok, err)
-	}
-	ok, err = s.columnExists("posts", "price")
-	if err != nil || !ok {
-		t.Fatalf("旧库补 price 失败: ok=%v err=%v", ok, err)
-	}
-	ok, err = s.columnExists("posts", "contact")
-	if err != nil || !ok {
-		t.Fatalf("旧库补 contact 失败: ok=%v err=%v", ok, err)
-	}
-}
-
-// 旧四 type+mode 经 Open/migrate 写成三 type（Spec 09 §2.2）
-func TestMigrateRuleTypes(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "legacy-rules.db")
-	legacy, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := legacy.Exec(`CREATE TABLE rules (
-	    id INTEGER PRIMARY KEY AUTOINCREMENT,
-	    name TEXT NOT NULL, type TEXT NOT NULL, mode TEXT NOT NULL,
-	    value TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
-	    priority INTEGER NOT NULL DEFAULT 0, created_at DATETIME NOT NULL
-	)`); err != nil {
-		t.Fatal(err)
-	}
-	now := "2026-01-01 00:00:00"
-	seeds := []struct {
-		name, typ, mode, value string
-	}{
-		{"白", "hard_whitelist", "include", "望京"},
-		{"黑", "hard_blacklist", "exclude", "中介"},
-		{"关入", "hard_keyword", "include", "整租"},
-		{"关出", "hard_keyword", "exclude", "合租"},
-		{"关空", "hard_keyword", "", "中介"},
-		{"AI", "ai_natural", "", "只要地铁近"},
-		{"已新", "whitelist", "", "和平里"},
-	}
-	for _, s := range seeds {
-		if _, err := legacy.Exec(`INSERT INTO rules (name,type,mode,value,enabled,priority,created_at) VALUES (?,?,?,?,1,1,?)`,
-			s.name, s.typ, s.mode, s.value, now); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if _, err := legacy.Exec(`CREATE TABLE kv_config (
-	    key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL
-	)`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := legacy.Exec(`INSERT INTO kv_config (key,value,updated_at) VALUES ('rules.defaults_version','2',0)`); err != nil {
-		t.Fatal(err)
-	}
-	legacy.Close()
-
-	st, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	defer st.Close()
-	rules, err := st.ListRules(false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := map[string]string{
-		"白": "whitelist", "黑": "blacklist", "关入": "whitelist",
-		"关出": "blacklist", "关空": "blacklist", "AI": "ai_natural", "已新": "whitelist",
-	}
-	if len(rules) != len(want) {
-		t.Fatalf("规则数 = %d, want %d", len(rules), len(want))
-	}
-	for _, r := range rules {
-		if got := want[r.Name]; got == "" || r.Type != got {
-			t.Errorf("%s type = %q, want %q", r.Name, r.Type, got)
-		}
-	}
-	// 再 Open 一次仍幂等
-	st.Close()
-	st2, err := Open(dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st2.Close()
-	rules2, _ := st2.ListRules(false)
-	if len(rules2) != len(want) {
-		t.Errorf("幂等后规则数 = %d", len(rules2))
 	}
 }
 

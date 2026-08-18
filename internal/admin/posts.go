@@ -167,7 +167,9 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if err := s.tmpl.ExecuteTemplate(w, "home", mergePageCtx(s.pageCtx(r, "home"), map[string]any{})); err != nil {
+	if err := s.tmpl.ExecuteTemplate(w, "home", mergePageCtx(s.pageCtx(r, "home"), map[string]any{
+		"Onboard": collectOnboard(s.rt.Get(), s.rt.Secrets(), r.URL.Query().Get("token")),
+	})); err != nil {
 		pkglog.Component(pkglog.Admin).Error("介绍页渲染失败", "err", err)
 	}
 }
@@ -244,6 +246,7 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
 		"TagsMore":     tagsMore,
 		"TagsMoreOpen": filterTagsContain(tagsMore, f.Tag),
 		"Filter":       filter,
+		"Onboard":      collectorOnboard(s.rt.Get(), s.rt.Secrets(), r.URL.Query().Get("token")),
 		"Page":         page,
 		"Pages":        pages,
 		"Total":        total,

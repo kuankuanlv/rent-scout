@@ -6,6 +6,13 @@
 {{template "nav" .}}
 <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
 {{if .Msg}}<div class="mb-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 px-4 py-3 text-sm">{{.Msg}}</div>{{end}}
+  {{if .Onboard}}
+  <div class="mb-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-950 px-4 py-3 text-sm space-y-2">
+    {{range .Onboard}}
+    <p>{{.Body}} {{if .Href}}<a href="{{.Href}}" class="underline font-medium">{{.LinkText}}</a>{{end}}</p>
+    {{end}}
+  </div>
+  {{end}}
 <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 mb-6">
   <div class="bg-white rounded-2xl border p-4 text-center"><div class="text-2xl font-bold text-brand-600">{{.Today.Collected}}</div><div class="text-xs text-gray-500 mt-1">今日采集</div></div>
   <div class="bg-white rounded-2xl border p-4 text-center"><div class="text-2xl font-bold text-green-600">{{.Today.Passed}}</div><div class="text-xs text-gray-500 mt-1">通过</div></div>

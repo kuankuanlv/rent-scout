@@ -16,7 +16,7 @@ var ErrLastEnabledRule = errors.New("至少保留一条启用规则")
 func defaultSeedRules() []models.Rule {
 	return []models.Rule{
 		{Name: "黑名单-中介", Type: models.RuleTypeBlacklist, Value: "中介,代理,隔断,", Enabled: true, Priority: 90},
-		{Name: "白名单-地点", Type: models.RuleTypeWhitelist, Value: "梨园,雍和宫", Enabled: true, Priority: 80},
+		{Name: "白名单-地点", Type: models.RuleTypeWhitelist, Value: "梨园,雍和宫,木樨地,公主坟,五棵松,八宝山,古城,苹果园,六里桥", Enabled: true, Priority: 80},
 	}
 }
 

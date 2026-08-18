@@ -68,6 +68,7 @@ type configField struct {
 	DayOffset    bool     // 天数偏移，支持小数；小字 tip 显示换算时间
 	Readonly     bool     // 历史快照只读，控件 disabled
 	NeedRestart  bool     // 启动时钉死，保存后要重启才吃进
+	Placeholder  string   // 输入框占位；空则沿用类型默认
 }
 
 // RestartKeys 进程启动时读进对象、运行中不再跟 HotConfig 的项。
@@ -162,10 +163,7 @@ func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[stri
 		auth = "true"
 	}
 	cookieRawHint := func(ck config.DoubanCookieConfig) string {
-		if raw := ck.CookieRaw; raw != "" {
-			return fmt.Sprintf("已保存 · 长度 %d；留空不修改", len(raw))
-		}
-		return "粘贴 cookie 原文；留空不修改"
+		return cookiePasteHint(ck.CookieRaw)
 	}
 	apiStyle := "openai"
 	ccPass := get(config.KeyDoubanCookieCloudPwd, env.Collector.Douban.CookiecloudPass)
@@ -187,8 +185,15 @@ func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[stri
 	sourcesVal := get("collector.sources", strings.Join(app.Collector.Sources, ","))
 	channelsVal := get("notifier.channels", strings.Join(app.Notifier.Channels, ","))
 	sourceBase := func(source, group string) []configField {
+		enableLabel := source
+		switch source {
+		case models.SourceDouban.String():
+			enableLabel = "豆瓣"
+		case models.SourceWeibo.String():
+			enableLabel = "微博"
+		}
 		items := []configField{
-			{Key: "collector.sources", Label: "启用", Value: sourcesVal, Type: "sources", Options: []string{source}, Group: group, Wide: true, Hint: "勾选纳入采集"},
+			{Key: "collector.sources", Label: "启用", Value: sourcesVal, Type: "sources", Options: []string{source}, OptionLabels: []string{enableLabel}, Group: group, Wide: true, Hint: "默认关闭。勾选才会采集；别忘了把 Cookie 贴到下面"},
 			{Key: "collector.interval", Label: "采集间隔(秒)", Value: get("collector.interval", strconv.Itoa(app.Collector.Interval)), Type: "number", Hint: "跑完一轮后等多久再开下一轮，默认 300（5 分钟）", Group: group},
 			{Key: "collector.jitter_ratio", Label: "抖动比例", Value: get("collector.jitter_ratio", fmt.Sprintf("%g", app.Collector.JitterRatio)), Type: "text", Group: group},
 		}
@@ -222,7 +227,7 @@ func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[stri
 				},
 			},
 		}),
-		makeSection("collector", "采集", "按源切换；保存只写入当前源，不影响另一源。", []configBlock{
+		makeSection("collector", "采集", "豆瓣、微博默认都不开。想采哪个就勾启用，再把浏览器里的 Cookie 整段贴进对应框（直接粘贴内容即可，不用改格式）。也可用 CookieCloud 自动同步。", []configBlock{
 			{
 				Title: "豆瓣", Class: "bg-slate-50 border-slate-200", Group: "douban",
 				Items: sourceBase(models.SourceDouban.String(), "douban"),
@@ -241,10 +246,10 @@ func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[stri
 				},
 			},
 			{
-				Title: "豆瓣 Cookie", Hint: "raw 直接贴原文，保存即写入该源 cookie；cookiecloud 只填地址、UUID、密码，不出现原文框。", Class: "bg-amber-50 border-amber-200", Group: "douban", Tools: "cookie",
+				Title: "豆瓣 Cookie", Hint: "选「粘贴原文」后，把浏览器里复制的 Cookie 整段贴进框即可，不用改格式。也可用 CookieCloud。", Class: "bg-amber-50 border-amber-200", Group: "douban", Tools: "cookie",
 				Items: []configField{
-					{Key: config.KeyDoubanCookieMode, Label: "Cookie 模式", Value: get(config.KeyDoubanCookieMode, env.Collector.Douban.CookieMode), Type: "select", Options: []string{config.CookieModeNone.String(), config.CookieModeRaw.String(), config.CookieModeCookieCloud.String()}, Hint: "none 不带 cookie；raw 粘贴原文；cookiecloud 只填三元组", Group: "douban"},
-					{Key: config.KeyDoubanCookieRaw, Label: "Cookie 原文", Value: "", Type: "textarea", CanClear: true, Hint: cookieRawHint(env.Collector.Douban), ShowWhen: config.CookieModeRaw.String(), Group: "douban"},
+					{Key: config.KeyDoubanCookieMode, Label: "Cookie 模式", Value: get(config.KeyDoubanCookieMode, env.Collector.Douban.CookieMode), Type: "select", Options: []string{config.CookieModeNone.String(), config.CookieModeRaw.String(), config.CookieModeCookieCloud.String()}, OptionLabels: []string{"不带 Cookie", "粘贴原文", "CookieCloud"}, Hint: "采集前先启用本源。选粘贴原文，把 Cookie 整段贴进下面的框即可", Group: "douban"},
+					{Key: config.KeyDoubanCookieRaw, Label: "Cookie 原文", Value: "", Type: "textarea", CanClear: true, Placeholder: "把 Cookie 整段贴进来即可，留空不改已保存的值", Hint: cookieRawHint(env.Collector.Douban), ShowWhen: config.CookieModeRaw.String(), Group: "douban"},
 					{Key: config.KeyDoubanCookieCloudURL, Label: "CookieCloud 地址", Value: get(config.KeyDoubanCookieCloudURL, env.Collector.Douban.CookiecloudURL), Type: "text", Hint: "如 https://cc.example.com；检测用当前输入，不读库", CanClear: true, ShowWhen: config.CookieModeCookieCloud.String(), Group: "douban"},
 					{Key: config.KeyDoubanCookieCloudKey, Label: "CookieCloud UUID", Value: get(config.KeyDoubanCookieCloudKey, env.Collector.Douban.CookiecloudKey), Type: "text", CanClear: true, ShowWhen: config.CookieModeCookieCloud.String(), Group: "douban"},
 					{Key: config.KeyDoubanCookieCloudPwd, Label: "CookieCloud 密码", Value: ccPass, Type: "text", CanClear: true, Hint: "明文回显；勾选清空可删除", ShowWhen: config.CookieModeCookieCloud.String(), Group: "douban", Wide: true},
@@ -269,10 +274,10 @@ func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[stri
 				},
 			},
 			{
-				Title: "微博 Cookie", Hint: "超话最新流和博主接口用 weibo.com Cookie。长微博全文和超话评论兜底还会打 weibo.cn，cookiecloud 会按域各存一份。raw 只填 weibo.com 时，超话列表仍可用，cn 域的评论/全文会跳过。", Class: "bg-amber-50 border-amber-200", Group: "weibo", Tools: "cookie",
+				Title: "微博 Cookie", Hint: "超话和博主用 weibo.com Cookie。选「粘贴原文」后整段贴进来即可。cookiecloud 会按域各存一份。raw 只填 weibo.com 时，超话列表仍可用，cn 域的评论/全文会跳过。", Class: "bg-amber-50 border-amber-200", Group: "weibo", Tools: "cookie",
 				Items: []configField{
-					{Key: config.KeyWeiboCookieMode, Label: "Cookie 模式", Value: get(config.KeyWeiboCookieMode, env.Collector.Weibo.CookieMode), Type: "select", Options: []string{config.CookieModeNone.String(), config.CookieModeRaw.String(), config.CookieModeCookieCloud.String()}, Hint: "none 不带 cookie；raw 粘贴原文；cookiecloud 只填三元组", Group: "weibo"},
-					{Key: config.KeyWeiboCookieRaw, Label: "Cookie 原文", Value: "", Type: "textarea", CanClear: true, Hint: cookieRawHint(env.Collector.Weibo) + " 填 weibo.com 域。", ShowWhen: config.CookieModeRaw.String(), Group: "weibo"},
+					{Key: config.KeyWeiboCookieMode, Label: "Cookie 模式", Value: get(config.KeyWeiboCookieMode, env.Collector.Weibo.CookieMode), Type: "select", Options: []string{config.CookieModeNone.String(), config.CookieModeRaw.String(), config.CookieModeCookieCloud.String()}, OptionLabels: []string{"不带 Cookie", "粘贴原文", "CookieCloud"}, Hint: "采集前先启用本源。选粘贴原文，把 Cookie 整段贴进下面的框即可", Group: "weibo"},
+					{Key: config.KeyWeiboCookieRaw, Label: "Cookie 原文", Value: "", Type: "textarea", CanClear: true, Placeholder: "把 Cookie 整段贴进来即可，留空不改已保存的值", Hint: cookieRawHint(env.Collector.Weibo) + " 填 weibo.com 域。", ShowWhen: config.CookieModeRaw.String(), Group: "weibo"},
 					{Key: config.KeyWeiboCookieCloudURL, Label: "CookieCloud 地址", Value: get(config.KeyWeiboCookieCloudURL, env.Collector.Weibo.CookiecloudURL), Type: "text", Hint: "如 https://cc.example.com；检测用当前输入，不读库", CanClear: true, ShowWhen: config.CookieModeCookieCloud.String(), Group: "weibo"},
 					{Key: config.KeyWeiboCookieCloudKey, Label: "CookieCloud UUID", Value: get(config.KeyWeiboCookieCloudKey, env.Collector.Weibo.CookiecloudKey), Type: "text", CanClear: true, ShowWhen: config.CookieModeCookieCloud.String(), Group: "weibo"},
 					{Key: config.KeyWeiboCookieCloudPwd, Label: "CookieCloud 密码", Value: weiboCCPass, Type: "text", CanClear: true, Hint: "明文回显；勾选清空可删除", ShowWhen: config.CookieModeCookieCloud.String(), Group: "weibo", Wide: true},
@@ -537,6 +542,33 @@ func MergeDefaultsInto(updates map[string]string, kv map[string]string) {
 			}
 		}
 	}
+}
+
+func (s *Server) saveConfigImport(updates map[string]string) (needRestart bool, err error) {
+	if len(updates) == 0 {
+		return false, fmt.Errorf("没有有效的配置项")
+	}
+	for k, v := range updates {
+		updates[k] = config.NormalizeValue(v)
+	}
+	current := CurrentConfigKV(s.db)
+	needRestart = len(ChangedRestartKeys(current, updates)) > 0
+	merged := config.MergeKV(current, updates)
+	app := config.KVToApp(merged)
+	if errs := config.ValidateApp(app); len(errs) > 0 {
+		return false, fmt.Errorf("校验失败: %s", strings.Join(errs, "; "))
+	}
+	env := config.KVToSecrets(merged)
+	if errs := config.ValidateSecrets(env); len(errs) > 0 {
+		return false, fmt.Errorf("校验失败: %s", strings.Join(errs, "; "))
+	}
+	if err := store.SetConfigBatch(s.db, updates); err != nil {
+		return false, err
+	}
+	if err := s.rt.ReloadOnce(); err != nil {
+		return needRestart, err
+	}
+	return needRestart, nil
 }
 
 func (s *Server) saveSectionUpdates(section string, updates map[string]string) error {

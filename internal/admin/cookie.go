@@ -91,10 +91,6 @@ func (s *Server) handleCookieTest(w http.ResponseWriter, r *http.Request) {
 	if mode == "" {
 		mode = config.CookieModeNone.String()
 	}
-	if mode == "file" {
-		writeJSON(w, map[string]any{"ok": false, "http": 0, "snippet": "cookie_mode=file 已移除，请改用 none/raw/cookiecloud"})
-		return
-	}
 
 	draft := s.draftCookieConfig(r)
 	draft.CookieMode = mode

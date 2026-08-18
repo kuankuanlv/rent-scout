@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"rent-scout/internal/config"
+	"rent-scout/internal/store"
 )
 
 // fakeController SourceController 测试替身：known 源清单 + enabled 状态 + 调用记录
@@ -54,7 +55,7 @@ func (f *fakeController) SourceEnabled(name string) bool {
 func TestAPISourcesList(t *testing.T) {
 	s := newAdminTestStore(t)
 	defer s.Close()
-	if err := s.SetCursor("douban", "1:0"); err != nil {
+	if err := s.SetProgress("douban", store.SourceProgress{Page: "1:0"}); err != nil {
 		t.Fatal(err)
 	}
 	ctrl := &fakeController{known: map[string]bool{"douban": true}, enabled: map[string]bool{"douban": false}}
@@ -152,7 +153,7 @@ func TestAPISourceActions(t *testing.T) {
 func TestAPISourceResetClearsProgress(t *testing.T) {
 	s := newAdminTestStore(t)
 	defer s.Close()
-	if err := s.SetCursor("douban", "1:0"); err != nil {
+	if err := s.SetProgress("douban", store.SourceProgress{Page: "1:0"}); err != nil {
 		t.Fatal(err)
 	}
 	ctrl := &fakeController{known: map[string]bool{"douban": true}, enabled: map[string]bool{"douban": true}}

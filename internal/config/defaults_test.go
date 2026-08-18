@@ -42,8 +42,8 @@ func TestDefaultKV(t *testing.T) {
 	// 反解一致性：KVToApp / KVToSecrets 不应报错，且组与源可解析
 	app := KVToApp(kv)
 	_ = KVToSecrets(kv)
-	if len(app.Collector.Sources) != 2 {
-		t.Errorf("sources = %v, want douban,weibo", app.Collector.Sources)
+	if len(app.Collector.Sources) != 0 {
+		t.Errorf("sources = %v, want 空（默认关闭）", app.Collector.Sources)
 	}
 	if len(app.Collector.Weibo.Users) < 1 || len(app.Collector.Weibo.SuperTopics) < 1 {
 		t.Errorf("weibo users/supertopics 不应为空")
@@ -52,8 +52,6 @@ func TestDefaultKV(t *testing.T) {
 	// 排除键
 	for _, k := range []string{
 		"admin.auth_required", "admin.token", "setup.completed",
-		"posts.status_v3", "rules.defaults_version",
-		"pipeline.batch_size", "pipeline.linger_interval",
 		"collector.weibo.tags", "collector.weibo.urls",
 		"filter.trim_limits.douban",
 	} {

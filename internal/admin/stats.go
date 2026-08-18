@@ -48,6 +48,7 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.tmpl.ExecuteTemplate(w, "stats", mergePageCtx(s.pageCtx(r, "stats"), map[string]any{
 		"Today": today, "Channels": rows, "RuleStats": ruleStats, "Dead": dead, "Msg": r.URL.Query().Get("msg"),
+		"Onboard": collectOnboard(s.rt.Get(), s.rt.Secrets(), r.URL.Query().Get("token")),
 	})); err != nil {
 		pkglog.Component(pkglog.Admin).Error("模板渲染失败", "err", err)
 	}

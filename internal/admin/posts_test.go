@@ -81,6 +81,40 @@ func TestHandleNotifySelectedEmpty(t *testing.T) {
 	}
 }
 
+func TestAdminPostsOnboardWhenSourcesOff(t *testing.T) {
+	s := newAdminTestStore(t)
+	defer s.Close()
+	srv := newTestServerWithStore(t, s, config.DefaultApp(), "", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/posts", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "还没开始采集") {
+		t.Error("源全关时应提示还没开始采集")
+	}
+	if !strings.Contains(body, "去配置采集") {
+		t.Error("应有去配置采集链接")
+	}
+	if !strings.Contains(body, "还没有帖子。先启用采集源并贴上 Cookie") {
+		t.Error("空列表应提示先启用采集源并贴 Cookie")
+	}
+	if !strings.Contains(body, `id="posts-collector-onboard"`) {
+		t.Error("应有帖子页采集引导横幅")
+	}
+	if !strings.Contains(body, `data-dismiss-key="collector-not-started"`) {
+		t.Error("应有 dismiss key")
+	}
+	if !strings.Contains(body, "不再显示") {
+		t.Error("应有不再显示按钮")
+	}
+	if !strings.Contains(body, "粘贴原文") {
+		t.Error("应指引 Cookie 粘贴方式")
+	}
+}
+
 func TestAdminPostsHasBatchSelect(t *testing.T) {
 	s := newAdminTestStore(t)
 	defer s.Close()

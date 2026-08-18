@@ -1,14 +1,9 @@
 package config
 
-import (
-	"rent-scout/internal/models"
-)
-
 // AppConfig 公开配置，按规格 7.2 四类组织
 type AppConfig struct {
 	Server    ServerConfig    // 常规：服务运行基础
 	Log       LogConfig       // 常规：日志
-	Pipeline  PipelineConfig  // 已废弃公开 UI；仅旧 KV 迁移 fallback
 	Collector CollectorConfig // 收集
 	Filter    FilterConfig    // 过滤
 	Notifier  NotifierConfig  // 通知
@@ -36,12 +31,6 @@ type LogConfig struct {
 	Format      string
 	Path        string // 可选：日志文件路径（空=stdout）
 	MemoryLines int    // 管理台 ring 保留条数，占进程内存
-}
-
-// PipelineConfig 旧组批字段（UI 已拆到 filter/notifier）；读旧 pipeline.batch_size 作 fallback
-type PipelineConfig struct {
-	BatchSize      int // 旧 key；新 filter/notifier.batch_size 空时回落
-	LingerInterval int // 旧 key；linger 改用常量，不再校验/写 UI
 }
 
 // CollectorConfig 收集：源清单 + 全局频率 + 每源配置。
@@ -91,7 +80,7 @@ type NotifierConfig struct {
 type AdminConfig struct {
 	AuthRequired bool   // 是否启用鉴权；false=默认不鉴权（启动 WARN 强提醒）
 	Token        string // 访问口令；auth_required=true 且为空时启动随机生成
-	// 配置保存：开了鉴权就必须有 token，空提交会被拦住；启动补生成只兜底旧库
+	// 配置保存：开了鉴权就必须有 token，空提交会被拦住
 }
 
 // Secrets 敏感配置（存 SQLite secret.* 前缀）
@@ -126,7 +115,6 @@ type DoubanCookieConfig struct {
 	CookieMode      string
 	CookieRaw       string
 	CookieRawCN     string // weibo.cn 域；仅微博用
-	CookieFile      string // 废弃：旧 file 模式 KV 兼容字段，读库时忽略
 	CookiecloudURL  string
 	CookiecloudKey  string
 	CookiecloudPass string
@@ -143,7 +131,7 @@ type LLMConfig struct {
 	BaseURL        string
 	Model          string
 	FallbackModels []string
-	APIStyle       string // none | openai | other；旧 custom 读入当 other；默认 openai
+	APIStyle       string // none | openai | other；默认 openai
 }
 
 // SecretsNotifier 各渠道 webhook
@@ -246,9 +234,6 @@ func applyDefaults(cfg *AppConfig) {
 	if cfg.Log.MemoryLines <= 0 {
 		cfg.Log.MemoryLines = DefaultLogMemoryLines
 	}
-	if len(cfg.Collector.Sources) == 0 {
-		cfg.Collector.Sources = []string{models.SourceDouban.String()}
-	}
 	if cfg.Collector.Interval == 0 {
 		cfg.Collector.Interval = 300
 	}
@@ -283,13 +268,8 @@ func applyDefaults(cfg *AppConfig) {
 	} else {
 		cfg.Collector.Douban.RangeTo = CanonicalDayOffset(cfg.Collector.Douban.RangeTo)
 	}
-	// 组批：优先新 key；空则回落旧 pipeline.batch_size，再默认 20
 	if cfg.Filter.BatchSize == 0 {
-		if cfg.Pipeline.BatchSize > 0 {
-			cfg.Filter.BatchSize = cfg.Pipeline.BatchSize
-		} else {
-			cfg.Filter.BatchSize = 20
-		}
+		cfg.Filter.BatchSize = 20
 	}
 	if cfg.Filter.AIBatchSize == 0 {
 		cfg.Filter.AIBatchSize = 10
@@ -300,11 +280,7 @@ func applyDefaults(cfg *AppConfig) {
 		cfg.Filter.AIEnabled = &enabled
 	}
 	if cfg.Notifier.BatchSize == 0 {
-		if cfg.Pipeline.BatchSize > 0 {
-			cfg.Notifier.BatchSize = cfg.Pipeline.BatchSize
-		} else {
-			cfg.Notifier.BatchSize = DefaultNotifierBatch
-		}
+		cfg.Notifier.BatchSize = DefaultNotifierBatch
 	}
 	if cfg.Notifier.Interval == 0 {
 		cfg.Notifier.Interval = DefaultNotifierInterval

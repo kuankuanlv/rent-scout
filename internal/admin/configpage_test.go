@@ -70,8 +70,14 @@ func TestConfigTabs(t *testing.T) {
 	if !strings.Contains(body, `name="section" value="collector"`) {
 		t.Errorf("sources tab 表单 section 应为 collector")
 	}
-	if !strings.Contains(body, "按源切换") {
-		t.Errorf("sources 应对齐 collector section")
+	if !strings.Contains(body, "默认都不开") {
+		t.Errorf("sources 应对齐 collector section，并说明默认关闭")
+	}
+	if !strings.Contains(body, "还没开始采集") {
+		t.Errorf("sources 首次应提示去启用采集源")
+	}
+	if !strings.Contains(body, "把 Cookie 整段贴进来即可") {
+		t.Errorf("Cookie 原文应提示直接粘贴")
 	}
 	if !strings.Contains(body, `value="raw"`) {
 		t.Errorf("sources 应含 cookie raw 选项")
@@ -84,6 +90,17 @@ func TestConfigTabs(t *testing.T) {
 	}
 	if !strings.Contains(body, "导出 JSON") || !strings.Contains(body, "/admin/config/export") {
 		t.Errorf("配置页应有导出 JSON")
+	}
+	if !strings.Contains(body, "/admin/config/import") || !strings.Contains(body, "确认导入") {
+		t.Errorf("配置页应有导入")
+	}
+	// 回归：导入下拉面板若嵌套在 overflow-x-auto 容器内会被裁剪不可见（overflow-y 被计算为 auto）。
+	// 横向滚动容器应只包裹 Tab 区（flex-1），不能是包住导出/导入按钮的整条顶栏。
+	if i := strings.Index(body, "overflow-x-auto"); i >= 0 {
+		open := body[strings.LastIndex(body[:i], "<div") : i]
+		if !strings.Contains(open, "flex-1") {
+			t.Errorf("overflow-x-auto 应只包裹 Tab 区（flex-1），否则导入下拉面板会被裁剪不可见")
+		}
 	}
 	if !strings.Contains(body, `value="douban"`) || !strings.Contains(body, `value="weibo"`) {
 		t.Errorf("sources 启用源应多选 douban/weibo")
@@ -392,6 +409,57 @@ func TestConfigExportJSON(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), `"collector.douban.range_from"`) {
 		t.Errorf("导出 JSON 应含配置 key: %s", rec.Body.String())
+	}
+}
+
+func TestConfigImportLines(t *testing.T) {
+	s := newAdminTestStore(t)
+	defer s.Close()
+	srv := newTestServerWithStore(t, s, config.DefaultApp(), "", nil)
+
+	form := url.Values{"data": {"server.addr=:9191\nlog.level=warn"}}
+	req := httptest.NewRequest(http.MethodPost, "/admin/config/import", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if v, _ := store.GetConfig(s, "server.addr"); v != ":9191" {
+		t.Errorf("server.addr = %q", v)
+	}
+	if v, _ := store.GetConfig(s, "log.level"); v != "warn" {
+		t.Errorf("log.level = %q", v)
+	}
+}
+
+func TestConfigImportJSONRoundTrip(t *testing.T) {
+	s := newAdminTestStore(t)
+	defer s.Close()
+	app := config.DefaultApp()
+	app.Log.Level = "debug"
+	srv := newTestServerWithStore(t, s, app, "", nil)
+
+	exp := httptest.NewRequest(http.MethodGet, "/admin/config/export", nil)
+	expRec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(expRec, exp)
+	if expRec.Code != http.StatusOK {
+		t.Fatal(expRec.Code)
+	}
+	if err := store.SetConfig(s, "log.level", "info"); err != nil {
+		t.Fatal(err)
+	}
+
+	form := url.Values{"data": {expRec.Body.String()}}
+	req := httptest.NewRequest(http.MethodPost, "/admin/config/import", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if v, _ := store.GetConfig(s, "log.level"); v != "debug" {
+		t.Errorf("log.level = %q, want debug", v)
 	}
 }
 

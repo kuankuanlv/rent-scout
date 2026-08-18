@@ -25,7 +25,7 @@
         <input type="hidden" name="step" value="6">
         <button type="submit" class="w-full px-4 py-3 rounded-xl bg-brand-600 text-white font-medium">一键导入现成默认配置（推荐）</button>
       </form>
-      <p class="text-xs text-gray-400">自动填入豆瓣小组、微博超话与博主、采集/筛选/日志等常用参数；Cookie、LLM Key、Webhook 等敏感项留空，稍后自行填写。</p>
+      <p class="text-xs text-gray-400">自动填入豆瓣小组、微博超话与博主、采集/筛选/日志等常用参数；<strong>豆瓣和微博默认关闭</strong>。Cookie、LLM Key、Webhook 留空，导入后请去配置页启用采集源并直接粘贴 Cookie。</p>
       <a href="/admin/setup?step=1{{if .Token}}&token={{.Token}}{{end}}" class="block text-center px-4 py-3 rounded-xl border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50">手动逐个设置</a>
     </div>
     {{else}}
@@ -33,8 +33,8 @@
       <input type="hidden" name="step" value="{{.Step}}">
       {{if eq .Step 6}}
       <div class="space-y-3">
-        <p class="text-sm font-medium text-green-700">✅ 默认配置已导入，采集与筛选参数已就绪</p>
-        <p class="text-sm text-gray-500">可选：设置访问令牌开启鉴权（不填则直接完成，稍后可在 配置 → 管理 开启）</p>
+        <p class="text-sm font-medium text-green-700">✅ 默认配置已导入</p>
+        <p class="text-sm text-gray-500">豆瓣、微博默认关闭。请到配置页勾选要采的源，并把浏览器 Cookie 整段贴进去。可选：设置访问令牌开启鉴权（不填则直接完成，稍后可在 配置 → 管理 开启）</p>
         <div><label class="block text-sm font-medium mb-1">访问令牌（可选）</label>
         <input type="password" name="admin.token" placeholder="留空不开启鉴权" class="w-full border rounded-xl px-3 py-2 text-sm"></div>
       </div>
@@ -52,15 +52,20 @@
         <option value="debug" {{if eq .App.Log.Level "debug"}}selected{{end}}>debug</option>
         <option value="warn" {{if eq .App.Log.Level "warn"}}selected{{end}}>warn</option></select></div>
       {{else if eq .Step 3}}
+      <p class="text-sm text-amber-900 bg-amber-50 border border-amber-100 rounded-xl px-3 py-2">豆瓣和微博默认关闭。勾选要采的源，选「粘贴原文」后把 Cookie 整段贴进来即可。微博 Cookie 也可稍后到配置页微博分区粘贴。</p>
+      <div class="flex flex-col gap-2 text-sm">
+        <label class="inline-flex items-center gap-2"><input type="checkbox" name="collector.sources" value="douban" {{if csvHas .SourcesCSV "douban"}}checked{{end}}> 启用豆瓣</label>
+        <label class="inline-flex items-center gap-2"><input type="checkbox" name="collector.sources" value="weibo" {{if csvHas .SourcesCSV "weibo"}}checked{{end}}> 启用微博</label>
+      </div>
       <div><label class="block text-sm font-medium mb-1">采集间隔（秒）</label>
       <input type="number" name="collector.interval" value="{{.App.Collector.Interval}}" class="w-full border rounded-xl px-3 py-2 text-sm"></div>
       <div><label class="block text-sm font-medium mb-1">Cookie 模式</label>
       <select name="secret.collector.douban.cookie_mode" id="cookie-mode-select" class="w-full border rounded-xl px-3 py-2 text-sm">
-        <option value="none" {{if or (eq .Env.Collector.Douban.CookieMode "none") (eq .Env.Collector.Douban.CookieMode "")}}selected{{end}}>none（匿名）</option>
-        <option value="raw" {{if eq .Env.Collector.Douban.CookieMode "raw"}}selected{{end}}>raw（原文）</option>
-        <option value="cookiecloud" {{if eq .Env.Collector.Douban.CookieMode "cookiecloud"}}selected{{end}}>cookiecloud</option></select></div>
+        <option value="none" {{if or (eq .Env.Collector.Douban.CookieMode "none") (eq .Env.Collector.Douban.CookieMode "")}}selected{{end}}>不带 Cookie</option>
+        <option value="raw" {{if eq .Env.Collector.Douban.CookieMode "raw"}}selected{{end}}>粘贴原文</option>
+        <option value="cookiecloud" {{if eq .Env.Collector.Douban.CookieMode "cookiecloud"}}selected{{end}}>CookieCloud</option></select></div>
       <div data-cookie-panel="raw"><label class="block text-sm font-medium mb-1">Cookie 原文</label>
-      <textarea name="secret.collector.douban.cookie_raw" rows="3" class="w-full border rounded-xl px-3 py-2 text-sm" placeholder="cookie_mode=raw 时粘贴；留空不修改"></textarea>
+      <textarea name="secret.collector.douban.cookie_raw" rows="3" class="w-full border rounded-xl px-3 py-2 text-sm" placeholder="把 Cookie 整段贴进来即可，留空不改已保存的值"></textarea>
       {{if .CookieRawHint}}<p class="text-xs text-gray-400 mt-1">{{.CookieRawHint}}</p>{{end}}</div>
       <div data-cookie-panel="cookiecloud"><label class="block text-sm font-medium mb-1">CookieCloud 地址</label>
       <input name="secret.collector.douban.cookiecloud_url" value="{{.Env.Collector.Douban.CookiecloudURL}}" class="w-full border rounded-xl px-3 py-2 text-sm" placeholder="https://your-cc-host"></div>

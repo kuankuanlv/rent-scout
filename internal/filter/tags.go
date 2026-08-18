@@ -18,19 +18,7 @@ func SystemTagsFromHard(res models.FilterResult, locations []string) []models.Po
 	if res.Status != models.PostStatusRejected {
 		return tags
 	}
-	if len(res.HardRules) > 0 {
-		for _, h := range res.HardRules {
-			if !models.IsChipText(h.Reason) {
-				continue
-			}
-			tags = append(tags, models.PostTag{
-				Kind:   models.TagKindBlock,
-				Text:   h.Reason,
-				Source: models.TagSourceSystem,
-			})
-		}
-		return tags
-	}
+	// 拒绝不再把黑名单词（中介/代理）写成标签：正文里「非中介」也会子串命中，标未命中就行
 	if len(locations) == 0 {
 		tags = append(tags, models.PostTag{
 			Kind:   models.TagKindUnmatched,

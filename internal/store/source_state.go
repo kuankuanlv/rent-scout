@@ -15,67 +15,37 @@ type SourceProgress struct {
 	Fingerprint string `json:"fp"`
 	Page        string `json:"page"`
 	SeenNewest  string `json:"seen_newest"`
-
-	// 旧字段只读兼容，Encode 不再写出
-	Phase     string `json:"phase,omitempty"`
-	Watermark string `json:"watermark,omitempty"`
-	RangeKey  string `json:"range_key,omitempty"`
 }
 
-// ParseSourceProgress 兼容旧纯字符串游标和旧 JSON（phase/watermark/range_key）
+// ParseSourceProgress 解析 JSON 进度；非 JSON 或空串视为无进度
 func ParseSourceProgress(raw string) SourceProgress {
 	raw = strings.TrimSpace(raw)
-	if raw == "" {
+	if raw == "" || !strings.HasPrefix(raw, "{") {
 		return SourceProgress{}
 	}
-	if strings.HasPrefix(raw, "{") {
-		var p SourceProgress
-		if err := json.Unmarshal([]byte(raw), &p); err == nil {
-			return p.normalized()
-		}
+	var p SourceProgress
+	if err := json.Unmarshal([]byte(raw), &p); err != nil {
+		return SourceProgress{}
 	}
-	return SourceProgress{Page: raw}
-}
-
-func (p SourceProgress) normalized() SourceProgress {
-	if p.SeenNewest == "" {
-		p.SeenNewest = p.Watermark
-	}
-	if p.Fingerprint == "" {
-		p.Fingerprint = p.RangeKey
-	}
-	if p.Page == "" && p.Phase == ProgressIncremental && p.SeenNewest == "" && p.Watermark != "" {
-		p.SeenNewest = p.Watermark
-	}
-	p.Phase = ""
-	p.Watermark = ""
-	p.RangeKey = ""
 	return p
 }
 
-// DecodeWatermarks 把 seen_newest 解成 目标键→时间。旧的单时间戳放在 "*" 里当共同初值。
+// DecodeWatermarks 把 seen_newest 解成 目标键→时间（JSON 对象）
 func DecodeWatermarks(seen string) map[string]string {
 	seen = strings.TrimSpace(seen)
-	if seen == "" {
+	if seen == "" || !strings.HasPrefix(seen, "{") {
 		return map[string]string{}
 	}
-	if strings.HasPrefix(seen, "{") {
-		var m map[string]string
-		if err := json.Unmarshal([]byte(seen), &m); err == nil && m != nil {
-			return m
-		}
+	var m map[string]string
+	if err := json.Unmarshal([]byte(seen), &m); err != nil || m == nil {
+		return map[string]string{}
 	}
-	return map[string]string{"*": seen}
+	return m
 }
 
 func EncodeWatermarks(m map[string]string) string {
 	if len(m) == 0 {
 		return ""
-	}
-	if len(m) == 1 {
-		if v, ok := m["*"]; ok {
-			return v
-		}
 	}
 	b, err := json.Marshal(m)
 	if err != nil {
@@ -91,16 +61,6 @@ func LookupWatermark(m map[string]string, key string) time.Time {
 	if v, ok := m[key]; ok {
 		return parseStoredWatermark(v)
 	}
-	keyed := false
-	for k := range m {
-		if k != "*" {
-			keyed = true
-			break
-		}
-	}
-	if !keyed {
-		return parseStoredWatermark(m["*"])
-	}
 	return time.Time{}
 }
 
@@ -114,14 +74,12 @@ func parseStoredWatermark(s string) time.Time {
 
 // CatchingUp 历史已翻完，本轮从列表头追新
 func (p SourceProgress) CatchingUp() bool {
-	p = p.normalized()
 	return strings.TrimSpace(p.Page) == "" && strings.TrimSpace(p.SeenNewest) != ""
 }
 
 func (p SourceProgress) Encode() string {
-	p = p.normalized()
 	b, err := json.Marshal(struct {
-		Fingerprint string `json:"fp"` // 只钉时间窗；加小组/搜索不换这份
+		Fingerprint string `json:"fp"`
 		Page        string `json:"page"`
 		SeenNewest  string `json:"seen_newest"`
 	}{p.Fingerprint, p.Page, p.SeenNewest})
@@ -177,8 +135,3 @@ func (s *Store) ClearProgress(source string) error {
 	}
 	return nil
 }
-
-// 旧常量：测试/日志若还提到，仅表示历史 JSON；新进度用 Page 是否为空区分
-const (
-	ProgressIncremental = "incremental"
-)

@@ -74,18 +74,37 @@ func New(opts Options) (*Service, error) {
 		notifyHard,
 		pipeline.Options{
 			BatchSize: 20,
-			Linger:    pipeline.DefaultLinger,
+			Tick:      pipeline.DefaultTick,
 			Component: pkglog.Filter,
+			LiveBatchSize: func() int {
+				if rt == nil {
+					return 20
+				}
+				if n := rt.Get().Filter.BatchSize; n > 0 {
+					return n
+				}
+				return 20
+			},
 		},
 	)
 	aiPipe := pipeline.New(
 		fc.FetchAwaitingAI,
 		notifyAI,
 		pipeline.Options{
-			BatchSize: 20,
+			BatchSize: 10,
+			Tick:      pipeline.DefaultTick,
 			Linger:    pipeline.DefaultLinger,
 			Component: pkglog.AIReview,
 			WaitFull:  true,
+			LiveBatchSize: func() int {
+				if rt == nil {
+					return 10
+				}
+				if n := rt.Get().Filter.AIBatchSize; n > 0 {
+					return n
+				}
+				return 10
+			},
 		},
 	)
 	svc = &Service{

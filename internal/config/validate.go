@@ -75,11 +75,12 @@ func ValidateApp(cfg *AppConfig) []string {
 	if cfg.Notifier.BatchSize <= 0 {
 		errs = append(errs, "notifier.batch_size 必须 > 0")
 	}
-	if cfg.Notifier.MaxAttempts <= 0 {
-		errs = append(errs, "notifier.max_attempts 必须 > 0")
+	if cfg.Notifier.Interval <= 0 {
+		errs = append(errs, "notifier.interval 必须 > 0")
 	}
-	if cfg.Notifier.RetryBaseInterval <= 0 {
-		errs = append(errs, "notifier.retry_base_interval 必须 > 0")
+
+	if cfg.Admin.AuthRequired && strings.TrimSpace(cfg.Admin.Token) == "" {
+		errs = append(errs, "启用鉴权时必须设置 Token")
 	}
 
 	return errs

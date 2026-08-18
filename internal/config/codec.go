@@ -54,33 +54,32 @@ func AppToKV(cfg *AppConfig) map[string]string {
 		weiboFrom = "-10"
 	}
 	kv := map[string]string{
-		"server.addr":                  cfg.Server.Addr,
-		"server.public_base":           cfg.Server.PublicBase,
-		"log.level":                    cfg.Log.Level,
-		"log.format":                   cfg.Log.Format,
-		"log.path":                     cfg.Log.Path,
-		"log.memory_lines":             strconv.Itoa(cfg.Log.MemoryLines),
-		"collector.sources":            strings.Join(cfg.Collector.Sources, ","),
-		"collector.interval":           strconv.Itoa(cfg.Collector.Interval),
-		"collector.jitter_ratio":       fmt.Sprintf("%g", cfg.Collector.JitterRatio),
-		"collector.max_age_days":       strconv.Itoa(cfg.Collector.MaxAgeDays),
-		"collector.douban.groups":      strings.Join(cfg.Collector.Douban.Groups, "\n"),
-		"collector.douban.interval":    strconv.Itoa(doubanInterval),
-		"collector.douban.range_from":  rangeFrom,
-		"collector.douban.range_to":    rangeTo,
-		"collector.weibo.users":        strings.Join(cfg.Collector.Weibo.Users, "\n"),
-		"collector.weibo.supertopics":  strings.Join(cfg.Collector.Weibo.SuperTopics, "\n"),
-		"collector.weibo.interval":     strconv.Itoa(weiboInterval),
-		"collector.weibo.range_from":   weiboFrom,
-		"filter.ai_enabled":            ai,
-		"filter.batch_size":            strconv.Itoa(cfg.Filter.BatchSize),
-		"filter.ai_batch_size":         strconv.Itoa(cfg.Filter.AIBatchSize),
-		"notifier.max_attempts":        strconv.Itoa(cfg.Notifier.MaxAttempts),
-		"notifier.retry_base_interval": strconv.Itoa(cfg.Notifier.RetryBaseInterval),
-		"notifier.batch_size":          strconv.Itoa(cfg.Notifier.BatchSize),
-		"notifier.channels":            strings.Join(cfg.Notifier.Channels, ","),
-		"admin.auth_required":          auth,
-		"admin.token":                  cfg.Admin.Token,
+		"server.addr":                 cfg.Server.Addr,
+		"server.public_base":          cfg.Server.PublicBase,
+		"log.level":                   cfg.Log.Level,
+		"log.format":                  cfg.Log.Format,
+		"log.path":                    cfg.Log.Path,
+		"log.memory_lines":            strconv.Itoa(cfg.Log.MemoryLines),
+		"collector.sources":           strings.Join(cfg.Collector.Sources, ","),
+		"collector.interval":          strconv.Itoa(cfg.Collector.Interval),
+		"collector.jitter_ratio":      fmt.Sprintf("%g", cfg.Collector.JitterRatio),
+		"collector.max_age_days":      strconv.Itoa(cfg.Collector.MaxAgeDays),
+		"collector.douban.groups":     strings.Join(cfg.Collector.Douban.Groups, "\n"),
+		"collector.douban.interval":   strconv.Itoa(doubanInterval),
+		"collector.douban.range_from": rangeFrom,
+		"collector.douban.range_to":   rangeTo,
+		"collector.weibo.users":       strings.Join(cfg.Collector.Weibo.Users, "\n"),
+		"collector.weibo.supertopics": strings.Join(cfg.Collector.Weibo.SuperTopics, "\n"),
+		"collector.weibo.interval":    strconv.Itoa(weiboInterval),
+		"collector.weibo.range_from":  weiboFrom,
+		"filter.ai_enabled":           ai,
+		"filter.batch_size":           strconv.Itoa(cfg.Filter.BatchSize),
+		"filter.ai_batch_size":        strconv.Itoa(cfg.Filter.AIBatchSize),
+		"notifier.batch_size":         strconv.Itoa(cfg.Notifier.BatchSize),
+		"notifier.interval":           strconv.Itoa(cfg.Notifier.Interval),
+		"notifier.channels":           strings.Join(cfg.Notifier.Channels, ","),
+		"admin.auth_required":         auth,
+		"admin.token":                 cfg.Admin.Token,
 	}
 	return kv
 }
@@ -158,7 +157,7 @@ var SectionKeys = map[string][]string{
 		"secret.filter.llm.api_key", "secret.filter.llm.base_url", "secret.filter.llm.model",
 	},
 	"notifier": {
-		"notifier.max_attempts", "notifier.retry_base_interval", "notifier.batch_size", "notifier.channels",
+		"notifier.batch_size", "notifier.interval", "notifier.channels",
 		"secret.notifier.feishu.webhook",
 		"secret.notifier.pushplus.token", "secret.notifier.pushplus.topic",
 	},
@@ -241,14 +240,11 @@ func KVToApp(kv map[string]string) *AppConfig {
 	if v := kv["filter.ai_batch_size"]; v != "" {
 		cfg.Filter.AIBatchSize = atoi(v, cfg.Filter.AIBatchSize)
 	}
-	if v := kv["notifier.max_attempts"]; v != "" {
-		cfg.Notifier.MaxAttempts = atoi(v, cfg.Notifier.MaxAttempts)
-	}
-	if v := kv["notifier.retry_base_interval"]; v != "" {
-		cfg.Notifier.RetryBaseInterval = atoi(v, cfg.Notifier.RetryBaseInterval)
-	}
 	if v := kv["notifier.batch_size"]; v != "" {
 		cfg.Notifier.BatchSize = atoi(v, cfg.Notifier.BatchSize)
+	}
+	if v := kv["notifier.interval"]; v != "" {
+		cfg.Notifier.Interval = atoi(v, cfg.Notifier.Interval)
 	}
 	if v := kv["notifier.channels"]; v != "" {
 		cfg.Notifier.Channels = splitComma(v)

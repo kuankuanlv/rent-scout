@@ -241,8 +241,14 @@ func TestConfigTabs(t *testing.T) {
 	if !strings.Contains(body, "notifier.batch_size") {
 		t.Errorf("notifier 各渠道应含组批大小")
 	}
-	if !strings.Contains(body, "两者满足其一即执行发送") && !strings.Contains(body, "满足其一即执行发送") {
-		t.Errorf("重试间隔/组批大小应提示二者满足其一即发送")
+	if !strings.Contains(body, "notifier.interval") {
+		t.Errorf("notifier 各渠道应含发送间隔")
+	}
+	if !strings.Contains(body, "谁先到谁先发") {
+		t.Errorf("组批大小应提示和发送间隔谁先到谁先发")
+	}
+	if strings.Contains(body, "notifier.max_attempts") || strings.Contains(body, "notifier.retry_base_interval") {
+		t.Errorf("重试次数/间隔不应出现在配置页")
 	}
 	if strings.Contains(body, `type="password" name="secret.notifier.pushplus.token"`) {
 		t.Errorf("PushPlus Token 应为明文 text")

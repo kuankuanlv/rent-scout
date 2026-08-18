@@ -3,7 +3,6 @@ package store
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"rent-scout/internal/models"
 	"rent-scout/internal/store/post_tags"
@@ -80,8 +79,8 @@ func joinPlaceholders(n int) string {
 	return s
 }
 
-// ListFilterTags 标签下拉
-func (s *Store) ListFilterTags() ([]string, error) {
+// ListFilterTags 标签下拉（带出现帖数，已按 count 降序）
+func (s *Store) ListFilterTags() ([]models.FilterTag, error) {
 	return s.postTags.ListDistinctTexts()
 }
 
@@ -90,21 +89,14 @@ func (s *Store) ReplaceSystemTags(postID int64, tags []models.PostTag) error {
 	return s.postTags.ReplaceSystemTags(postID, tags)
 }
 
-// AddUserFeedback 人工有用/无用 + 可选备注
+// AddUserFeedback 人工有用/无用；备注不进标签（句子留给 AI 原因列，不进筛选 chip）
 func (s *Store) AddUserFeedback(postID int64, action, reason string) error {
+	_ = reason
 	tags := []models.PostTag{{
 		Kind:   models.TagKindFeedback,
 		Text:   models.FeedbackTagText(action),
 		Source: models.TagSourceUser,
 	}}
-	reason = strings.TrimSpace(reason)
-	if reason != "" {
-		tags = append(tags, models.PostTag{
-			Kind:   models.TagKindManual,
-			Text:   reason,
-			Source: models.TagSourceUser,
-		})
-	}
 	return s.postTags.AddUserTags(postID, tags)
 }
 

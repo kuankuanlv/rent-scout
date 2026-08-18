@@ -43,6 +43,10 @@ func (s *Store) GetPost(id int64) (models.RentPost, bool, error) {
 	return s.posts.GetPost(id)
 }
 
+func (s *Store) ListPostsByIDs(ids []int64) ([]models.RentPost, error) {
+	return s.posts.ListPostsByIDs(ids)
+}
+
 func (s *Store) MarkPostHandled(postID int64) error {
 	return s.posts.MarkPostHandled(postID)
 }

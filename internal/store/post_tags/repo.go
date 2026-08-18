@@ -27,11 +27,12 @@ func (r *Repo) ReplaceSystemTags(postID int64, tags []models.PostTag) error {
 	}
 	now := time.Now()
 	for _, t := range tags {
-		if strings.TrimSpace(t.Text) == "" {
+		text := strings.TrimSpace(t.Text)
+		if !models.IsChipText(text) {
 			continue
 		}
 		if _, err := tx.Exec(`INSERT INTO post_tags (post_id, kind, text, source, created_at) VALUES (?, ?, ?, ?, ?)`,
-			postID, t.Kind, strings.TrimSpace(t.Text), models.TagSourceSystem, now); err != nil {
+			postID, t.Kind, text, models.TagSourceSystem, now); err != nil {
 			return fmt.Errorf("写系统标签: %w", err)
 		}
 	}
@@ -42,11 +43,12 @@ func (r *Repo) ReplaceSystemTags(postID int64, tags []models.PostTag) error {
 func (r *Repo) AddUserTags(postID int64, tags []models.PostTag) error {
 	now := time.Now()
 	for _, t := range tags {
-		if strings.TrimSpace(t.Text) == "" {
+		text := strings.TrimSpace(t.Text)
+		if !models.IsChipText(text) {
 			continue
 		}
 		if _, err := r.DB.Exec(`INSERT INTO post_tags (post_id, kind, text, source, created_at) VALUES (?, ?, ?, ?, ?)`,
-			postID, t.Kind, strings.TrimSpace(t.Text), models.TagSourceUser, now); err != nil {
+			postID, t.Kind, text, models.TagSourceUser, now); err != nil {
 			return fmt.Errorf("写用户标签: %w", err)
 		}
 	}
@@ -89,24 +91,29 @@ func (r *Repo) ListByPostIDs(postIDs []int64) (map[int64][]models.PostTag, error
 	return out, rows.Err()
 }
 
-// ListDistinctTexts 标签下拉：全部 text 按出现帖数降序
-func (r *Repo) ListDistinctTexts() ([]string, error) {
-	rows, err := r.DB.Query(`SELECT text, COUNT(DISTINCT post_id) AS n FROM post_tags GROUP BY text ORDER BY n DESC, text COLLATE NOCASE`)
+// ListDistinctTexts 标签下拉：地点/拉黑词/未命中/有用无用，按出现帖数降序；人工备注和长句不要
+func (r *Repo) ListDistinctTexts() ([]models.FilterTag, error) {
+	rows, err := r.DB.Query(`SELECT text, COUNT(DISTINCT post_id) AS n FROM post_tags
+		WHERE kind IN (?,?,?,?)
+		GROUP BY text ORDER BY n DESC, text COLLATE NOCASE`,
+		models.TagKindLocation, models.TagKindBlock, models.TagKindUnmatched, models.TagKindFeedback)
 	if err != nil {
 		return nil, fmt.Errorf("聚合标签: %w", err)
 	}
 	defer rows.Close()
-	var out []string
+	var out []models.FilterTag
 	for rows.Next() {
-		var text string
-		var n int
-		if err := rows.Scan(&text, &n); err != nil {
+		var t models.FilterTag
+		if err := rows.Scan(&t.Text, &t.Count); err != nil {
 			return nil, err
 		}
-		out = append(out, text)
+		if !models.IsChipText(t.Text) {
+			continue
+		}
+		out = append(out, t)
 	}
 	if out == nil {
-		out = []string{}
+		out = []models.FilterTag{}
 	}
 	return out, rows.Err()
 }

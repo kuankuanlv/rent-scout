@@ -6,6 +6,9 @@ import "rent-scout/internal/models"
 func SystemTagsFromHard(res models.FilterResult, locations []string) []models.PostTag {
 	var tags []models.PostTag
 	for _, loc := range locations {
+		if !models.IsChipText(loc) {
+			continue
+		}
 		tags = append(tags, models.PostTag{
 			Kind:   models.TagKindLocation,
 			Text:   loc,
@@ -17,6 +20,9 @@ func SystemTagsFromHard(res models.FilterResult, locations []string) []models.Po
 	}
 	if len(res.HardRules) > 0 {
 		for _, h := range res.HardRules {
+			if !models.IsChipText(h.Reason) {
+				continue
+			}
 			tags = append(tags, models.PostTag{
 				Kind:   models.TagKindBlock,
 				Text:   h.Reason,

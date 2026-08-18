@@ -13,6 +13,14 @@ import (
 	"rent-scout/internal/models"
 )
 
+// ManualGroupName 控制台直发用的分组名，形如 手动触发-081812:01:30
+func ManualGroupName(at time.Time) string {
+	if at.IsZero() {
+		at = time.Now()
+	}
+	return "手动触发-" + at.Format("010215:04:05")
+}
+
 // groupByLocationTag 按第一条 location 标签分组；无则未分组
 func groupByLocationTag(posts []models.RentPost) map[string][]models.RentPost {
 	out := make(map[string][]models.RentPost)

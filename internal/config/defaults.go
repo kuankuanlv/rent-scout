@@ -49,10 +49,9 @@ func DefaultKV() map[string]string {
 		"filter.batch_size":    "20",
 		"filter.ai_batch_size": "10",
 		// notifier（channels 留空，避免空 webhook 反复报错）
-		"notifier.max_attempts":        "3",
-		"notifier.retry_base_interval": "3000",
-		"notifier.batch_size":          "10",
-		"notifier.channels":            "",
+		"notifier.batch_size": "10",
+		"notifier.interval":   "7200",
+		"notifier.channels":   "",
 		// secrets：cookie 全部 none / 空
 		"secret.collector.douban.cookie_mode":          "none",
 		"secret.collector.douban.cookie_raw":           "",

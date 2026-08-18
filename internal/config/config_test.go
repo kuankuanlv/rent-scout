@@ -22,8 +22,11 @@ func TestDefaultValues(t *testing.T) {
 	if cfg.Filter.BatchSize != 20 {
 		t.Errorf("默认 filter.batch_size = %d, want 20", cfg.Filter.BatchSize)
 	}
-	if cfg.Notifier.BatchSize != 20 {
-		t.Errorf("默认 notifier.batch_size = %d, want 20", cfg.Notifier.BatchSize)
+	if cfg.Notifier.BatchSize != DefaultNotifierBatch {
+		t.Errorf("默认 notifier.batch_size = %d, want %d", cfg.Notifier.BatchSize, DefaultNotifierBatch)
+	}
+	if cfg.Notifier.Interval != DefaultNotifierInterval {
+		t.Errorf("默认 notifier.interval = %d, want %d", cfg.Notifier.Interval, DefaultNotifierInterval)
 	}
 	if cfg.Log.MemoryLines != DefaultLogMemoryLines {
 		t.Errorf("默认 log.memory_lines = %d, want %d", cfg.Log.MemoryLines, DefaultLogMemoryLines)
@@ -150,6 +153,18 @@ func TestValidateApp(t *testing.T) {
 	over.Log.MemoryLines = MaxLogMemoryLines + 1
 	if errs := ValidateApp(over); len(errs) == 0 {
 		t.Error("memory_lines 超上限应失败")
+	}
+	authNoToken := DefaultApp()
+	authNoToken.Admin.AuthRequired = true
+	authNoToken.Admin.Token = ""
+	if errs := ValidateApp(authNoToken); len(errs) == 0 {
+		t.Error("开鉴权但 token 为空应失败")
+	}
+	authOK := DefaultApp()
+	authOK.Admin.AuthRequired = true
+	authOK.Admin.Token = "secret"
+	if errs := ValidateApp(authOK); len(errs) != 0 {
+		t.Errorf("开鉴权且有 token 应通过: %v", errs)
 	}
 }
 

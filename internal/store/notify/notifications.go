@@ -99,16 +99,6 @@ func (r *Repo) NotificationAttempts(postID int64, channel string) (int, error) {
 	return attempts, nil
 }
 
-// InsertFeedback 写入用户反馈（规格 5.5 自学习闭环入口）
-func (r *Repo) InsertFeedback(f models.Feedback) error {
-	_, err := r.DB.Exec(`INSERT INTO feedbacks (post_id, channel, action, reason, created_at) VALUES (?, ?, ?, ?, ?)`,
-		f.PostID, f.Channel, f.Action, f.Reason, time.Now())
-	if err != nil {
-		return fmt.Errorf("写反馈: %w", err)
-	}
-	return nil
-}
-
 // ListNotificationsByPost 帖子的全部通知记录（详情页展示），按 id 升序
 func (r *Repo) ListNotificationsByPost(postID int64) ([]models.Notification, error) {
 	rows, err := r.DB.Query(`SELECT id, post_id, channel, status, attempts, last_error, sent_at
@@ -128,25 +118,6 @@ func (r *Repo) ListNotificationsByPost(postID int64) ([]models.Notification, err
 			n.SentAt = &sent.Time
 		}
 		items = append(items, n)
-	}
-	return items, rows.Err()
-}
-
-// ListFeedbacksByPost 帖子的反馈记录（详情页展示），按 id 升序
-func (r *Repo) ListFeedbacksByPost(postID int64) ([]models.Feedback, error) {
-	rows, err := r.DB.Query(`SELECT id, post_id, channel, action, reason, created_at
-	    FROM feedbacks WHERE post_id=? ORDER BY id`, postID)
-	if err != nil {
-		return nil, fmt.Errorf("查帖子反馈: %w", err)
-	}
-	defer rows.Close()
-	var items []models.Feedback
-	for rows.Next() {
-		var f models.Feedback
-		if err := rows.Scan(&f.ID, &f.PostID, &f.Channel, &f.Action, &f.Reason, &f.CreatedAt); err != nil {
-			return nil, err
-		}
-		items = append(items, f)
 	}
 	return items, rows.Err()
 }

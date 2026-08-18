@@ -58,12 +58,18 @@ func TestAPIFeedbacksAuth(t *testing.T) {
 	}
 
 	// 两次 201 均真实写库（无 sig 与正确 sig 各一条）
-	items, err := s.ListFeedbacksByPost(1)
+	tags, err := s.ListTagsByPost(1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 2 || items[0].Action != models.FeedbackUseful || items[0].Reason != "试试" {
-		t.Errorf("DB 反馈 = %+v, want 2 条 useful post=1", items)
+	feedbackN := 0
+	for _, tg := range tags {
+		if tg.Kind == models.TagKindFeedback && tg.Text == "有用" {
+			feedbackN++
+		}
+	}
+	if feedbackN != 2 {
+		t.Errorf("DB 标签 = %+v, want 2 条 useful post=1", tags)
 	}
 }
 
@@ -104,12 +110,18 @@ func TestAPIFeedbacksAuthOff(t *testing.T) {
 	}
 
 	// 两次 201 均真实写库（无 sig 与带 sig 各一条）
-	items, err := s.ListFeedbacksByPost(1)
+	tags, err := s.ListTagsByPost(1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 2 || items[0].Action != models.FeedbackUseful {
-		t.Errorf("DB 反馈 = %+v, want 2 条 useful post=1", items)
+	feedbackN := 0
+	for _, tg := range tags {
+		if tg.Kind == models.TagKindFeedback && tg.Text == "有用" {
+			feedbackN++
+		}
+	}
+	if feedbackN != 2 {
+		t.Errorf("DB 标签 = %+v, want 2 条 useful post=1", tags)
 	}
 }
 
@@ -159,15 +171,22 @@ func TestAPIPostsListFilters(t *testing.T) {
 	srv := newTestServerWithStore(t, s, &config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}}, "secret", nil)
 
 	p1 := models.RentPost{Source: "douban", ExternalID: "af1", Title: "望京合租", Content: "近地铁",
-		Status: models.PostStatusPassed, AddressTags: []string{"望京"}}
+		Status: models.PostStatusPassed}
 	p2 := models.RentPost{Source: "douban", ExternalID: "af2", Title: "回龙观", Content: "无",
-		Status: models.PostStatusPassed, AddressTags: []string{"回龙观"}}
+		Status: models.PostStatusPassed}
 	for _, p := range []models.RentPost{p1, p2} {
 		if _, err := s.InsertPost(p); err != nil {
 			t.Fatal(err)
 		}
 	}
+	id1 := postID(t, s, "af1")
 	id2 := postID(t, s, "af2")
+	if err := s.ReplaceSystemTags(id1, []models.PostTag{{Kind: models.TagKindLocation, Text: "望京", Source: models.TagSourceSystem}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReplaceSystemTags(id2, []models.PostTag{{Kind: models.TagKindLocation, Text: "回龙观", Source: models.TagSourceSystem}}); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.MarkPostHandled(id2); err != nil {
 		t.Fatal(err)
 	}
@@ -273,7 +292,7 @@ func TestAPIPostDetail(t *testing.T) {
 	if _, err := s.InsertNotification(id, "feishu"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.InsertFeedback(models.Feedback{PostID: id, Channel: "test", Action: models.FeedbackUseful, Reason: "不错", CreatedAt: time.Now()}); err != nil {
+	if err := s.AddUserFeedback(id, models.FeedbackUseful, "不错"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -288,7 +307,7 @@ func TestAPIPostDetail(t *testing.T) {
 		Post          models.RentPost       `json:"post"`
 		FilterResult  models.FilterResult   `json:"filter_result"`
 		Notifications []models.Notification `json:"notifications"`
-		Feedbacks     []models.Feedback     `json:"feedbacks"`
+		Tags          []models.PostTag      `json:"tags"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("解析详情响应失败: %v (body=%s)", err, rec.Body.String())
@@ -302,8 +321,8 @@ func TestAPIPostDetail(t *testing.T) {
 	if len(out.Notifications) != 1 || out.Notifications[0].Channel != "feishu" || out.Notifications[0].Status != models.NotifyStatusPending {
 		t.Errorf("notifications = %+v, want 1 条 feishu", out.Notifications)
 	}
-	if len(out.Feedbacks) != 1 || out.Feedbacks[0].Action != models.FeedbackUseful || out.Feedbacks[0].Reason != "不错" {
-		t.Errorf("feedbacks = %+v, want 1 条 useful", out.Feedbacks)
+	if len(out.Tags) != 2 || out.Tags[0].Kind != models.TagKindFeedback || out.Tags[0].Text != "有用" {
+		t.Errorf("tags = %+v, want feedback 有用 + manual", out.Tags)
 	}
 
 	// 不存在 → 404

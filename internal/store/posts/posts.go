@@ -2,7 +2,6 @@ package posts
 
 import (
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -21,22 +20,12 @@ func (r *Repo) InsertPost(p models.RentPost) (bool, error) {
 	if err := validatePostStatusWrite(p.Status); err != nil {
 		return false, err
 	}
-	// nil 标签序列化为 "[]" 而非 "null"（与列默认值 '[]' 一致）
-	tags := p.AddressTags
-	if tags == nil {
-		tags = []string{}
-	}
-	tagsJSON, err := json.Marshal(tags)
-	if err != nil {
-		return false, fmt.Errorf("序列化地址标签: %w", err)
-	}
 	models.FillPostExtracted(&p)
-	// INSERT OR IGNORE：UNIQUE 冲突静默跳过，RowsAffected=0 → added=false
 	res, err := r.DB.Exec(`INSERT OR IGNORE INTO posts
-	    (source, external_id, url, title, content, author, author_url, published_at, collected_at, status, address_tags, raw, price, contact)
-	    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	    (source, external_id, url, title, content, author, author_url, published_at, collected_at, status, raw, price, contact)
+	    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.Source, p.ExternalID, p.URL, p.Title, p.Content, p.Author, p.AuthorURL,
-		nullableTime(p.PublishedAt), p.CollectedAt, p.Status, string(tagsJSON), p.Raw, p.Price, p.Contact)
+		nullableTime(p.PublishedAt), p.CollectedAt, p.Status, p.Raw, p.Price, p.Contact)
 	if err != nil {
 		return false, fmt.Errorf("插入帖子: %w", err)
 	}
@@ -47,29 +36,34 @@ func (r *Repo) InsertPost(p models.RentPost) (bool, error) {
 	return n == 1, nil
 }
 
+const fetchPostCols = `id, source, external_id, url, title, content, author, author_url,
+	    published_at, collected_at, status, raw, price, contact`
+
+func scanFetchPost(sc interface{ Scan(...any) error }) (models.RentPost, error) {
+	var p models.RentPost
+	var published sql.NullTime
+	if err := sc.Scan(&p.ID, &p.Source, &p.ExternalID, &p.URL, &p.Title, &p.Content,
+		&p.Author, &p.AuthorURL, &published, &p.CollectedAt, &p.Status, &p.Raw, &p.Price, &p.Contact); err != nil {
+		return p, err
+	}
+	if published.Valid {
+		p.PublishedAt = published.Time
+	}
+	return p, nil
+}
+
 // FetchPendingByStatus 拉取指定主状态的一批帖子，按 id 升序（先到先处理），限量。
-// 模块消费协议组批入口（规格 2.3）
 func (r *Repo) FetchPendingByStatus(status string, limit int) ([]models.RentPost, error) {
-	rows, err := r.DB.Query(`SELECT id, source, external_id, url, title, content, author, author_url,
-	    published_at, collected_at, status, address_tags, raw, price, contact FROM posts WHERE status = ? ORDER BY id LIMIT ?`, status, limit)
+	rows, err := r.DB.Query(`SELECT `+fetchPostCols+` FROM posts WHERE status = ? ORDER BY id LIMIT ?`, status, limit)
 	if err != nil {
 		return nil, fmt.Errorf("拉取 %s 批: %w", status, err)
 	}
 	defer rows.Close()
 	var posts []models.RentPost
 	for rows.Next() {
-		var p models.RentPost
-		var published sql.NullTime
-		var tagsJSON string
-		if err := rows.Scan(&p.ID, &p.Source, &p.ExternalID, &p.URL, &p.Title, &p.Content,
-			&p.Author, &p.AuthorURL, &published, &p.CollectedAt, &p.Status, &tagsJSON, &p.Raw, &p.Price, &p.Contact); err != nil {
+		p, err := scanFetchPost(rows)
+		if err != nil {
 			return nil, err
-		}
-		if err := json.Unmarshal([]byte(tagsJSON), &p.AddressTags); err != nil {
-			return nil, fmt.Errorf("解析地址标签: %w", err)
-		}
-		if published.Valid {
-			p.PublishedAt = published.Time
 		}
 		posts = append(posts, p)
 	}
@@ -79,7 +73,7 @@ func (r *Repo) FetchPendingByStatus(status string, limit int) ([]models.RentPost
 // FetchPassedWithoutAI 已通过硬规则、还没有 AI 结果的帖（AI 协程拉批）
 func (r *Repo) FetchPassedWithoutAI(limit int) ([]models.RentPost, error) {
 	rows, err := r.DB.Query(`SELECT p.id, p.source, p.external_id, p.url, p.title, p.content, p.author, p.author_url,
-	    p.published_at, p.collected_at, p.status, p.address_tags, p.raw, p.price, p.contact
+	    p.published_at, p.collected_at, p.status, p.raw, p.price, p.contact
 	    FROM posts p
 	    LEFT JOIN filter_results fr ON fr.post_id = p.id
 	    WHERE p.status = 'passed' AND (fr.ai_result IS NULL OR fr.ai_result = '')
@@ -90,18 +84,9 @@ func (r *Repo) FetchPassedWithoutAI(limit int) ([]models.RentPost, error) {
 	defer rows.Close()
 	var posts []models.RentPost
 	for rows.Next() {
-		var p models.RentPost
-		var published sql.NullTime
-		var tagsJSON string
-		if err := rows.Scan(&p.ID, &p.Source, &p.ExternalID, &p.URL, &p.Title, &p.Content,
-			&p.Author, &p.AuthorURL, &published, &p.CollectedAt, &p.Status, &tagsJSON, &p.Raw, &p.Price, &p.Contact); err != nil {
+		p, err := scanFetchPost(rows)
+		if err != nil {
 			return nil, err
-		}
-		if err := json.Unmarshal([]byte(tagsJSON), &p.AddressTags); err != nil {
-			return nil, fmt.Errorf("解析地址标签: %w", err)
-		}
-		if published.Valid {
-			p.PublishedAt = published.Time
 		}
 		posts = append(posts, p)
 	}
@@ -113,8 +98,7 @@ func (r *Repo) ListPublishedBetween(from, to time.Time, limit int) ([]models.Ren
 	if limit <= 0 {
 		limit = 2000
 	}
-	rows, err := r.DB.Query(`SELECT id, source, external_id, url, title, content, author, author_url,
-	    published_at, collected_at, status, address_tags, raw, price, contact FROM posts
+	rows, err := r.DB.Query(`SELECT `+fetchPostCols+` FROM posts
 	    WHERE published_at >= ? AND published_at <= ? ORDER BY id LIMIT ?`, from, to, limit)
 	if err != nil {
 		return nil, fmt.Errorf("按发布时间拉帖: %w", err)
@@ -122,18 +106,9 @@ func (r *Repo) ListPublishedBetween(from, to time.Time, limit int) ([]models.Ren
 	defer rows.Close()
 	var posts []models.RentPost
 	for rows.Next() {
-		var p models.RentPost
-		var published sql.NullTime
-		var tagsJSON string
-		if err := rows.Scan(&p.ID, &p.Source, &p.ExternalID, &p.URL, &p.Title, &p.Content,
-			&p.Author, &p.AuthorURL, &published, &p.CollectedAt, &p.Status, &tagsJSON, &p.Raw, &p.Price, &p.Contact); err != nil {
+		p, err := scanFetchPost(rows)
+		if err != nil {
 			return nil, err
-		}
-		if err := json.Unmarshal([]byte(tagsJSON), &p.AddressTags); err != nil {
-			return nil, fmt.Errorf("解析地址标签: %w", err)
-		}
-		if published.Valid {
-			p.PublishedAt = published.Time
 		}
 		posts = append(posts, p)
 	}
@@ -162,7 +137,7 @@ func (r *Repo) UpdatePostContact(postID int64, contact string) error {
 	return nil
 }
 
-// MarkStatus 原子更新一批帖子的主状态（仅四态，Spec 09 §1）
+// MarkStatus 原子更新一批帖子的主状态
 func (r *Repo) MarkStatus(ids []int64, status string) error {
 	if len(ids) == 0 {
 		return nil
@@ -170,7 +145,6 @@ func (r *Repo) MarkStatus(ids []int64, status string) error {
 	if err := validatePostStatusWrite(status); err != nil {
 		return err
 	}
-	// 构造占位符列表，批量 IN 更新
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
 	args := make([]any, 0, len(ids)+1)
 	args = append(args, status)
@@ -183,7 +157,6 @@ func (r *Repo) MarkStatus(ids []int64, status string) error {
 	return nil
 }
 
-// validatePostStatusWrite 拒写 sent/acked 及非四态（Spec 09 §1）；notifications.status=sent 不受影响。
 func validatePostStatusWrite(status string) error {
 	switch status {
 	case models.PostStatusCollected, models.PostStatusPassed, models.PostStatusRejected:
@@ -195,7 +168,6 @@ func validatePostStatusWrite(status string) error {
 	}
 }
 
-// nullableTime time.Time 零值写 NULL（published_at 可空）
 func nullableTime(t time.Time) any {
 	if t.IsZero() {
 		return nil

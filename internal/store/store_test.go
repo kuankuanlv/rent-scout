@@ -20,7 +20,7 @@ func TestOpenAndMigrate(t *testing.T) {
 	defer s.Close()
 
 	// 迁移后 6 张表全部存在（规格 3.5）
-	tables := []string{"posts", "filter_results", "rules", "notifications", "feedbacks", "source_state"}
+	tables := []string{"posts", "filter_results", "rules", "notifications", "post_tags", "source_state"}
 	for _, name := range tables {
 		var cnt int
 		if err := s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, name).Scan(&cnt); err != nil {
@@ -118,7 +118,15 @@ func TestListFilterTags(t *testing.T) {
 
 	if _, err := s.InsertPost(models.RentPost{
 		Source: "douban", ExternalID: "t1", Title: "a", CollectedAt: time.Now(),
-		Status: models.PostStatusPassed, AddressTags: []string{"望京", "14号线"},
+		Status: models.PostStatusPassed,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var passID int64
+	_ = s.db.QueryRow(`SELECT id FROM posts WHERE external_id='t1'`).Scan(&passID)
+	if err := s.ReplaceSystemTags(passID, []models.PostTag{
+		{Kind: models.TagKindLocation, Text: "望京", Source: models.TagSourceSystem},
+		{Kind: models.TagKindLocation, Text: "14号线", Source: models.TagSourceSystem},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -138,6 +146,11 @@ func TestListFilterTags(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if err := s.ReplaceSystemTags(id, []models.PostTag{
+		{Kind: models.TagKindBlock, Text: "中介", Source: models.TagSourceSystem},
+	}); err != nil {
+		t.Fatal(err)
+	}
 	def := models.RentPost{
 		Source: "douban", ExternalID: "t3", Title: "无关", CollectedAt: time.Now(),
 		Status: models.PostStatusRejected,
@@ -149,13 +162,18 @@ func TestListFilterTags(t *testing.T) {
 	_ = s.db.QueryRow(`SELECT id FROM posts WHERE external_id='t3'`).Scan(&defID)
 	if err := s.SaveFilterResult(models.FilterResult{
 		PostID: defID, Status: models.PostStatusRejected, Stage: models.StageHardRule,
-		RejectedBy: "默认拒绝", DecidedAt: time.Now(),
+		RejectedBy: models.RejectedByUnmatched, DecidedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReplaceSystemTags(defID, []models.PostTag{
+		{Kind: models.TagKindUnmatched, Text: models.RejectedByUnmatched, Source: models.TagSourceSystem},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	passAI := models.RentPost{
 		Source: "douban", ExternalID: "t4", Title: "ai", CollectedAt: time.Now(),
-		Status: models.PostStatusPassed, AddressTags: []string{"望京"},
+		Status: models.PostStatusPassed,
 	}
 	if _, err := s.InsertPost(passAI); err != nil {
 		t.Fatal(err)
@@ -168,12 +186,17 @@ func TestListFilterTags(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if err := s.ReplaceSystemTags(aiID, []models.PostTag{
+		{Kind: models.TagKindLocation, Text: "望京", Source: models.TagSourceSystem},
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	got, err := s.ListFilterTags()
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]bool{"望京": true, "14号线": true, "中介": true, "默认拒绝": true}
+	want := map[string]bool{"望京": true, "14号线": true, "中介": true, models.RejectedByUnmatched: true}
 	if len(got) != len(want) {
 		t.Fatalf("tags = %v, want %v（不含 AI 徽章）", got, want)
 	}
@@ -196,6 +219,13 @@ func TestListFilterTags(t *testing.T) {
 	}
 	if len(byAI) != 1 || byAI[0].ExternalID != "t4" {
 		t.Fatalf("按 AI 独立条件筛选 = %+v", byAI)
+	}
+	byUnmatched, err := s.ListPosts(PostListFilter{Tag: models.RejectedByUnmatched}, 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(byUnmatched) != 1 || byUnmatched[0].ExternalID != "t3" {
+		t.Fatalf("按未命中标签筛选 = %+v", byUnmatched)
 	}
 }
 
@@ -497,7 +527,7 @@ func TestFeedbackAndCursor(t *testing.T) {
 	defer s.Close()
 	postID := seedPost(t, s)
 
-	if err := s.InsertFeedback(models.Feedback{PostID: postID, Channel: "feishu", Action: models.FeedbackUseless, Reason: "价格虚假"}); err != nil {
+	if err := s.AddUserFeedback(postID, models.FeedbackUseless, "价格虚假"); err != nil {
 		t.Fatalf("写反馈: %v", err)
 	}
 	if err := s.SetCursor("douban", "page:3"); err != nil {
@@ -526,32 +556,29 @@ func seedPost(t *testing.T, s *Store) int64 {
 	return id
 }
 
-// AddressTags 读写往返：插入后拉回，标签保持（调整规格 2.3）
-func TestAddressTagsRoundTrip(t *testing.T) {
+// system 标签写回后 AttachPostTags 能读到
+func TestPostTagsRoundTrip(t *testing.T) {
 	s := newTestStore(t)
 	defer s.Close()
-	p := models.RentPost{Source: "douban", ExternalID: "tag-1", Title: "t",
-		CollectedAt: time.Now(), Status: models.PostStatusCollected,
-		AddressTags: []string{"望京", "14号线"}}
-	if _, err := s.InsertPost(p); err != nil {
+	id := seedPost(t, s)
+	if err := s.ReplaceSystemTags(id, []models.PostTag{
+		{Kind: models.TagKindLocation, Text: "望京", Source: models.TagSourceSystem},
+		{Kind: models.TagKindLocation, Text: "14号线", Source: models.TagSourceSystem},
+	}); err != nil {
 		t.Fatal(err)
 	}
-	batch, err := s.FetchPendingByStatus(models.PostStatusCollected, 10)
-	if err != nil {
+	list := []models.RentPost{{ID: id}}
+	if err := s.AttachPostTags(list); err != nil {
 		t.Fatal(err)
 	}
-	if len(batch) != 1 {
-		t.Fatalf("批数 = %d, want 1", len(batch))
-	}
-	if got := batch[0].AddressTags; len(got) != 2 || got[0] != "望京" {
-		t.Errorf("AddressTags = %v, want [望京 14号线]", got)
+	if len(list[0].Tags) != 2 || list[0].Tags[0].Text != "望京" {
+		t.Errorf("Tags = %+v, want 望京+14号线", list[0].Tags)
 	}
 }
 
-// 已有库（无 address_tags 列）重复 Open：ALTER 补列，数据不丢
-func TestMigrateAddsColumnToLegacyDB(t *testing.T) {
+// 旧库仅有 posts 表时 Open 也会幂等补建 post_tags
+func TestOpenCreatesPostTags(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "legacy.db")
-	// 先建旧版 posts 表（无 address_tags 列）
 	legacy, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		t.Fatal(err)
@@ -569,15 +596,14 @@ func TestMigrateAddsColumnToLegacyDB(t *testing.T) {
 	}
 	legacy.Close()
 
-	// 用新版本 Open：应自动 ALTER 补列
 	s, err := Open(dbPath)
 	if err != nil {
 		t.Fatalf("Open 旧库失败: %v", err)
 	}
 	defer s.Close()
-	ok, err := s.columnExists("posts", "address_tags")
-	if err != nil || !ok {
-		t.Fatalf("旧库补列失败: ok=%v err=%v", ok, err)
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='post_tags'`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("应有 post_tags 表: n=%d err=%v", n, err)
 	}
 }
 
@@ -661,21 +687,23 @@ func TestSaveFilterResult(t *testing.T) {
 	}
 }
 
-// 地址标签写回：白名单命中后入库（调整规格 A）
-func TestUpdatePostAddressTags(t *testing.T) {
+// ReplaceSystemTags 白名单地点入库
+func TestReplaceSystemTags(t *testing.T) {
 	s := newTestStore(t)
 	defer s.Close()
 	postID := seedPost(t, s)
-	if err := s.UpdatePostAddressTags(postID, []string{"望京", "14号线"}); err != nil {
+	if err := s.ReplaceSystemTags(postID, []models.PostTag{
+		{Kind: models.TagKindLocation, Text: "望京", Source: models.TagSourceSystem},
+		{Kind: models.TagKindLocation, Text: "14号线", Source: models.TagSourceSystem},
+	}); err != nil {
 		t.Fatal(err)
 	}
-	// seedPost 建的是 passed 状态帖子，按该状态回读验证写回
-	batch, err := s.FetchPendingByStatus(models.PostStatusPassed, 10)
-	if err != nil || len(batch) != 1 {
-		t.Fatalf("回读失败: %v %d", err, len(batch))
+	list := []models.RentPost{{ID: postID}}
+	if err := s.AttachPostTags(list); err != nil {
+		t.Fatal(err)
 	}
-	if len(batch[0].AddressTags) != 2 || batch[0].AddressTags[0] != "望京" {
-		t.Errorf("标签未写回: %v", batch[0].AddressTags)
+	if len(list[0].Tags) != 2 || list[0].Tags[0].Text != "望京" {
+		t.Errorf("标签未写回: %+v", list[0].Tags)
 	}
 }
 
@@ -695,7 +723,7 @@ func TestRuleHitStats(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := s.InsertFeedback(models.Feedback{PostID: p1, Channel: "feishu", Action: models.FeedbackUseless, Reason: "假房源"}); err != nil {
+	if err := s.AddUserFeedback(p1, models.FeedbackUseless, "假房源"); err != nil {
 		t.Fatal(err)
 	}
 	stats, err := s.RuleHitStats()
@@ -855,15 +883,15 @@ func TestListPostsOrderByPublishedAt(t *testing.T) {
 	}
 }
 
-// ListPosts 扩展筛选：q（title/content）、tag（address_tags 文本）、handled（0/1）
+// ListPosts 扩展筛选：q、tag（post_tags）、handled
 func TestListPostsFilters(t *testing.T) {
 	s := newTestStore(t)
 	defer s.Close()
 
 	p1 := models.RentPost{Source: "douban", ExternalID: "f1", Title: "望京合租", Content: "近地铁",
-		CollectedAt: time.Now(), Status: models.PostStatusPassed, AddressTags: []string{"望京"}}
+		CollectedAt: time.Now(), Status: models.PostStatusPassed}
 	p2 := models.RentPost{Source: "douban", ExternalID: "f2", Title: "回龙观次卧", Content: "望京通勤也可",
-		CollectedAt: time.Now(), Status: models.PostStatusPassed, AddressTags: []string{"回龙观"}}
+		CollectedAt: time.Now(), Status: models.PostStatusPassed}
 	p3 := models.RentPost{Source: "douban", ExternalID: "f3", Title: "其它", Content: "无标签",
 		CollectedAt: time.Now(), Status: models.PostStatusRejected}
 	for _, p := range []models.RentPost{p1, p2, p3} {
@@ -871,15 +899,24 @@ func TestListPostsFilters(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	id2 := int64(0)
+	var id1, id2 int64
 	all, err := s.ListPosts(PostListFilter{}, 10, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, p := range all {
-		if p.ExternalID == "f2" {
+		switch p.ExternalID {
+		case "f1":
+			id1 = p.ID
+		case "f2":
 			id2 = p.ID
 		}
+	}
+	if err := s.ReplaceSystemTags(id1, []models.PostTag{{Kind: models.TagKindLocation, Text: "望京", Source: models.TagSourceSystem}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReplaceSystemTags(id2, []models.PostTag{{Kind: models.TagKindLocation, Text: "回龙观", Source: models.TagSourceSystem}}); err != nil {
+		t.Fatal(err)
 	}
 	if err := s.MarkPostHandled(id2); err != nil {
 		t.Fatal(err)
@@ -1098,7 +1135,7 @@ func TestPostDetailLists(t *testing.T) {
 	if _, err := s.InsertNotification(id, "pushplus"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.InsertFeedback(models.Feedback{PostID: id, Channel: "feishu", Action: models.FeedbackUseless, Reason: "假房源"}); err != nil {
+	if err := s.AddUserFeedback(id, models.FeedbackUseless, "假房源"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1113,12 +1150,12 @@ func TestPostDetailLists(t *testing.T) {
 		t.Errorf("通知初始状态 = %s, want pending", notifs[0].Status)
 	}
 
-	feedbacks, err := s.ListFeedbacksByPost(id)
+	tags, err := s.ListTagsByPost(id)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(feedbacks) != 1 || feedbacks[0].Action != models.FeedbackUseless {
-		t.Errorf("帖子反馈 = %+v, want 1 条 useless", feedbacks)
+	if len(tags) != 2 || tags[0].Kind != models.TagKindFeedback || tags[0].Text != "无用" {
+		t.Errorf("帖子标签 = %+v, want feedback 无用 + manual", tags)
 	}
 }
 

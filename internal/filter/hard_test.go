@@ -74,8 +74,8 @@ func TestHardBothMissRejects(t *testing.T) {
 	if v.Passed {
 		t.Errorf("双未命中应拒绝: %+v", v)
 	}
-	if rejectedBy != "默认拒绝" {
-		t.Errorf("rejectedBy = %q, want 默认拒绝", rejectedBy)
+	if rejectedBy != models.RejectedByUnmatched {
+		t.Errorf("rejectedBy = %q, want 未命中", rejectedBy)
 	}
 	if len(tags) != 0 || len(hits) != 0 {
 		t.Errorf("未命中不应记地点/规则命中: tags=%v hits=%v", tags, hits)

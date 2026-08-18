@@ -106,12 +106,12 @@ func TestFeedbackSigned(t *testing.T) {
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "感谢反馈") {
 		t.Errorf("正确签名: status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	items, err := s.ListFeedbacksByPost(1)
+	tags, err := s.ListTagsByPost(1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 1 || items[0].PostID != 1 || items[0].Action != models.FeedbackUseful {
-		t.Errorf("DB 反馈 = %+v, want 1 条 useful post=1", items)
+	if len(tags) != 1 || tags[0].Kind != models.TagKindFeedback || tags[0].Text != "有用" {
+		t.Errorf("DB 标签 = %+v, want 1 条 useful post=1", tags)
 	}
 
 	// 重复点击同一签名 → 两次都 200（v1 接受重复记录，报表按帖去重——RuleHitStats 已 COUNT(DISTINCT post_id)）
@@ -214,12 +214,12 @@ func TestHandledLinkSigned(t *testing.T) {
 	if err != nil || !ok || p.HandledAt != nil {
 		t.Fatalf("错签后不应写 HandledAt: ok=%v err=%v HandledAt=%v", ok, err, p.HandledAt)
 	}
-	fb, err := s.ListFeedbacksByPost(id)
+	tags, err := s.ListTagsByPost(id)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(fb) != 0 {
-		t.Errorf("错签不应写 feedbacks: %d", len(fb))
+	if len(tags) != 0 {
+		t.Errorf("错签不应写标签: %d", len(tags))
 	}
 
 	// 正确签名 → 成功 + HandledAt + 仍无 feedbacks
@@ -235,12 +235,12 @@ func TestHandledLinkSigned(t *testing.T) {
 	if err != nil || !ok || p.HandledAt == nil {
 		t.Fatalf("正签后应写 HandledAt: ok=%v err=%v", ok, err)
 	}
-	fb, err = s.ListFeedbacksByPost(id)
+	tags, err = s.ListTagsByPost(id)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(fb) != 0 {
-		t.Errorf("已处理入口不应写 feedbacks: %+v", fb)
+	if len(tags) != 0 {
+		t.Errorf("已处理入口不应写标签: %+v", tags)
 	}
 }
 
@@ -264,8 +264,8 @@ func TestHandledLinkAuthDisabled(t *testing.T) {
 	if err != nil || !ok || p.HandledAt == nil {
 		t.Fatalf("鉴权关应写 HandledAt: ok=%v err=%v", ok, err)
 	}
-	fb, err := s.ListFeedbacksByPost(id)
-	if err != nil || len(fb) != 0 {
-		t.Errorf("不应写 feedbacks: err=%v n=%d", err, len(fb))
+	tags, err := s.ListTagsByPost(id)
+	if err != nil || len(tags) != 0 {
+		t.Errorf("不应写标签: err=%v n=%d", err, len(tags))
 	}
 }

@@ -1,196 +1,144 @@
 # rent-scout · 租房侦察兵
 
-豆瓣/微博租房帖自动采集、规则筛选、多渠道通知。配置全部存 SQLite，通过 Web 控制台管理。仓库：https://github.com/kuankuanlv/rent-scout
+豆瓣 / 微博租房帖自动采集、筛选、多渠道通知。自托管，数据与配置都在本机 SQLite，浏览器打开控制台即可管理。
 
-> **当前版本：v0.23**（变更记录见文末）
+仓库：https://github.com/kuankuanlv/rent-scout
 
----
+> 当前版本：v0.23
 
-## 项目介绍
+## 简介
 
-**租房侦察兵**（rent-scout）替你盯着公开租房讨论区：按你设的小组/超话/博主和时间窗自动采帖，先用地点白名单、关键词黑名单挡住无关帖和中介话术，过硬筛的再交给大模型复核、补月租与联系方式，最后按地址捆成一批推到手机或工作群。不用整天刷小组，有对口房源才响一声。
+盯着公开租房讨论区，按设定的小组、超话、博主和时间窗自动采帖。硬规则先挡掉无关帖和中介话术，再交给大模型复核、补月租和联系方式，最后按地址捆成一批推到手机或工作群。有对口房源才响一声。
 
-数据与配置都在本机 SQLite，浏览器打开控制台就能改源、规则、Cookie 和通知，热加载即时生效；CookieCloud 可定时把登录态同步到本地。自托管、无第三方账号体系，也不做中介撮合。
+没有第三方账号体系，也不做中介撮合。改源、改规则、改 Cookie、改通知都在管理台完成，热加载即时生效。
 
-**信息源：** 已接入豆瓣租房小组、微博超话与租房博主（按时间窗拉取）。同一套调度里为小红书等源留了位，接上后筛选和通知不用另做一套。
+## 功能预览
 
-**筛选：** 硬规则白名单（命中地点并打标签）→ 黑名单（命中直接丢）→ 可选 AI。大模型不参与采集、不改帖子主状态，只给已通过的帖做复核与字段抽取；AI 审核标准内置，正文截断后凑批调用以省 token。
-
-**通知：** 飞书、钉钉、企业微信、PushPlus、Server酱、通用 Webhook；卡片上可点「有用 / 无用 / 已处理」，从群里就能回写控制台。
-
-## 界面预览
-
-**帖子列表**：采集的房源集中呈现，状态、标签、价格、联系方式一目了然。
+帖子列表：状态、标签、价格、联系方式，一眼看完。
 
 ![帖子列表页](assets/screenshots/posts-list.png)
 
-**帖子查询**：丰富的筛选条件组合，快速定位目标房源。
+筛选条件相当丰富，多条件组合快速定位目标房源。
 
 ![帖子筛选条件](assets/screenshots/posts-filters.png)
 
-## 快速开始
+## 系统结构
+
+三条主链路：**采集 → 审核 → 通知**。管理台读写同一份 SQLite，改完配置后各模块热加载。
+
+```mermaid
+flowchart TB
+  subgraph 管理台
+    UI[浏览器控制台]
+    PAGES[帖子 / 统计 / 配置 / 日志]
+    UI --> PAGES
+  end
+
+  DB[(SQLite)]
+  PAGES --> DB
+
+  subgraph 采集
+    CC[CookieCloud 定时同步登录态]
+    PROBE[Cookie / 页面探测]
+    DOUBAN[豆瓣小组]
+    WEIBO[微博超话 / 博主]
+    CC --> DOUBAN
+    CC --> WEIBO
+    PROBE -.-> DOUBAN
+    PROBE -.-> WEIBO
+  end
+
+  subgraph 审核
+    HARD[硬规则]
+    WL[白名单：放行并打地点标签]
+    BL[黑名单：直接丢弃]
+    HARD --> WL
+    HARD --> BL
+  end
+
+  subgraph 通知
+    AI[AI 复核：徽章、月租、联系方式]
+    PACK[按地址打包成批]
+    CH[飞书 / 钉钉 / 企微 / PushPlus / Server酱 / Webhook]
+    FB[卡片：有用 / 无用 / 已处理]
+    AI --> PACK --> CH --> FB
+  end
+
+  DOUBAN --> HARD
+  WEIBO --> HARD
+  WL --> AI
+  FB --> DB
+  DB --> DOUBAN
+  DB --> WEIBO
+```
+
+- **采集**：每个源独立协程，按时间窗轮询。Cookie 可手贴原文，也可交给 CookieCloud 定时把浏览器登录态同步到本地；管理台带探测工具，在线验证 Cookie 好不好使。
+- **审核**：白名单命中放行并打地点标签，黑名单命中直接丢。未命中白名单的帖不会进入通知。
+- **通知**：推送前走 AI 复核，补月租、联系方式，正文截断后凑批调用以省 token。卡片上能点「有用 / 无用 / 已处理」，群里就能回写控制台。
+
+## 配置介绍
+
+配置全部存在本机 SQLite，没有独立配置文件。Cookie、LLM Key、Webhook 等敏感项也写在同一库里。
+
+启动后会在当前工作目录自动创建：
+
+- `db/`：SQLite 库（默认 `db/rent-scout.db`）
+- `logs/`：按日滚动的日志文件
+
+可用环境变量 `DB_PATH`、`LOG_DIR` 改路径。监听地址、日志级别等少数项改完需要重启，其余大多热加载，约十几秒生效。
+
+字段含义、探测按钮和规则编辑都以管理台为准：启动后打开配置页即可。
+
+## 运行
+
+默认监听 `http://localhost:7777`。首次打开会进入 `/admin/setup` 引导：可一键导入内置默认配置（小组、超话、参数已备好，Cookie / Key / Webhook 自己填），或按步骤手动设置。
+
+### 下载 Release（推荐）
+
+适合不打算改代码的使用方。
+
+1. 打开 [Releases](https://github.com/kuankuanlv/rent-scout/releases)，按操作系统和架构下载压缩包。
+2. 解压到任意目录，进入该目录后运行：
 
 ```bash
+# macOS / Linux
+chmod +x rent-scout
+./rent-scout
+
+# Windows
+rent-scout.exe
+```
+
+`db/` 和 `logs/` 会出现在运行时的当前目录。macOS 若提示无法打开，到「系统设置 → 隐私与安全性」允许该程序。
+
+### 源码编译运行
+
+需要 [Go 1.25+](https://go.dev/dl/)。
+
+```bash
+git clone https://github.com/kuankuanlv/rent-scout.git
+cd rent-scout
 go run ./cmd/rent-scout
 ```
 
-或用 Makefile（产物在 `bin/`，不入库）：
+或用 Makefile：
 
 ```bash
-make          # 等同 make build → bin/rent-scout
-make run
-make test
-make clean
+make run          # 编译到 bin/rent-scout 并启动
+make build        # 只编译
+make test         # 跑测试
 ```
 
-首次启动日志会提示 SQLite 配置为空，浏览器访问 `http://localhost:7777/admin/setup` 完成引导。
-
-**引导流程：** 首次进入先选择初始化方式——**一键导入现成默认配置**（豆瓣小组、微博超话与博主、采集/筛选/日志参数即刻就绪；Cookie、LLM Key、Webhook 等敏感项留空，需自行填写）或**手动逐个设置**。导入后可选择填写访问令牌开启鉴权，不填直接完成；手动路径为步骤 1 鉴权（必填，保存后继续）→ 步骤 2–5 可跳过，各步独立保存到 SQLite。
-
-## 环境变量
-
-| 变量 | 默认 | 说明 |
-|------|------|------|
-| `DB_PATH` | `db/rent-scout.db` | SQLite 数据库路径 |
-
-## Docker
+交叉编译示例：
 
 ```bash
-docker compose up -d
+GOOS=linux GOARCH=amd64 go build -o rent-scout ./cmd/rent-scout
 ```
 
-数据持久化在 `./data/` 目录。
-
-## 管理页面（信息架构）
-
-**一级顶栏（四入口）：**
-
-| 标签 | 路径 |
-|------|------|
-| 帖子 | `/admin` |
-| 统计 | `/admin/stats` |
-| 配置 | `/admin/config`（默认 `?tab=general`） |
-| 日志 | `/admin/logs`（内存 ring + SSE 实时滚动） |
-
-**配置二级 Tab（`?tab=`）：** `general` · `sources` · `rules` · `ai` · `notifier` · `admin`
-
-- 规则在 **`/admin/config?tab=rules`**，不是独立顶栏页。
-- `GET /admin/rules` → `302` 到 `?tab=rules`；`POST /admin/rules*` 仍保留。
-- 首次引导：`/admin/setup`
-
-## 规则（三类型）
-
-| `type` | 含义 |
-|--------|------|
-| `whitelist` | 命中通过并写入地点标签 `address_tags` |
-| `blacklist` | 任一命中拒绝 |
-| `ai_natural` | 自然语言，交 AI |
-
-**硬链顺序**：白名单 → 黑名单 →（未定案）AI。黑名单未命中不自动通过。同条逗号为「或」；禁止理解为「多规则之间且」。`mode` / `collect_tags` 已废弃。
-
-## Post 四态与真相表
-
-帖子主状态仅：`collected` / `pending` / `passed` / `rejected`（无 `sent`/`acked` 主状态语义）。
-
-| 关心点 | 唯一真相 |
-|--------|----------|
-| 筛选是否通过 | `posts.status` + `filter_results` |
-| 某渠道是否发出 | `notifications(post_id,channel).status` |
-| 用户有用/无用 | `feedbacks` |
-| 运营已处理 | `posts.handled_at` |
-| 通知分组键 | `posts.address_tags[0]`（空 →「未分组」） |
-
-## 通知（NotifyBatch / Item / 已处理）
-
-- 发送路径组装 **NotifyBatch**（`group_key` + `items`），Item 含源链接、有用/无用反馈、已处理链接。
-- 反馈：`/f` 签名 → 写 `feedbacks`。
-- 已处理：`GET /h` 签名 → 写 `handled_at`，不写反馈；控制台也可 `POST /admin/handled`。
-
-## Cookie（采集 / 源 Tab）
-
-| mode | 展示字段 |
-|------|----------|
-| `none` | 无附加字段（默认） |
-| `raw` | Cookie 原文 textarea（+ 已保存长度 hint；不回显全文） |
-| `cookiecloud` | url / key / password |
-
-旧 `file` 模式已移除；库内 `cookie_mode=file` 会规范为 `none`。
-
-**探测：** 配置页 / Setup `POST /admin/config/cookie/test` 用草稿探测（解析 + 轻量在线 GET），**不写库**。CookieCloud 只列出豆瓣域 cookie（脱敏预览）；在线探测优先打第一组小组 URL。CookieCloud 解密对齐官方/gongji：`encrypted` 字段，`key=md5(uuid-password)[:16]`，先 **AES-128-CBC（IV=0）**，失败再 Salted__ AES-256。探测 HTTP 打 raw 请求应答（Cookie/Authorization 脱敏），可在「日志」页边测边看。
-
-## 热加载矩阵 vs RestartKeys
-
-HotConfig 约每 10s 轮询 SQLite：**先 hash，变化才 COW**；未变跳过并打 `[hot_config_skip]`。保存后也可立即 `ReloadOnce`。
-
-| 项 | 期望 |
-|----|------|
-| interval / jitter / max_age、admin token、rules | 热生效 |
-| Cookie raw/cookiecloud、Douban groups | 下次 Get / 下一轮跟 HotConfig |
-| Cookie Test | 即时，不写库 |
-| LLM、webhook、`server.addr`、`log.path`、`collector.sources` 列表、`notifier.batch_size` | **需重启**（与 `RestartKeys` 一致；保存后黄条提示） |
-| 反馈签名密钥 | 跟 HotConfig 当前 admin token |
-
-## 日志约定
-
-`[]` 只标协程职责，不是消息正文。文本形如 `[hot_config_reload] 配置变更，开始 COW 更换快照`；JSON 用 `duty` 字段。固定职责名：`main` · `hot_config_reload` · `douban_collector`（按源 `{source}_collector`）· `filter` · `notifier` · `admin` · `setup`。禁止打印完整 cookie / token / LLM key。
-
-管理台 `/admin/logs` 用进程内 ring + SSE（`/admin/logs/stream`）做动态滚动，不引入 Loki 等外部栈。默认保留 **1000** 条，可在 **配置 → 常规 → 内存日志条数**（`log.memory_lines`，100–10000）调整，保存后立即生效。条数越大越占内存：普通日志大约几百 KB，探测 raw 多时 1000 条可能到数 MB。Cookie / AI 探测的 `stage`、req/resp raw 都会进这里。
-
-## 采集进度（source offset）
-
-每源独立 goroutine（如 `douban_collector`）按页写入 `source_state`：
-
-| 阶段 | 行为 |
-|------|------|
-| `backfill` | 从 `page` 游标翻历史，直到时间窗下沿或各组走完 |
-| `incremental` | 每轮从列表头抓新帖，碰到 `watermark`（已见最新发布时间）即停，不再打旧页 |
-
-时间窗每次按配置相对 `now` 解析（默认 `-10d`～`now`），这是过滤窗，不是翻页起点。改 `range_from/to` 或小组列表会重置进度；也可 `POST /api/sources/{name}/reset`。旧纯字符串游标仍能读，当成 backfill 的 page。
-
-## 配置说明
-
-- 所有配置（含 webhook、LLM key）写入 SQLite `kv_config` 表（扁平 key，如 `collector.douban.groups`、`secret.notifier.feishu.webhook`）
-- 源/渠道差异用 Go 结构体字段 + 扁平 KV，**没有**按源子表，也**没有**整段 JSON blob 存配置；运行时进度才是 JSON（见上）
-- 敏感项以 `secret.` 前缀存储，页面展示打码
-- 无配置文件，无需 `config.toml`
-- 首次引导页可选择**一键导入内置默认配置**（`internal/config.DefaultKV()`）：含豆瓣小组、微博超话与博主、采集/筛选/日志参数，仅配置类信息、不含任何历史帖子/审核数据；Cookie、CookieCloud、LLM Key、各渠道 Webhook 等敏感项一律为空，LLM 默认 DeepSeek 官方端点（key 留空），通知渠道默认关闭
-- 仓库**不含** `db/demo.sql`；需要样例数据请自行写入 SQLite
-
-## 开发
+### Docker
 
 ```bash
-go test ./...
-go build ./cmd/rent-scout
+docker compose up -d --build
 ```
 
-架构说明在本地 `docs/`（不入库）。
-
----
-
-## 变更记录
-
-| 版本 | 时间 | 变更说明 |
-|------|------|----------|
-| v0.23 | 2026-08-17 | 第一阶段收尾：首次引导二选一（一键导入现成默认配置，可选令牌后完成 / 手动设置）、LLM 默认统一 DeepSeek（key 留空）、首页与 README 介绍同步优化、变更记录移至文末；AI 审核标准放宽不误杀、部分 JSON 容错补跑、规则重放按能力变化触发、飞书改富文本卡片 |
-| v0.22 | 2026-08-16 05:00:00 | 润色项目介绍：作用/优势、已接入豆瓣与微博、即将小红书等、通知与硬规则+AI |
-| v0.21 | 2026-08-15 20:54:00 | 增加 Makefile：build / run / test / vet / clean |
-| v0.20 | 2026-08-15 20:51:00 | 本地二进制约定输出到 `bin/`，不入库 |
-| v0.19 | 2026-08-13 18:30:00 | 日志级别改下拉；变更历史可打开只读快照；轮次间隔/请求间隔文案拆清 |
-| v0.18 | 2026-08-13 18:20:00 | 帖子页标签筛选改为下拉（已有 address_tags ∪ 启用白名单词） |
-| v0.17 | 2026-08-13 17:00:00 | 采集日志只保留开始/结束等待下一轮；豆瓣 3s 是请求间隔不再当轮次；配置按关注点分色块，Cookie/检测就近，保存单独靠右 |
-| v0.16 | 2026-08-13 16:50:00 | 筛选 `filter` 有帖立刻硬规则落库，不等批；AI 审核 `ai_review` 从库读 pending 凑批再调 LLM |
-| v0.15 | 2026-08-13 16:40:00 | `douban_collector` 只读本地 cookie；`douban_cookie_cloud` 每 10 分钟同步到 `cookie_raw`；源/CookieMode 改枚举；CookieCloud 日志按请求→应答→过滤域→解密→拿 cookie |
-| v0.14 | 2026-08-13 16:20:00 | 豆瓣拉取范围改为天数「从/至」（默认 -10 / now）；规则 autosave 修 400；配置导出 JSON；CookieCloud / 豆瓣检测拆开 |
-| v0.13 | 2026-08-13 16:10:00 | 源进度：`source_state.cursor` 存 JSON（backfill 翻页 + incremental 水位）；时间窗/小组变更自动重置；`POST /api/sources/{name}/reset` |
-| v0.12 | 2026-08-13 15:55:00 | 内存日志默认 1000 条；配置→常规可改 `log.memory_lines`（100–10000，热生效），并提示内存占用 |
-| v0.11 | 2026-08-13 15:50:00 | CookieCloud 对齐 AES-128-CBC（gongji 向量）；探测类打 raw 请求应答；顶栏「日志」SSE 滚动 |
-| v0.10 | 2026-08-13 15:15:00 | 日志 `[]` 只标协程职责（`hot_config_reload` / `douban_collector` / `notifier` 等），消息不再写 event_tag |
-| v0.9 | 2026-08-13 14:45:00 | `docs/` 整目录不入库；Cookie 探测展示脱敏豆瓣 cookie、风控间隔符、探测打小组 URL |
-| v0.8 | 2026-08-13 12:20:00 | cookie 子包、notifier/channels、架构依赖表 |
-| v0.7 | 2026-08-13 12:05:00 | config：EnvLocal→Secrets、Runtime→HotConfig |
-| v0.6 | 2026-08-13 12:10:00 | 架构说明迁回 `docs/ARCHITECTURE.md`；gitignore 仅忽略 docs 草稿、放行架构 |
-| v0.5 | 2026-08-13 12:00:00 | Plan 10：包分层（collector sources / store·admin 子包）；Cookie 去掉 file，UI 按 mode 联动 |
-| v0.4 | 2026-08-13 11:40:00 | 架构说明改为仓库根 `ARCHITECTURE.md`（`docs/` 被 gitignore，避免死链） |
-| v0.3 | 2026-08-13 11:35:00 | Spec 09：三规则类型、硬链白→黑→AI、Post 四态真相表、NotifyBatch/Item/handled `/h`、§7 日志与 hash-COW |
-| v0.2 | 2026-08-13 11:35:00 | IA（三顶栏+六 tab）、热加载矩阵、Cookie raw/探测、日志约定；修正规则入口 |
-| v0.1 | 2026-08-13 | 初版 README（快速开始 / Docker） |
+数据目录挂在 `./data`，对应容器内 `/app/db`。浏览器同样打开 http://localhost:7777/admin/setup。

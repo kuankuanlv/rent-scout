@@ -1,0 +1,41 @@
+{{define "login"}}
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <title>{{.Title}} - rent-scout</title>
+  {{template "head" .}}
+</head>
+<body class="bg-gradient-to-br from-brand-50 via-white to-indigo-50 min-h-screen flex items-center justify-center p-4">
+  <main class="w-full max-w-sm">
+    <div class="text-center mb-8">
+      <div class="text-4xl mb-3">🔑</div>
+      <h1 class="text-2xl font-bold text-gray-900">{{.Title}}</h1>
+    </div>
+
+    <div class="bg-white rounded-2xl shadow-lg border border-gray-100 p-6 sm:p-8">
+      {{if .Error}}
+      <div class="mb-4 bg-red-50 text-red-700 p-3 rounded-xl text-sm font-medium border border-red-100">
+        {{.Error}}
+      </div>
+      {{end}}
+
+      <form method="post" action="/admin/login" class="space-y-4">
+        <input type="hidden" name="next" value="{{.Next}}">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">访问令牌</label>
+          <input type="password" name="token" required autofocus autocomplete="current-password"
+                 class="w-full border-gray-200 border rounded-xl px-4 py-2.5 text-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-500 outline-none transition">
+        </div>
+        <button type="submit" class="w-full py-2.5 bg-brand-600 hover:bg-brand-700 text-white rounded-xl font-medium transition active:scale-95">
+          登录管理台
+        </button>
+      </form>
+
+      <p class="mt-6 text-center text-xs text-gray-400">
+        令牌在「配置 → 管理」页面中设置
+      </p>
+    </div>
+  </main>
+</body>
+</html>
+{{end}}

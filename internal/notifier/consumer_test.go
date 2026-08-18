@@ -72,8 +72,7 @@ func TestNotifierProcessBatch(t *testing.T) {
 	s := newNotifierTestStore(t)
 	defer s.Close()
 	p1 := seedNotifierPost(t, s, models.PostStatusPassed)
-	p1.AddressTags = []string{"望京"}
-	if err := s.UpdatePostAddressTags(p1.ID, p1.AddressTags); err != nil {
+	if err := s.ReplaceSystemTags(p1.ID, []models.PostTag{{Kind: models.TagKindLocation, Text: "望京", Source: models.TagSourceSystem}}); err != nil {
 		t.Fatal(err)
 	}
 	p2 := seedNotifierPost(t, s, models.PostStatusPassed)
@@ -143,11 +142,13 @@ func TestNotifierGroupIsolation(t *testing.T) {
 	s := newNotifierTestStore(t)
 	defer s.Close()
 	pA := seedNotifierPost(t, s, models.PostStatusPassed)
-	pA.AddressTags = []string{"望京"}
-	_ = s.UpdatePostAddressTags(pA.ID, pA.AddressTags)
+	if err := s.ReplaceSystemTags(pA.ID, []models.PostTag{{Kind: models.TagKindLocation, Text: "望京", Source: models.TagSourceSystem}}); err != nil {
+		t.Fatal(err)
+	}
 	pB := seedNotifierPost(t, s, models.PostStatusPassed)
-	pB.AddressTags = []string{"回龙观"}
-	_ = s.UpdatePostAddressTags(pB.ID, pB.AddressTags)
+	if err := s.ReplaceSystemTags(pB.ID, []models.PostTag{{Kind: models.TagKindLocation, Text: "回龙观", Source: models.TagSourceSystem}}); err != nil {
+		t.Fatal(err)
+	}
 
 	// 按 body 内容区分组（不依赖发送顺序）：望京 200、其余 500
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

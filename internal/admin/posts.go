@@ -7,7 +7,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"time"
 
 	"rent-scout/internal/models"
 	"rent-scout/internal/pkglog"
@@ -106,7 +105,7 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if err := s.tmpl.ExecuteTemplate(w, "home", mergePageCtx(pageCtx(r, "home"), map[string]any{})); err != nil {
+	if err := s.tmpl.ExecuteTemplate(w, "home", mergePageCtx(s.pageCtx(r, "home"), map[string]any{})); err != nil {
 		pkglog.Component(pkglog.Admin).Error("介绍页渲染失败", "err", err)
 	}
 }
@@ -150,8 +149,11 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "查询失败", http.StatusInternalServerError)
 		return
 	}
-	if err := s.db.AttachHitTags(posts); err != nil {
-		pkglog.Component(pkglog.Admin).Warn("命中标签加载失败", "err", err)
+	if err := s.db.AttachPostTags(posts); err != nil {
+		pkglog.Component(pkglog.Admin).Warn("标签加载失败", "err", err)
+	}
+	if err := s.db.AttachAIReasons(posts); err != nil {
+		pkglog.Component(pkglog.Admin).Warn("AI 原因加载失败", "err", err)
 	}
 	tags, err := s.db.ListFilterTags()
 	if err != nil {
@@ -165,7 +167,7 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
 		Q: f.Q, Status: f.Status, Tag: f.Tag, AI: f.AI, Handled: f.Handled, Source: f.Source,
 		Token: r.URL.Query().Get("token"), PageSize: size,
 	}
-	if err := s.tmpl.ExecuteTemplate(w, "admin", mergePageCtx(pageCtx(r, "posts"), map[string]any{
+	if err := s.tmpl.ExecuteTemplate(w, "admin", mergePageCtx(s.pageCtx(r, "posts"), map[string]any{
 		"Posts":       posts,
 		"Q":           f.Q,
 		"Status":      f.Status,
@@ -233,7 +235,7 @@ func (s *Server) handleMark(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "参数无效", http.StatusBadRequest)
 		return
 	}
-	if err := s.db.InsertFeedback(models.Feedback{PostID: postID, Action: action, Reason: r.PostFormValue("reason"), CreatedAt: time.Now()}); err != nil {
+	if err := s.db.AddUserFeedback(postID, action, r.PostFormValue("reason")); err != nil {
 		pkglog.Component(pkglog.Admin).Error("反馈写入失败", "post_id", postID, "action", action, "err", err)
 		http.Error(w, "写入失败", http.StatusInternalServerError)
 		return
@@ -296,14 +298,17 @@ func (s *Server) handlePosts(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "查询失败", http.StatusInternalServerError)
 		return
 	}
-	if err := s.db.AttachHitTags(list); err != nil {
-		pkglog.Component(pkglog.Admin).Warn("命中标签加载失败", "err", err)
+	if err := s.db.AttachPostTags(list); err != nil {
+		pkglog.Component(pkglog.Admin).Warn("标签加载失败", "err", err)
+	}
+	if err := s.db.AttachAIReasons(list); err != nil {
+		pkglog.Component(pkglog.Admin).Warn("AI 原因加载失败", "err", err)
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(map[string]any{"posts": list})
 }
 
-// handlePost 帖子详情（GET /api/posts/{id}）：post + filter_result + notifications + feedbacks
+// handlePost 帖子详情（GET /api/posts/{id}）：post + filter_result + notifications + tags
 func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -341,17 +346,18 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "查询失败", http.StatusInternalServerError)
 		return
 	}
-	feedbacks, err := s.db.ListFeedbacksByPost(id)
+	tags, err := s.db.ListTagsByPost(id)
 	if err != nil {
-		pkglog.Component(pkglog.Admin).Error("查反馈失败", "id", id, "err", err)
+		pkglog.Component(pkglog.Admin).Error("查标签失败", "id", id, "err", err)
 		http.Error(w, "查询失败", http.StatusInternalServerError)
 		return
 	}
+	post.Tags = tags
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"post":          post,
 		"filter_result": filterResult,
 		"notifications": notifications,
-		"feedbacks":     feedbacks,
+		"tags":          tags,
 	})
 }

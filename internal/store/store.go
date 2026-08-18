@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"rent-scout/internal/store/notify"
+	"rent-scout/internal/store/post_tags"
 	"rent-scout/internal/store/posts"
 
 	_ "modernc.org/sqlite" // 纯 Go 驱动，无 CGO，利于 Docker 交叉编译
@@ -18,6 +19,7 @@ type Store struct {
 
 	posts  *posts.Repo
 	notify *notify.Repo
+	postTags *posttags.Repo
 }
 
 // Open 打开（不存在则创建）SQLite 库并执行迁移。
@@ -39,9 +41,10 @@ func Open(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("设置 PRAGMA: %w", err)
 	}
 	s := &Store{
-		db:     db,
-		posts:  &posts.Repo{DB: db},
-		notify: &notify.Repo{DB: db},
+		db:       db,
+		posts:    &posts.Repo{DB: db},
+		notify:   &notify.Repo{DB: db},
+		postTags: &posttags.Repo{DB: db},
 	}
 	if err := s.migrate(); err != nil {
 		db.Close()
@@ -106,14 +109,6 @@ func (s *Store) migrate() error {
 		    UNIQUE(post_id, channel),
 		    FOREIGN KEY(post_id) REFERENCES posts(id)
 		)`,
-		`CREATE TABLE IF NOT EXISTS feedbacks (
-		    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-		    post_id    INTEGER NOT NULL,
-		    channel    TEXT    NOT NULL DEFAULT '',
-		    action     TEXT    NOT NULL,
-		    reason     TEXT    NOT NULL DEFAULT '',
-		    created_at DATETIME NOT NULL
-		)`,
 		`CREATE TABLE IF NOT EXISTS source_state (
 		    source     TEXT PRIMARY KEY,
 		    cursor     TEXT NOT NULL DEFAULT '',
@@ -133,24 +128,25 @@ func (s *Store) migrate() error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_config_history_key ON config_history(key)`,
 		`CREATE INDEX IF NOT EXISTS idx_config_history_created ON config_history(created_at)`,
+		`CREATE TABLE IF NOT EXISTS post_tags (
+		    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		    post_id    INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+		    kind       TEXT    NOT NULL,
+		    text       TEXT    NOT NULL,
+		    source     TEXT    NOT NULL,
+		    created_at DATETIME NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_post_tags_post_id ON post_tags(post_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_post_tags_text ON post_tags(text)`,
+		`CREATE INDEX IF NOT EXISTS idx_post_tags_kind ON post_tags(kind)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_post_tags_system_unique ON post_tags(post_id, kind, text) WHERE source = 'system'`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.Exec(stmt); err != nil {
 			return fmt.Errorf("迁移建表: %w", err)
 		}
 	}
-	// 追加列（调整规格 2.3）：CREATE IF NOT EXISTS 对已有库不加列，须显式 ALTER；
-	// 检查 PRAGMA table_info 存在性，幂等安全
-	colExists, err := s.columnExists("posts", "address_tags")
-	if err != nil {
-		return err
-	}
-	if !colExists {
-		if _, err := s.db.Exec(`ALTER TABLE posts ADD COLUMN address_tags TEXT NOT NULL DEFAULT '[]'`); err != nil {
-			return fmt.Errorf("追加 address_tags 列: %w", err)
-		}
-	}
-	// 已处理时间列：NULL=未处理；幂等 ALTER（仿 address_tags）
+	// 已处理时间列：NULL=未处理；幂等 ALTER
 	handledExists, err := s.columnExists("posts", "handled_at")
 	if err != nil {
 		return err
@@ -244,7 +240,7 @@ func (s *Store) migrateResetRulesV2() error {
 
 const postStatusV3Key = "posts.status_v3"
 
-// migratePostStatusV3 清掉旧 pending，并把「未定案默认通过」改成拒绝；只跑一次
+// migratePostStatusV3 清掉旧 pending 状态；只跑一次
 func (s *Store) migratePostStatusV3() error {
 	v, err := GetConfig(s, postStatusV3Key)
 	if err != nil {
@@ -255,9 +251,6 @@ func (s *Store) migratePostStatusV3() error {
 	}
 	if _, err := s.db.Exec(`UPDATE posts SET status='collected' WHERE status='pending'`); err != nil {
 		return fmt.Errorf("pending→collected: %w", err)
-	}
-	if _, err := s.db.Exec(`UPDATE posts SET status='rejected' WHERE status='passed' AND (address_tags IS NULL OR address_tags='' OR address_tags='[]')`); err != nil {
-		return fmt.Errorf("空标签 passed→rejected: %w", err)
 	}
 	return SetConfig(s, postStatusV3Key, "1")
 }

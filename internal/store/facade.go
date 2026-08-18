@@ -89,16 +89,8 @@ func (s *Store) NotificationAttempts(postID int64, channel string) (int, error) 
 	return s.notify.NotificationAttempts(postID, channel)
 }
 
-func (s *Store) InsertFeedback(f models.Feedback) error {
-	return s.notify.InsertFeedback(f)
-}
-
 func (s *Store) ListNotificationsByPost(postID int64) ([]models.Notification, error) {
 	return s.notify.ListNotificationsByPost(postID)
-}
-
-func (s *Store) ListFeedbacksByPost(postID int64) ([]models.Feedback, error) {
-	return s.notify.ListFeedbacksByPost(postID)
 }
 
 func (s *Store) FetchDeadNotifications(limit int) ([]models.Notification, error) {

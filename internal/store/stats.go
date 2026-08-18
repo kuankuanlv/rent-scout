@@ -17,10 +17,10 @@ type RuleStat struct {
 // （v1 近似：归因给帖子的全部命中规则）
 func (s *Store) RuleHitStats() ([]RuleStat, error) {
 	rows, err := s.db.Query(`SELECT CAST(hr.value->>'ruleId' AS INTEGER) AS rule_id, COUNT(*),
-	        COUNT(DISTINCT CASE WHEN f.id IS NOT NULL THEN fr.post_id END)
+	        COUNT(DISTINCT CASE WHEN pt.id IS NOT NULL THEN fr.post_id END)
 	    FROM filter_results fr
 	    JOIN json_each(fr.hard_rules) AS hr
-	    LEFT JOIN feedbacks f ON f.post_id = fr.post_id AND f.action = 'useless'
+	    LEFT JOIN post_tags pt ON pt.post_id = fr.post_id AND pt.kind = 'feedback' AND pt.text = '无用'
 	    WHERE fr.status = 'passed' AND hr.value IS NOT NULL
 	    GROUP BY rule_id
 	    ORDER BY rule_id`)

@@ -46,7 +46,7 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	for _, c := range channels {
 		rows = append(rows, channelRow{ChannelStat: c, Total: c.Sent + c.Failed + c.Dead})
 	}
-	if err := s.tmpl.ExecuteTemplate(w, "stats", mergePageCtx(pageCtx(r, "stats"), map[string]any{
+	if err := s.tmpl.ExecuteTemplate(w, "stats", mergePageCtx(s.pageCtx(r, "stats"), map[string]any{
 		"Today": today, "Channels": rows, "RuleStats": ruleStats, "Dead": dead, "Msg": r.URL.Query().Get("msg"),
 	})); err != nil {
 		pkglog.Component(pkglog.Admin).Error("模板渲染失败", "err", err)

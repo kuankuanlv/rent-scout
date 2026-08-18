@@ -13,18 +13,23 @@ import (
 	"rent-scout/internal/models"
 )
 
-// GroupByAddressTag 按分组主键（AddressTags[0]，无 tag → 未分组）分组（调整规格 B 3.1）。
-// 返回 map[group][]post，组内顺序保持传入顺序（排序由调用方按 NotifyItem 执行）
-func groupByAddressTag(posts []models.RentPost) map[string][]models.RentPost {
+// groupByLocationTag 按第一条 location 标签分组；无则未分组
+func groupByLocationTag(posts []models.RentPost) map[string][]models.RentPost {
 	out := make(map[string][]models.RentPost)
 	for _, p := range posts {
-		tag := GroupUnknown
-		if len(p.AddressTags) > 0 && p.AddressTags[0] != "" {
-			tag = p.AddressTags[0]
-		}
+		tag := primaryLocation(p.Tags)
 		out[tag] = append(out[tag], p)
 	}
 	return out
+}
+
+func primaryLocation(tags []models.PostTag) string {
+	for _, t := range tags {
+		if t.Kind == models.TagKindLocation && t.Text != "" {
+			return t.Text
+		}
+	}
+	return GroupUnknown
 }
 
 // sortByPriority 组内排序：AI 推荐理由充分（Reason 非空）优先，然后按 PostID（调整 B 3.1）

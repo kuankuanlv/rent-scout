@@ -26,7 +26,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tab := normalizeConfigTab(r.URL.Query().Get("tab"))
-	data := mergePageCtx(pageCtx(r, "config"), map[string]any{
+	data := mergePageCtx(s.pageCtx(r, "config"), map[string]any{
 		"Tab":  tab,
 		"Tabs": configTabs,
 	})
@@ -162,7 +162,7 @@ func (s *Server) handleConfigHistory(w http.ResponseWriter, r *http.Request) {
 			entry.NewValue = "••••"
 		}
 	}
-	if err := s.tmpl.ExecuteTemplate(w, "config_history", mergePageCtx(pageCtx(r, "config"), map[string]any{
+	if err := s.tmpl.ExecuteTemplate(w, "config_history", mergePageCtx(s.pageCtx(r, "config"), map[string]any{
 		"Sections": snapshotSections(kv),
 		"Entry":    entry,
 	})); err != nil {

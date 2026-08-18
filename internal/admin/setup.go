@@ -35,7 +35,7 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 	if raw := env.Collector.Douban.CookieRaw; raw != "" {
 		cookieRawHint = fmt.Sprintf("已保存 · 长度 %d；留空不修改", len(raw))
 	}
-	data := mergePageCtx(pageCtx(r, ""), map[string]any{
+	data := mergePageCtx(s.pageCtx(r, ""), map[string]any{
 		"Step":          step,
 		"Total":         setupTotalSteps,
 		"App":           config.KVToApp(kv),

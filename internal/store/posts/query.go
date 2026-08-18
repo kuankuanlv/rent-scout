@@ -2,7 +2,6 @@ package posts
 
 import (
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -14,11 +13,11 @@ import (
 type PostListFilter struct {
 	Q       string // title/content LIKE
 	Status  string
-	Tag     string // 硬规则标签（白/黑/默认拒绝）；不含 AI
-		Handled string // "0"=NULL，"1"=非空，其它/空=不限
-		AI      string // reviewed / unreviewed / pass / fail（独立于 Tag）
-		Source  string // douban / weibo；空=不限
-	}
+	Tag     string // post_tags.text 精确匹配
+	Handled string // "0"=NULL，"1"=非空，其它/空=不限
+	AI      string // reviewed / unreviewed / pass / fail（独立于 Tag）
+	Source  string // douban / weibo；空=不限
+}
 
 func postListWhere(f PostListFilter) (string, []any) {
 	var where []string
@@ -27,31 +26,18 @@ func postListWhere(f PostListFilter) (string, []any) {
 		where = append(where, "status = ?")
 		args = append(args, f.Status)
 	}
-		if f.Q != "" {
-			where = append(where, "(title LIKE ? OR content LIKE ?)")
-			like := "%" + f.Q + "%"
-			args = append(args, like, like)
-		}
-		if f.Source != "" {
-			where = append(where, "source = ?")
-			args = append(args, f.Source)
-		}
+	if f.Q != "" {
+		where = append(where, "(title LIKE ? OR content LIKE ?)")
+		like := "%" + f.Q + "%"
+		args = append(args, like, like)
+	}
+	if f.Source != "" {
+		where = append(where, "source = ?")
+		args = append(args, f.Source)
+	}
 	if f.Tag != "" {
-		// 硬规则标签：白名单地点 / 黑名单词 / 默认拒绝（AI 走独立 ai 条件）
-		tag := f.Tag
-		like := "%" + tag + "%"
-		where = append(where, `(
-			posts.address_tags LIKE ?
-			OR EXISTS (
-				SELECT 1 FROM filter_results fr WHERE fr.post_id = posts.id AND (
-					fr.hard_rules LIKE ?
-					OR (fr.rejected_by = '默认拒绝' AND ? = '默认拒绝')
-				)
-			)
-			OR (? = '默认拒绝' AND posts.status = 'rejected'
-				AND NOT EXISTS (SELECT 1 FROM filter_results fr WHERE fr.post_id = posts.id))
-		)`)
-		args = append(args, like, like, tag, tag)
+		where = append(where, `EXISTS (SELECT 1 FROM post_tags t WHERE t.post_id = posts.id AND t.text = ?)`)
+		args = append(args, f.Tag)
 	}
 	switch f.Handled {
 	case "0":
@@ -75,12 +61,13 @@ func postListWhere(f PostListFilter) (string, []any) {
 	return " WHERE " + strings.Join(where, " AND "), args
 }
 
+const postSelectCols = `id, source, external_id, url, title, content, author, author_url,
+			    published_at, collected_at, status, handled_at, raw, price, contact`
+
 // ListPosts 帖子列表；按发布时间倒序，空发布时间再按采集时间、id
-// 不用 datetime()：库里是 Go time.String()（带时区），datetime 解成 NULL 会退化成 id 排序
 func (r *Repo) ListPosts(f PostListFilter, limit, offset int) ([]models.RentPost, error) {
 	clause, args := postListWhere(f)
-		sqlStr := `SELECT id, source, external_id, url, title, content, author, author_url,
-			    published_at, collected_at, status, address_tags, handled_at, raw, price, contact FROM posts` + clause +
+	sqlStr := `SELECT ` + postSelectCols + ` FROM posts` + clause +
 		` ORDER BY COALESCE(published_at, collected_at) DESC, id DESC LIMIT ? OFFSET ?`
 	args = append(args, limit, offset)
 
@@ -113,8 +100,7 @@ func (r *Repo) CountPosts(f PostListFilter) (int, error) {
 
 // GetPost 单帖详情（/api/posts/{id}）；不存在返回 ok=false
 func (r *Repo) GetPost(id int64) (models.RentPost, bool, error) {
-		row := r.DB.QueryRow(`SELECT id, source, external_id, url, title, content, author, author_url,
-		    published_at, collected_at, status, address_tags, handled_at, raw, price, contact FROM posts WHERE id=?`, id)
+	row := r.DB.QueryRow(`SELECT `+postSelectCols+` FROM posts WHERE id=?`, id)
 	p, err := scanRentPost(row)
 	if err == sql.ErrNoRows {
 		return p, false, nil
@@ -125,7 +111,7 @@ func (r *Repo) GetPost(id int64) (models.RentPost, bool, error) {
 	return p, true, nil
 }
 
-// MarkPostHandled 写 handled_at=现在（不改 status / 反馈）
+// MarkPostHandled 写 handled_at=现在（不改 status / 标签）
 func (r *Repo) MarkPostHandled(postID int64) error {
 	if _, err := r.DB.Exec(`UPDATE posts SET handled_at=? WHERE id=?`, time.Now(), postID); err != nil {
 		return fmt.Errorf("标记已处理: %w", err)
@@ -133,7 +119,7 @@ func (r *Repo) MarkPostHandled(postID int64) error {
 	return nil
 }
 
-// ClearPostHandled 清 handled_at=NULL（不改 status / 反馈）
+// ClearPostHandled 清 handled_at=NULL（不改 status / 标签）
 func (r *Repo) ClearPostHandled(postID int64) error {
 	if _, err := r.DB.Exec(`UPDATE posts SET handled_at=NULL WHERE id=?`, postID); err != nil {
 		return fmt.Errorf("清除已处理: %w", err)
@@ -141,7 +127,6 @@ func (r *Repo) ClearPostHandled(postID int64) error {
 	return nil
 }
 
-// rowScanner 统一 QueryRow / Rows 的 Scan
 type rowScanner interface {
 	Scan(dest ...any) error
 }
@@ -149,9 +134,8 @@ type rowScanner interface {
 func scanRentPost(sc rowScanner) (models.RentPost, error) {
 	var p models.RentPost
 	var published, handled sql.NullTime
-	var tagsJSON string
-		if err := sc.Scan(&p.ID, &p.Source, &p.ExternalID, &p.URL, &p.Title, &p.Content,
-			&p.Author, &p.AuthorURL, &published, &p.CollectedAt, &p.Status, &tagsJSON, &handled, &p.Raw, &p.Price, &p.Contact); err != nil {
+	if err := sc.Scan(&p.ID, &p.Source, &p.ExternalID, &p.URL, &p.Title, &p.Content,
+		&p.Author, &p.AuthorURL, &published, &p.CollectedAt, &p.Status, &handled, &p.Raw, &p.Price, &p.Contact); err != nil {
 		return p, err
 	}
 	if published.Valid {
@@ -160,9 +144,6 @@ func scanRentPost(sc rowScanner) (models.RentPost, error) {
 	if handled.Valid {
 		t := handled.Time
 		p.HandledAt = &t
-	}
-	if err := json.Unmarshal([]byte(tagsJSON), &p.AddressTags); err != nil {
-		return p, fmt.Errorf("解析地址标签: %w", err)
 	}
 	return p, nil
 }

@@ -41,18 +41,21 @@ func TestConsumerProcessHard(t *testing.T) {
 	if len(passed) != 1 || len(rejected) != 1 {
 		t.Fatalf("passed=%d rejected=%d, want 1/1", len(passed), len(rejected))
 	}
-	if len(passed[0].AddressTags) != 1 || passed[0].AddressTags[0] != "望京" {
-		t.Errorf("通过帖标签 = %v, want [望京]", passed[0].AddressTags)
-	}
-	fr, ok, _ := st.FilterResultByPostID(rejected[0].ID)
-	if !ok || fr.RejectedBy != "默认拒绝" {
-		t.Errorf("未命中拒绝应写默认拒绝: ok=%v %+v", ok, fr)
-	}
-	if err := st.AttachHitTags(rejected); err != nil {
+	if err := st.AttachPostTags(passed); err != nil {
 		t.Fatal(err)
 	}
-	if len(rejected[0].HitTags) != 1 || rejected[0].HitTags[0].Text != "默认拒绝" {
-		t.Errorf("展示标签 = %+v, want [默认拒绝]", rejected[0].HitTags)
+	if len(passed[0].Tags) != 1 || passed[0].Tags[0].Text != "望京" || passed[0].Tags[0].Kind != models.TagKindLocation {
+		t.Errorf("通过帖标签 = %+v, want location 望京", passed[0].Tags)
+	}
+	fr, ok, _ := st.FilterResultByPostID(rejected[0].ID)
+	if !ok || fr.RejectedBy != models.RejectedByUnmatched {
+		t.Errorf("未命中拒绝应写未命中: ok=%v %+v", ok, fr)
+	}
+	if err := st.AttachPostTags(rejected); err != nil {
+		t.Fatal(err)
+	}
+	if len(rejected[0].Tags) != 1 || rejected[0].Tags[0].Text != models.RejectedByUnmatched || rejected[0].Tags[0].Kind != models.TagKindUnmatched {
+		t.Errorf("展示标签 = %+v, want [未命中 unmatched]", rejected[0].Tags)
 	}
 }
 

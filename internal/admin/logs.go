@@ -16,7 +16,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if err := s.tmpl.ExecuteTemplate(w, "logs", mergePageCtx(pageCtx(r, "logs"), map[string]any{
+	if err := s.tmpl.ExecuteTemplate(w, "logs", mergePageCtx(s.pageCtx(r, "logs"), map[string]any{
 		"MemoryLines": pkglog.HubCap(),
 	})); err != nil {
 		pkglog.Component(pkglog.Admin).Error("模板渲染失败", "err", err)

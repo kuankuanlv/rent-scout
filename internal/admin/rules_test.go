@@ -37,7 +37,7 @@ func TestRulesPage(t *testing.T) {
 		DecidedAt: time.Now(), HardRules: []models.RuleHit{{RuleID: r1.ID, Reason: "中介"}}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.InsertFeedback(models.Feedback{PostID: pid, Action: models.FeedbackUseless, CreatedAt: time.Now()}); err != nil {
+	if err := s.AddUserFeedback(pid, models.FeedbackUseless, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -578,12 +578,12 @@ func TestRulesTokenPropagation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 无 token → 401（对照：鉴权确实生效）
+	// 无 token → 302 重定向到登录页
 	req0 := httptest.NewRequest(http.MethodGet, "/admin/rules", nil)
 	rec0 := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec0, req0)
-	if rec0.Code != http.StatusUnauthorized {
-		t.Errorf("GET /admin/rules 无 token status = %d, want 401", rec0.Code)
+	if rec0.Code != http.StatusFound || !strings.Contains(rec0.Header().Get("Location"), "/admin/login") {
+		t.Errorf("GET /admin/rules 无 token status = %d, want 302", rec0.Code)
 	}
 
 	// GET /admin/rules?token=secret → 302，Location 带 token

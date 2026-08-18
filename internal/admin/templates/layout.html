@@ -35,10 +35,12 @@
       </button>
       <div id="nav-menu" class="hidden md:flex items-center gap-1 sm:gap-4">
         {{template "nav_links" .}}
+        {{if .ShowLogout}}<a href="/admin/logout" class="block md:inline-block px-3 py-2 rounded-lg text-sm text-gray-500 hover:bg-red-50 hover:text-red-600 transition-colors">⎋ 退出</a>{{end}}
       </div>
     </div>
     <div id="nav-mobile" class="hidden md:hidden pb-3 space-y-1 border-t border-gray-100 pt-2">
       {{template "nav_links" .}}
+      {{if .ShowLogout}}<a href="/admin/logout" class="block px-3 py-2 rounded-lg text-sm text-gray-500 hover:bg-red-50 hover:text-red-600 transition-colors">⎋ 退出登录</a>{{end}}
     </div>
   </div>
 </nav>

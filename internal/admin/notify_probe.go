@@ -129,8 +129,11 @@ func (s *Server) postsToProbeItems(posts []models.RentPost) []NotifyProbeItem {
 	items := make([]NotifyProbeItem, 0, len(posts))
 	for _, p := range posts {
 		tag := "未分组"
-		if len(p.AddressTags) > 0 && strings.TrimSpace(p.AddressTags[0]) != "" {
-			tag = p.AddressTags[0]
+		for _, t := range p.Tags {
+			if t.Kind == models.TagKindLocation && strings.TrimSpace(t.Text) != "" {
+				tag = t.Text
+				break
+			}
 		}
 		item := NotifyProbeItem{
 			PostID:             p.ID,
@@ -195,13 +198,13 @@ func mockNotifyPosts() []models.RentPost {
 	return []models.RentPost{
 		{
 			ID: -1, Source: "douban", Title: "【连通检测】望京一居示例",
-			URL:         "https://www.douban.com/group/topic/mock-probe-1/",
-			AddressTags: []string{"望京"},
+			URL:  "https://www.douban.com/group/topic/mock-probe-1/",
+			Tags: []models.PostTag{{Kind: models.TagKindLocation, Text: "望京", Source: models.TagSourceSystem}},
 		},
 		{
 			ID: -2, Source: "douban", Title: "【连通检测】梨园次卧示例",
-			URL:         "https://www.douban.com/group/topic/mock-probe-2/",
-			AddressTags: []string{"梨园"},
+			URL:  "https://www.douban.com/group/topic/mock-probe-2/",
+			Tags: []models.PostTag{{Kind: models.TagKindLocation, Text: "梨园", Source: models.TagSourceSystem}},
 		},
 	}
 }

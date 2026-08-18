@@ -2,7 +2,6 @@ package notify
 
 import (
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -28,7 +27,7 @@ func (r *Repo) FetchNotifyBatch(channels []string, limit int, requireAI bool) ([
 	ph = ph[:len(ph)-1]
 	query := fmt.Sprintf(`
 			SELECT id, source, external_id, url, title, content, author, author_url,
-			       published_at, collected_at, status, address_tags, raw, price, contact
+			       published_at, collected_at, status, raw, price, contact
 			FROM posts
 			WHERE status = 'passed'
 			%s
@@ -50,16 +49,12 @@ func (r *Repo) FetchNotifyBatch(channels []string, limit int, requireAI bool) ([
 	for rows.Next() {
 		var p models.RentPost
 		var published sql.NullTime
-		var tagsJSON string
 		if err := rows.Scan(&p.ID, &p.Source, &p.ExternalID, &p.URL, &p.Title, &p.Content,
-			&p.Author, &p.AuthorURL, &published, &p.CollectedAt, &p.Status, &tagsJSON, &p.Raw, &p.Price, &p.Contact); err != nil {
+			&p.Author, &p.AuthorURL, &published, &p.CollectedAt, &p.Status, &p.Raw, &p.Price, &p.Contact); err != nil {
 			return nil, err
 		}
 		if published.Valid {
 			p.PublishedAt = published.Time
-		}
-		if err := json.Unmarshal([]byte(tagsJSON), &p.AddressTags); err != nil {
-			return nil, fmt.Errorf("解析地址标签: %w", err)
 		}
 		items = append(items, p)
 	}

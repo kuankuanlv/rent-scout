@@ -11,7 +11,7 @@ type HardVerdict struct {
 	Passed bool
 }
 
-// EvaluateHard 先黑后白：黑名单命中拒绝并记 tag；白名单命中通过并记地点；都未命中拒绝，原因默认拒绝。
+// EvaluateHard 先黑后白：黑名单命中拒绝并记 tag；白名单命中通过并记地点；都未命中也拒绝，原因写成未命中。
 func EvaluateHard(post models.RentPost, rules []models.Rule) (v HardVerdict, tags []string, hits []models.RuleHit, rejectedBy string, err error) {
 	for _, r := range rules {
 		if r.Type != models.RuleTypeBlacklist {
@@ -38,7 +38,7 @@ func EvaluateHard(post models.RentPost, rules []models.Rule) (v HardVerdict, tag
 	if whitelistHit {
 		return HardVerdict{Passed: true}, dedup(tags), hits, "", nil
 	}
-	return HardVerdict{Passed: false}, nil, nil, "默认拒绝", nil
+	return HardVerdict{Passed: false}, nil, nil, models.RejectedByUnmatched, nil
 }
 
 // matchLocations 匹配地点关键字（标题+正文子串，大小写不敏感），返回命中列表（按输入顺序）
@@ -78,7 +78,7 @@ func containsFold(s, sub string) bool {
 	return strings.Contains(strings.ToLower(s), strings.ToLower(sub))
 }
 
-// dedup 保序去重（AddressTags 多值去重，调整规格 2.3）
+// dedup 保序去重（白名单地点多值去重）
 func dedup(items []string) []string {
 	seen := map[string]bool{}
 	out := make([]string, 0, len(items))

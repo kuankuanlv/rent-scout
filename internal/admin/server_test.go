@@ -162,15 +162,16 @@ func TestAuthRequired(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
-	if rec.Code != http.StatusUnauthorized {
-		t.Errorf("/metrics 属于管理数据，应鉴权, status = %d, want 401", rec.Code)
+	if rec.Code != http.StatusFound || !strings.Contains(rec.Header().Get("Location"), "/admin/login") {
+		t.Errorf("/metrics 属于管理数据，无凭证应重定向到登录页, status = %d, want 302", rec.Code)
 	}
+
 
 	req = httptest.NewRequest(http.MethodGet, "/admin", nil)
 	rec = httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
-	if rec.Code != http.StatusUnauthorized {
-		t.Errorf("/admin 应鉴权, status = %d, want 401", rec.Code)
+	if rec.Code != http.StatusFound || !strings.Contains(rec.Header().Get("Location"), "/admin/login") {
+		t.Errorf("/admin 应重定向到登录页, status = %d", rec.Code)
 	}
 
 	// 回调不带管理 token：进 handler 后因缺参数 400，而不是 401

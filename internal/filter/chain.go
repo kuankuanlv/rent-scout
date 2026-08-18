@@ -32,7 +32,7 @@ func (c *RuleChain) HasAI() bool {
 }
 
 // EvaluateHard 硬编码链：先黑后白，总会定案。
-// 返回结果 + 白名单地点标签（Consumer 写 posts.address_tags）。
+// 返回结果 + 白名单地点（Consumer 写 post_tags location）
 func (c *RuleChain) EvaluateHard(ctx context.Context, post models.RentPost, rules []models.Rule) (models.FilterResult, []string, error) {
 	now := time.Now()
 	v, tags, hits, rejectedBy, err := EvaluateHard(post, rules)

@@ -68,7 +68,7 @@ func (s *Server) handleFeedback(w http.ResponseWriter, r *http.Request) {
 		s.renderFeedbackResult(w, "反馈链接无效或已过期（有效期 7 天），请联系管理员", false)
 		return
 	}
-	if err := s.db.InsertFeedback(models.Feedback{PostID: postID, Channel: "", Action: action, CreatedAt: time.Now()}); err != nil {
+	if err := s.db.AddUserFeedback(postID, action, ""); err != nil {
 		pkglog.Component(pkglog.Admin).Error("反馈写入失败", "post_id", postID, "action", action, "err", err)
 		s.renderFeedbackResult(w, "写入失败，请稍后重试", false)
 		return
@@ -137,7 +137,7 @@ func (s *Server) handleFeedbacks(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "post_id/action 无效", http.StatusBadRequest)
 		return
 	}
-	if err := s.db.InsertFeedback(models.Feedback{PostID: in.PostID, Channel: in.Channel, Action: in.Action, Reason: in.Reason, CreatedAt: time.Now()}); err != nil {
+	if err := s.db.AddUserFeedback(in.PostID, in.Action, in.Reason); err != nil {
 		pkglog.Component(pkglog.Admin).Error("写反馈失败", "post_id", in.PostID, "err", err)
 		http.Error(w, "写入失败", http.StatusInternalServerError)
 		return

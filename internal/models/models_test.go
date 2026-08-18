@@ -27,14 +27,17 @@ func TestStatusConstants(t *testing.T) {
 	}
 }
 
-// AddressTags 多值语义（调整规格 2.3）：JSON 可序列化，分组主键取 [0]
-func TestAddressTagsJSON(t *testing.T) {
-	p := RentPost{Source: "douban", ExternalID: "1", AddressTags: []string{"望京", "14号线"}}
+// Tags JSON 可序列化
+func TestTagsJSON(t *testing.T) {
+	p := RentPost{Source: "douban", ExternalID: "1", Tags: []PostTag{
+		{Kind: TagKindLocation, Text: "望京"},
+		{Kind: TagKindLocation, Text: "14号线"},
+	}}
 	b, err := json.Marshal(p)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(b, []byte(`"addressTags":["望京","14号线"]`)) {
-		t.Errorf("JSON 缺少 addressTags: %s", b)
+	if !bytes.Contains(b, []byte(`"tags":[`)) || !bytes.Contains(b, []byte(`"望京"`)) {
+		t.Errorf("JSON 缺少 tags: %s", b)
 	}
 }

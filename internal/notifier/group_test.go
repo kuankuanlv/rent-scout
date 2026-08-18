@@ -8,15 +8,18 @@ import (
 	"rent-scout/internal/models"
 )
 
-// 分组：按 AddressTags[0]；无 tag → 未分组；顺序稳定
-func TestGroupByAddressTag(t *testing.T) {
+// 分组：按第一条 location 标签；无 tag → 未分组
+func TestGroupByLocationTag(t *testing.T) {
 	posts := []models.RentPost{
-		{ID: 1, AddressTags: []string{"望京"}},
-		{ID: 2, AddressTags: []string{"回龙观"}},
-		{ID: 3, AddressTags: []string{"望京", "soho"}},
-		{ID: 4, AddressTags: nil},
+		{ID: 1, Tags: []models.PostTag{{Kind: models.TagKindLocation, Text: "望京"}}},
+		{ID: 2, Tags: []models.PostTag{{Kind: models.TagKindLocation, Text: "回龙观"}}},
+		{ID: 3, Tags: []models.PostTag{
+			{Kind: models.TagKindLocation, Text: "望京"},
+			{Kind: models.TagKindLocation, Text: "soho"},
+		}},
+		{ID: 4, Tags: nil},
 	}
-	groups := groupByAddressTag(posts)
+	groups := groupByLocationTag(posts)
 	if len(groups) != 3 {
 		t.Fatalf("组数: %d, want 3 (望京/回龙观/未分组)", len(groups))
 	}

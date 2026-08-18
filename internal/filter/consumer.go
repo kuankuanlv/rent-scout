@@ -78,12 +78,7 @@ func (c *Consumer) processHard(ctx context.Context, batch []models.RentPost) err
 			log.Error("硬链评估失败", "post_id", post.ID, "err", err)
 			continue
 		}
-		if len(tags) > 0 {
-			if err := c.store.UpdatePostAddressTags(post.ID, tags); err != nil {
-				log.Error("地点标签写回失败", "post_id", post.ID, "err", err)
-			}
-		}
-		if err := c.commitHard(res); err != nil {
+		if err := c.commitHard(res, tags); err != nil {
 			return err
 		}
 	}
@@ -108,15 +103,8 @@ func (c *Consumer) ReplayHard(ctx context.Context, batch []models.RentPost) erro
 			log.Error("规则 replay 评估失败", "post_id", post.ID, "err", err)
 			continue
 		}
-		if len(tags) > 0 {
-			if err := c.store.UpdatePostAddressTags(post.ID, tags); err != nil {
-				log.Error("地点标签写回失败", "post_id", post.ID, "err", err)
-			}
-		} else if res.Status == models.PostStatusRejected {
-			_ = c.store.UpdatePostAddressTags(post.ID, []string{})
-		}
 		becamePassed := post.Status != models.PostStatusPassed && res.Status == models.PostStatusPassed
-		if err := c.commitHard(res); err != nil {
+		if err := c.commitHard(res, tags); err != nil {
 			return err
 		}
 		if becamePassed {
@@ -194,12 +182,15 @@ func splitBatches(posts []models.RentPost, size int) [][]models.RentPost {
 	return out
 }
 
-// commitHard 硬规则定案。黑白都未命中也会写 filter_results（rejected_by=默认拒绝）。
-func (c *Consumer) commitHard(res models.FilterResult) error {
+// commitHard 硬规则定案：status + filter_results + system tags
+func (c *Consumer) commitHard(res models.FilterResult, locations []string) error {
 	if len(res.HardRules) > 0 || res.RejectedBy != "" || res.Status == models.PostStatusPassed {
 		if err := c.store.SaveFilterResult(res); err != nil {
 			pkglog.Component(pkglog.Filter).Error("筛选结果写库失败", "post_id", res.PostID, "err", err)
 		}
+	}
+	if err := c.store.ReplaceSystemTags(res.PostID, SystemTagsFromHard(res, locations)); err != nil {
+		pkglog.Component(pkglog.Filter).Error("系统标签写库失败", "post_id", res.PostID, "err", err)
 	}
 	if err := c.store.MarkStatus([]int64{res.PostID}, res.Status); err != nil {
 		return err

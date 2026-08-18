@@ -101,6 +101,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/admin/logs/stream", s.handleLogsStream)
 	mux.HandleFunc("/admin/logs/recent", s.handleLogsRecent)
 	mux.HandleFunc("/admin/dead/reset", s.handleDeadReset)
+	mux.HandleFunc("/admin/login", s.handleLogin)
+	mux.HandleFunc("/admin/logout", s.handleLogout)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)

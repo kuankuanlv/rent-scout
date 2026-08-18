@@ -99,15 +99,20 @@ func TestAdminPage(t *testing.T) {
 	}
 }
 
-// TestAdminPageFilters q/tag/handled 筛选 + AddressTags chips + 已处理按钮
+// TestAdminPageFilters q/tag/handled 筛选 + 标签 chips + 已处理按钮
 func TestAdminPageFilters(t *testing.T) {
 	s := newAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 
-	p := models.RentPost{Source: "douban", ExternalID: "chip1", Title: "望京合租帖", Status: models.PostStatusPassed,
-		AddressTags: []string{"望京", "14号线"}}
-	if _, err := s.InsertPost(p); err != nil {
+	if _, err := s.InsertPost(models.RentPost{Source: "douban", ExternalID: "chip1", Title: "望京合租帖", Status: models.PostStatusPassed}); err != nil {
+		t.Fatal(err)
+	}
+	chip1ID := postID(t, s, "chip1")
+	if err := s.ReplaceSystemTags(chip1ID, []models.PostTag{
+		{Kind: models.TagKindLocation, Text: "望京", Source: models.TagSourceSystem},
+		{Kind: models.TagKindLocation, Text: "14号线", Source: models.TagSourceSystem},
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.InsertPost(models.RentPost{Source: "douban", ExternalID: "chip2", Title: "其它帖", Status: models.PostStatusPassed}); err != nil {
@@ -120,6 +125,11 @@ func TestAdminPageFilters(t *testing.T) {
 		PostID: postID(t, s, "blk1"), Status: models.PostStatusRejected, Stage: models.StageHardRule,
 		RejectedBy: "黑名单命中:中介", DecidedAt: time.Now(),
 		HardRules: []models.RuleHit{{Reason: "中介"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReplaceSystemTags(postID(t, s, "blk1"), []models.PostTag{
+		{Kind: models.TagKindBlock, Text: "中介", Source: models.TagSourceSystem},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +152,7 @@ func TestAdminPageFilters(t *testing.T) {
 		t.Errorf("q=合租 结果异常: %s", body)
 	}
 	if !strings.Contains(body, "望京") || !strings.Contains(body, "14号线") {
-		t.Errorf("页面缺 AddressTags chips")
+		t.Errorf("页面缺 location 标签 chips")
 	}
 
 	if code, body := get("/admin/posts?status=rejected"); code != http.StatusOK {
@@ -158,7 +168,7 @@ func TestAdminPageFilters(t *testing.T) {
 	}
 
 	if code, body := get("/admin/posts"); code != http.StatusOK || !strings.Contains(body, "无标签") {
-		t.Errorf("无 AddressTags 帖应显示空态「无标签」: code=%d", code)
+		t.Errorf("无标签帖应显示空态「无标签」: code=%d", code)
 	}
 
 	if code, body := get("/admin/posts"); code != http.StatusOK {
@@ -250,12 +260,12 @@ func TestAdminMark(t *testing.T) {
 		t.Errorf("Location = %q, want /admin/posts", loc)
 	}
 	// DB 有记录
-	items, err := s.ListFeedbacksByPost(id)
+	tags, err := s.ListTagsByPost(id)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 1 || items[0].Action != models.FeedbackUseful || items[0].Reason != "测试原因" {
-		t.Errorf("DB 反馈 = %+v, want 1 条 useful", items)
+	if len(tags) != 2 || tags[0].Kind != models.TagKindFeedback || tags[0].Text != "有用" || tags[1].Text != "测试原因" {
+		t.Errorf("DB 标签 = %+v, want feedback 有用 + manual", tags)
 	}
 
 	// 非法 action → 400
@@ -283,12 +293,12 @@ func TestAdminMarkMethodNotAllowed(t *testing.T) {
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("GET /admin/mark status = %d, want 405", rec.Code)
 	}
-	items, err := s.ListFeedbacksByPost(id)
+	tags, err := s.ListTagsByPost(id)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 0 {
-		t.Errorf("GET 触发了写库：DB 反馈 = %+v, want 0 条", items)
+	if len(tags) != 0 {
+		t.Errorf("GET 触发了写库：DB 标签 = %+v, want 0 条", tags)
 	}
 }
 
@@ -320,12 +330,12 @@ func TestAdminTokenPropagation(t *testing.T) {
 	}
 	id := postID(t, s, "tok1")
 
-	// 无 token → 401（对照：鉴权确实生效）
+	// 无 token → 302 重定向到登录页
 	req0 := httptest.NewRequest(http.MethodGet, "/admin", nil)
 	rec0 := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec0, req0)
-	if rec0.Code != http.StatusUnauthorized {
-		t.Errorf("GET /admin 无 token status = %d, want 401", rec0.Code)
+	if rec0.Code != http.StatusFound || !strings.Contains(rec0.Header().Get("Location"), "/admin/login") {
+		t.Errorf("GET /admin 无 token status = %d, want 302", rec0.Code)
 	}
 
 	// GET /admin?token=secret → 200 且链接透传 token
@@ -366,12 +376,12 @@ func TestAdminTokenPropagation(t *testing.T) {
 	if loc := rec2.Header().Get("Location"); loc != "/admin/posts?token=secret" {
 		t.Errorf("Location = %q, want /admin?token=secret", loc)
 	}
-	items, err := s.ListFeedbacksByPost(id)
+	tags, err := s.ListTagsByPost(id)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 1 || items[0].Reason != "鉴权下提交" {
-		t.Errorf("DB 反馈 = %+v, want 1 条", items)
+	if len(tags) != 2 || tags[1].Text != "鉴权下提交" {
+		t.Errorf("DB 标签 = %+v, want feedback+manual", tags)
 	}
 }
 
@@ -406,12 +416,12 @@ func TestAdminHandled(t *testing.T) {
 	if p.Status != models.PostStatusPassed {
 		t.Errorf("status 被改成 %s", p.Status)
 	}
-	fb, err := s.ListFeedbacksByPost(id)
+	tags, err := s.ListTagsByPost(id)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(fb) != 0 {
-		t.Errorf("已处理不应写反馈: %+v", fb)
+	if len(tags) != 0 {
+		t.Errorf("已处理不应写标签: %+v", tags)
 	}
 
 	if rec := post("0"); rec.Code != http.StatusSeeOther {

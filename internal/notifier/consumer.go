@@ -81,6 +81,9 @@ func (n *Notifier) ProcessBatch(ctx context.Context, batch []models.RentPost) er
 	}
 	log := pkglog.Component(pkglog.Notifier)
 	log.Info("收到通知触发", "count", len(batch))
+	if err := n.st.AttachPostTags(batch); err != nil {
+		return fmt.Errorf("加载标签: %w", err)
+	}
 	ids := make([]int64, len(batch))
 	for i, p := range batch {
 		ids[i] = p.ID
@@ -118,7 +121,7 @@ func (n *Notifier) sendChannel(ctx context.Context, ch Channel, batch []models.R
 	if len(pending) == 0 {
 		return nil
 	}
-	groups := groupByAddressTag(pending)
+	groups := groupByLocationTag(pending)
 	tags := make([]string, 0, len(groups))
 	for tag := range groups {
 		tags = append(tags, tag)

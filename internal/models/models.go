@@ -3,12 +3,15 @@ package models
 import "time"
 
 // 帖子主状态：仅三态 collected|passed|rejected
-// 渠道是否发出 → notifications；有用/无用 → feedbacks；运营已处理 → handled_at；禁止写 sent/acked。
+// 渠道是否发出 → notifications；有用/无用 → post_tags；运营已处理 → handled_at；禁止写 sent/acked。
 const (
 	PostStatusCollected = "collected" // 已采集入库，待硬规则筛选
 	PostStatusPassed    = "passed"    // 硬规则通过（白名单命中）
 	PostStatusRejected  = "rejected"  // 硬规则拒绝（黑名单命中或未命中白名单）
 )
+
+// 黑白都未命中时主状态仍是 rejected，标签 text=未命中
+const RejectedByUnmatched = "未命中"
 
 // 筛选阶段（FilterResult.Stage）
 const (
@@ -18,7 +21,7 @@ const (
 
 // 规则类型（Rule.Type）：仅 whitelist|blacklist|ai_natural（Spec 09 §2）
 const (
-	RuleTypeWhitelist = "whitelist"  // 白名单：命中通过并写入 address_tags
+	RuleTypeWhitelist = "whitelist"  // 白名单：命中通过并写入 location 标签
 	RuleTypeBlacklist = "blacklist"  // 黑名单：命中拒绝
 	RuleTypeAINatural = "ai_natural" // 自然语言（LLM）
 )
@@ -50,9 +53,8 @@ type RentPost struct {
 	PublishedAt time.Time  // 源发布时间
 	CollectedAt time.Time  // 采集时间
 	Status      string     // 主状态：仅 collected|passed|rejected
-	AddressTags []string   `json:"addressTags"`        // 地址标签（调整规格 2.3）：白名单命中地点，多值；分组主键 = [0]
-	HitTags     []HitTag   `json:"hitTags,omitempty"`  // 全览展示用，不落 posts 表
-	AIReason    string     `json:"aiReason,omitempty"` // 全览展示 AI 原因，不落 posts 表
+	Tags        []PostTag  `json:"tags,omitempty"`     // 展示/筛选用，读 post_tags
+	AIReason    string     `json:"aiReason,omitempty"` // 全览展示 AI 原因，读 filter_results
 	HandledAt   *time.Time // 已处理时间；nil=未处理（独立于 useful/useless 反馈）
 	Price       string     // 月租金（元）；默认「暂无」，正则或 AI 抽到再写成数字
 	Contact     string     // 联系方式；默认「暂无」，正则或 AI 抽到再写
@@ -62,12 +64,6 @@ type RentPost struct {
 // DedupKey 去重键：源 + 源内 ID（posts 唯一索引同构）
 func (p RentPost) DedupKey() string {
 	return p.Source + ":" + p.ExternalID
-}
-
-// HitTag 全览「标签」列：白名单地点、黑名单拦截词、或 AI 摘要
-type HitTag struct {
-	Text string `json:"text"`
-	Kind string `json:"kind"` // whitelist / blacklist / ai
 }
 
 // RuleHit 硬编码规则命中详情（规格 3.2）
@@ -136,16 +132,6 @@ type Notification struct {
 	Attempts  int
 	LastError string
 	SentAt    *time.Time
-}
-
-// Feedback 用户反馈（规格 3.4，自学习入口）
-type Feedback struct {
-	ID        int64
-	PostID    int64
-	Channel   string
-	Action    string // useful / useless
-	Reason    string // 用户填的原因/建议
-	CreatedAt time.Time
 }
 
 // Cursor 源采集游标（规格 3.5 source_state，增量断点续传）

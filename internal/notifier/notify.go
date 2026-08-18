@@ -15,6 +15,9 @@ const (
 // GroupUnknown 无地址标签帖子的分组名（调整规格 B：白名单未命中 → 未分组）
 const GroupUnknown = "未分组"
 
+// DefaultMaxAttempts 单渠道失败几次进死信；不进配置
+const DefaultMaxAttempts = 3
+
 // NotifyItem 单帖通知内容（Spec 09 §3.2：content + actions）
 type NotifyItem struct {
 	PostID             int64

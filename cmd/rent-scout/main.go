@@ -67,6 +67,7 @@ func main() {
 		Store:          resources.Store,
 		Sources:        collectorSvc.Controller(),
 		OnRulesChanged: filterSvc.SignalRulesChanged,
+		NotifyManual:   notifierSvc,
 	})
 	if err != nil {
 		pkglog.Component(pkglog.Main).Error("管理面初始化失败", "err", err)

@@ -321,8 +321,8 @@ func TestAPIPostDetail(t *testing.T) {
 	if len(out.Notifications) != 1 || out.Notifications[0].Channel != "feishu" || out.Notifications[0].Status != models.NotifyStatusPending {
 		t.Errorf("notifications = %+v, want 1 条 feishu", out.Notifications)
 	}
-	if len(out.Tags) != 2 || out.Tags[0].Kind != models.TagKindFeedback || out.Tags[0].Text != "有用" {
-		t.Errorf("tags = %+v, want feedback 有用 + manual", out.Tags)
+	if len(out.Tags) != 1 || out.Tags[0].Kind != models.TagKindFeedback || out.Tags[0].Text != "有用" {
+		t.Errorf("tags = %+v, want 仅 feedback 有用（备注不进标签）", out.Tags)
 	}
 
 	// 不存在 → 404

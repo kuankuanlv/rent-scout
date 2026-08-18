@@ -35,9 +35,13 @@ func postListWhere(f PostListFilter) (string, []any) {
 		where = append(where, "source = ?")
 		args = append(args, f.Source)
 	}
-	if f.Tag != "" {
-		where = append(where, `EXISTS (SELECT 1 FROM post_tags t WHERE t.post_id = posts.id AND t.text = ?)`)
-		args = append(args, f.Tag)
+	if tags := models.SplitFilterTags(f.Tag); len(tags) > 0 {
+		// 多选按或：帖子带其中任意一个标签就算命中
+		ph := strings.TrimSuffix(strings.Repeat("?,", len(tags)), ",")
+		where = append(where, `EXISTS (SELECT 1 FROM post_tags t WHERE t.post_id = posts.id AND t.text IN (`+ph+`))`)
+		for _, t := range tags {
+			args = append(args, t)
+		}
 	}
 	switch f.Handled {
 	case "0":
@@ -146,4 +150,49 @@ func scanRentPost(sc rowScanner) (models.RentPost, error) {
 		p.HandledAt = &t
 	}
 	return p, nil
+}
+
+// ListPostsByIDs 按 id 拉帖，顺序跟传入一致；找不到的跳过
+func (r *Repo) ListPostsByIDs(ids []int64) ([]models.RentPost, error) {
+	seen := map[int64]bool{}
+	var uniq []int64
+	for _, id := range ids {
+		if id <= 0 || seen[id] {
+			continue
+		}
+		seen[id] = true
+		uniq = append(uniq, id)
+	}
+	if len(uniq) == 0 {
+		return nil, nil
+	}
+	placeholders := strings.Repeat("?,", len(uniq))
+	placeholders = placeholders[:len(placeholders)-1]
+	args := make([]any, len(uniq))
+	for i, id := range uniq {
+		args[i] = id
+	}
+	rows, err := r.DB.Query(`SELECT `+postSelectCols+` FROM posts WHERE id IN (`+placeholders+`)`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("按 id 拉帖: %w", err)
+	}
+	defer rows.Close()
+	byID := make(map[int64]models.RentPost, len(uniq))
+	for rows.Next() {
+		p, err := scanRentPost(rows)
+		if err != nil {
+			return nil, err
+		}
+		byID[p.ID] = p
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]models.RentPost, 0, len(uniq))
+	for _, id := range uniq {
+		if p, ok := byID[id]; ok {
+			out = append(out, p)
+		}
+	}
+	return out, nil
 }

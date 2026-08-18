@@ -359,3 +359,61 @@ func TestFeedbackSecretFollowsHotConfig(t *testing.T) {
 		t.Errorf("鉴权关不应签名: %s", u3)
 	}
 }
+
+type captureChan struct {
+	name  string
+	sends [][]notifier.NotifyItem
+}
+
+func (c *captureChan) Name() string { return c.name }
+
+func (c *captureChan) Send(ctx context.Context, items []notifier.NotifyItem) ([]int64, []error, error) {
+	cp := append([]notifier.NotifyItem(nil), items...)
+	c.sends = append(c.sends, cp)
+	ids := make([]int64, len(items))
+	for i, it := range items {
+		ids[i] = it.PostID
+	}
+	return ids, nil, nil
+}
+
+// 手动直发：不同地点也只发一组；已 sent 的帖也会再发
+func TestProcessManualOneGroup(t *testing.T) {
+	s := newNotifierTestStore(t)
+	defer s.Close()
+	p1 := seedNotifierPost(t, s, models.PostStatusPassed)
+	if err := s.ReplaceSystemTags(p1.ID, []models.PostTag{{Kind: models.TagKindLocation, Text: "望京", Source: models.TagSourceSystem}}); err != nil {
+		t.Fatal(err)
+	}
+	p2 := seedNotifierPost(t, s, models.PostStatusPassed)
+	if err := s.ReplaceSystemTags(p2.ID, []models.PostTag{{Kind: models.TagKindLocation, Text: "回龙观", Source: models.TagSourceSystem}}); err != nil {
+		t.Fatal(err)
+	}
+
+	ch := &captureChan{name: notifier.ChannelFeishu}
+	n := notifier.NewNotifier(s, notifier.NotifierOptions{MaxAttempts: 3}, ch)
+	if err := n.ProcessBatch(context.Background(), []models.RentPost{p1, p2}); err != nil {
+		t.Fatal(err)
+	}
+	if len(ch.sends) != 2 {
+		t.Fatalf("自动应按地点发 2 组, got %d", len(ch.sends))
+	}
+
+	ch.sends = nil
+	group := "手动触发-081812:01:30"
+	if err := n.ProcessManual(context.Background(), []models.RentPost{p1, p2}, group); err != nil {
+		t.Fatal(err)
+	}
+	if len(ch.sends) != 1 {
+		t.Fatalf("手动应只发 1 组, got %d", len(ch.sends))
+	}
+	items := ch.sends[0]
+	if len(items) != 2 {
+		t.Fatalf("一组应含 2 帖, got %d", len(items))
+	}
+	for _, it := range items {
+		if it.AddressTag != group {
+			t.Errorf("post %d AddressTag=%q, want %q", it.PostID, it.AddressTag, group)
+		}
+	}
+}

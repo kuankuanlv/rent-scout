@@ -18,6 +18,7 @@ type Options struct {
 	Store          *store.Store
 	Sources        admin.SourceController
 	OnRulesChanged func()
+	NotifyManual   admin.NotifyManual
 	Addr           string
 }
 
@@ -40,6 +41,7 @@ func New(opts Options) (*Service, error) {
 	srv.SetCookieProbe(NewCookieProbe())
 	srv.SetLLMProbe(NewLLMProbe())
 	srv.SetNotifyProbe(NewNotifyProbe())
+	srv.SetNotifyManual(opts.NotifyManual)
 	return &Service{
 		addr:   addr,
 		server: srv,

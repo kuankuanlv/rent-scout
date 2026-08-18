@@ -190,6 +190,61 @@ func TestAdminPageFilters(t *testing.T) {
 	} else if !strings.Contains(body, `bg-indigo-600`) || !strings.Contains(body, ">望京</a>") {
 		t.Errorf("tag=望京 平铺未高亮选中")
 	}
+
+	if code, body := get("/admin/posts?tag=望京,中介"); code != http.StatusOK {
+		t.Fatalf("tag 多选 status = %d", code)
+	} else {
+		if !strings.Contains(body, "望京合租帖") || !strings.Contains(body, "中介房源") || strings.Contains(body, "其它帖") {
+			t.Errorf("tag=望京,中介 应按或命中两条: %s", body)
+		}
+		if !strings.Contains(body, ">望京</a>") || !strings.Contains(body, ">中介</a>") {
+			t.Error("多选应同时高亮两个标签")
+		}
+	}
+
+	if code, body := get("/admin/posts?tag=望京"); code != http.StatusOK {
+		t.Fatalf("全部清空对照 status = %d", code)
+	} else if !strings.Contains(body, `href="/admin/posts"`) {
+		t.Error("点全部应清掉 tag 多选")
+	}
+}
+
+func TestAdminTagFilterPreview(t *testing.T) {
+	s := newAdminTestStore(t)
+	defer s.Close()
+	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
+	for i := 0; i < 12; i++ {
+		ext := fmt.Sprintf("tagp%d", i)
+		text := fmt.Sprintf("tag%02d", i)
+		if _, err := s.InsertPost(models.RentPost{Source: "douban", ExternalID: ext, Title: "预览" + text, Status: models.PostStatusPassed}); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.ReplaceSystemTags(postID(t, s, ext), []models.PostTag{
+			{Kind: models.TagKindLocation, Text: text, Source: models.TagSourceSystem},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	get := func(path string) string {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s status=%d", path, rec.Code)
+		}
+		return rec.Body.String()
+	}
+	body := get("/admin/posts")
+	if !strings.Contains(body, "更多") || !strings.Contains(body, `class="tag-more"`) {
+		t.Error("超过 10 个标签应出现更多")
+	}
+	if strings.Contains(body, `id="tag-drawer"`) {
+		t.Error("不应再有抽屉")
+	}
+	body = get("/admin/posts?tag=tag10")
+	if !strings.Contains(body, `class="tag-more" open`) {
+		t.Error("选中折叠区标签应自动展开")
+	}
 }
 
 func TestAdminPostsPagination(t *testing.T) {
@@ -264,8 +319,8 @@ func TestAdminMark(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tags) != 2 || tags[0].Kind != models.TagKindFeedback || tags[0].Text != "有用" || tags[1].Text != "测试原因" {
-		t.Errorf("DB 标签 = %+v, want feedback 有用 + manual", tags)
+	if len(tags) != 1 || tags[0].Kind != models.TagKindFeedback || tags[0].Text != "有用" {
+		t.Errorf("DB 标签 = %+v, want 仅 feedback 有用（备注不进标签）", tags)
 	}
 
 	// 非法 action → 400
@@ -380,8 +435,8 @@ func TestAdminTokenPropagation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tags) != 2 || tags[1].Text != "鉴权下提交" {
-		t.Errorf("DB 标签 = %+v, want feedback+manual", tags)
+	if len(tags) != 1 || tags[0].Kind != models.TagKindFeedback || tags[0].Text != "有用" {
+		t.Errorf("DB 标签 = %+v, want 仅 feedback 有用（备注不进标签）", tags)
 	}
 }
 

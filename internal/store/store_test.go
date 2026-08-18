@@ -200,9 +200,9 @@ func TestListFilterTags(t *testing.T) {
 	if len(got) != len(want) {
 		t.Fatalf("tags = %v, want %v（不含 AI 徽章）", got, want)
 	}
-	for _, tname := range got {
-		if !want[tname] {
-			t.Errorf("多余标签 %q", tname)
+	for _, ft := range got {
+		if !want[ft.Text] {
+			t.Errorf("多余标签 %q", ft.Text)
 		}
 	}
 
@@ -707,6 +707,67 @@ func TestReplaceSystemTags(t *testing.T) {
 	}
 }
 
+// 筛选项不含人工备注、纯标点、过长句子
+func TestListFilterTagsIgnoresManualAndJunk(t *testing.T) {
+	s := newTestStore(t)
+	defer s.Close()
+	id := seedPost(t, s)
+	if err := s.ReplaceSystemTags(id, []models.PostTag{
+		{Kind: models.TagKindLocation, Text: "望京", Source: models.TagSourceSystem},
+		{Kind: models.TagKindBlock, Text: ",,,", Source: models.TagSourceSystem},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddUserFeedback(id, models.FeedbackUseless, "中介不能作为黑名单，因为原帖中通常都是“非中介”"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO post_tags (post_id, kind, text, source, created_at) VALUES (?, ?, ?, ?, datetime('now'))`,
+		id, models.TagKindManual, "价格虚假", models.TagSourceUser); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ListFilterTags()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{"望京": true, "无用": true}
+	if len(got) != 2 {
+		t.Fatalf("筛选项 = %v, want 望京+无用", got)
+	}
+	for _, ft := range got {
+		if !want[ft.Text] {
+			t.Errorf("多出来的筛选项 %q", ft.Text)
+		}
+		if ft.Count < 1 {
+			t.Errorf("%s count = %d, want >= 1", ft.Text, ft.Count)
+		}
+	}
+}
+
+// 筛选项按出现帖数降序
+func TestListFilterTagsOrderByCount(t *testing.T) {
+	s := newTestStore(t)
+	defer s.Close()
+	id1 := seedPost(t, s)
+	id2 := seedPost(t, s)
+	id3 := seedPost(t, s)
+	if err := s.ReplaceSystemTags(id1, []models.PostTag{{Kind: models.TagKindLocation, Text: "望京", Source: models.TagSourceSystem}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReplaceSystemTags(id2, []models.PostTag{{Kind: models.TagKindLocation, Text: "望京", Source: models.TagSourceSystem}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReplaceSystemTags(id3, []models.PostTag{{Kind: models.TagKindLocation, Text: "回龙观", Source: models.TagSourceSystem}}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ListFilterTags()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].Text != "望京" || got[0].Count != 2 || got[1].Text != "回龙观" || got[1].Count != 1 {
+		t.Fatalf("筛选项 = %+v, want 望京×2 再 回龙观×1", got)
+	}
+}
+
 // 规则命中统计：passed 帖子的 hard_rules 按规则聚合 + 负向反馈归因
 func TestRuleHitStats(t *testing.T) {
 	s := newTestStore(t)
@@ -1154,8 +1215,8 @@ func TestPostDetailLists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tags) != 2 || tags[0].Kind != models.TagKindFeedback || tags[0].Text != "无用" {
-		t.Errorf("帖子标签 = %+v, want feedback 无用 + manual", tags)
+	if len(tags) != 1 || tags[0].Kind != models.TagKindFeedback || tags[0].Text != "无用" {
+		t.Errorf("帖子标签 = %+v, want 仅 feedback 无用（备注不进标签）", tags)
 	}
 }
 
@@ -1366,4 +1427,38 @@ func TestChannelStats(t *testing.T) {
 	if g := got["dingtalk"]; g.Sent != 0 || g.Failed != 0 || g.Dead != 0 {
 		t.Errorf("dingtalk 统计 = %+v, want 全 0（仅 pending）", g)
 	}
+}
+
+func TestListPostsByIDs(t *testing.T) {
+	s := newTestStore(t)
+	defer s.Close()
+	for i, title := range []string{"甲", "乙", "丙"} {
+		p := models.RentPost{
+			Source: "douban", ExternalID: fmt.Sprintf("by-id-%d", i), Title: title,
+			CollectedAt: time.Now(), Status: models.PostStatusCollected,
+		}
+		if _, err := s.InsertPost(p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	batch, err := s.FetchPendingByStatus(models.PostStatusCollected, 10)
+	if err != nil || len(batch) != 3 {
+		t.Fatalf("播种: n=%d err=%v", len(batch), err)
+	}
+	idA, idC := batch[0].ID, batch[2].ID
+	got, err := s.ListPostsByIDs([]int64{idC, idA, idC, 99999, 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].ID != idC || got[1].ID != idA {
+		t.Fatalf("got ids=%v, want [%d %d]", idsOf(got), idC, idA)
+	}
+}
+
+func idsOf(posts []models.RentPost) []int64 {
+	out := make([]int64, len(posts))
+	for i, p := range posts {
+		out[i] = p.ID
+	}
+	return out
 }

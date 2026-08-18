@@ -1,7 +1,17 @@
 {{define "admin"}}
 <!DOCTYPE html>
 <html lang="zh">
-<head><title>帖子全览 - rent-scout</title>{{template "head" .}}</head>
+<head><title>帖子全览 - rent-scout</title>{{template "head" .}}
+<style>
+.tag-more { display: contents; }
+.tag-more > summary { list-style: none; }
+.tag-more > summary::-webkit-details-marker { display: none; }
+.tag-more > summary::marker { content: ""; }
+.tag-more:not([open]) > a { display: none; }
+.tag-more[open] > summary .tag-more-open { display: none; }
+.tag-more:not([open]) > summary .tag-more-close { display: none; }
+</style>
+</head>
 <body class="bg-gradient-to-br from-slate-50 via-white to-brand-50 min-h-screen text-gray-800">
 {{template "nav" .}}
 <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
@@ -46,8 +56,12 @@
       <div class="flex flex-wrap items-center gap-2">
         <span class="text-gray-400 shrink-0 w-12">标签</span>
         <a href="{{$f.With "tag" ""}}" class="px-3 py-1.5 rounded-full border {{if eq .Tag ""}}bg-slate-800 text-white border-slate-800 font-semibold shadow-sm ring-2 ring-slate-400/60{{else}}bg-white text-gray-600 border-gray-200 hover:bg-gray-50{{end}}">全部</a>
-        {{range .Tags}}
-        <a href="{{$f.With "tag" .}}" class="px-3 py-1.5 rounded-full border {{if eq $.Tag .}}bg-indigo-600 text-white border-indigo-700 font-semibold shadow-sm ring-2 ring-indigo-300{{else}}bg-white text-gray-600 border-gray-200 hover:bg-gray-50{{end}}">{{.}}</a>
+        {{range .TagsTop}}{{$on := csvHas $.Tag .Text}}<a href="{{$f.ToggleTag .Text}}" class="px-3 py-1.5 rounded-full border {{if $on}}bg-indigo-600 text-white border-indigo-700 font-semibold shadow-sm ring-2 ring-indigo-300{{else}}bg-white text-gray-600 border-gray-200 hover:bg-gray-50{{end}}">{{.Text}}</a>{{end}}
+        {{if .TagsMore}}
+        <details class="tag-more"{{if .TagsMoreOpen}} open{{end}}>
+          <summary class="px-3 py-1.5 rounded-full border border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 cursor-pointer select-none"><span class="tag-more-open">更多</span><span class="tag-more-close">收起</span></summary>
+          {{range .TagsMore}}{{$on := csvHas $.Tag .Text}}<a href="{{$f.ToggleTag .Text}}" class="px-3 py-1.5 rounded-full border {{if $on}}bg-indigo-600 text-white border-indigo-700 font-semibold shadow-sm ring-2 ring-indigo-300{{else}}bg-white text-gray-600 border-gray-200 hover:bg-gray-50{{end}}">{{.Text}}</a>{{end}}
+        </details>
         {{end}}
       </div>
 
@@ -67,10 +81,20 @@
         <a href="{{$f.With "handled" "1"}}" class="px-3 py-1.5 rounded-full border {{if eq .Handled "1"}}bg-emerald-600 text-white border-emerald-700 font-semibold shadow-sm ring-2 ring-emerald-300{{else}}bg-white text-gray-600 border-gray-200 hover:bg-gray-50{{end}}">已查看</a>
       </div>
     </div>
+    {{if .Msg}}<div class="mt-1 px-3 py-2 rounded-lg text-sm bg-emerald-50 text-emerald-800 border border-emerald-100">{{.Msg}}</div>{{end}}
   </div>
+  <form id="batch-notify-form" method="post" action="/admin/notify{{if .FilterQuery}}?{{.FilterQuery}}{{end}}">
+    <div id="batch-bar" class="px-4 sm:px-6 py-3 border-b border-brand-200 bg-brand-50 flex flex-wrap items-center gap-3 text-sm">
+      <span class="font-semibold text-brand-900">批量通知</span>
+      <span id="batch-count" class="text-brand-800">未勾选</span>
+      <button type="submit" id="batch-notify-btn" class="bg-brand-600 text-white px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-40" disabled>发送通知</button>
+      <span class="text-xs text-gray-600">勾选左侧复选框后立刻发出，不凑批、不按地点拆组，单次最多 50 条</span>
+    </div>
+  </form>
   <div class="desktop-table overflow-x-auto">
     <table class="min-w-full divide-y divide-gray-200">
       <thead class="bg-gray-50"><tr>
+        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap"><input type="checkbox" id="select-all-posts" class="rounded border-gray-300 align-middle" title="本页全选"> 选发</th>
         <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">ID</th>
         <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">标题</th>
         <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">价格</th>
@@ -84,6 +108,7 @@
       </tr></thead>
       <tbody class="divide-y divide-gray-100">
         {{range .Posts}}<tr class="hover:bg-gray-50 post-row" data-post-id="{{.ID}}">
+          <td class="px-4 py-3"><input type="checkbox" name="post_id" value="{{.ID}}" form="batch-notify-form" class="post-check rounded border-gray-300"></td>
           <td class="px-4 py-3 text-sm">{{.ID}}</td>
           <td class="px-4 py-3 text-sm max-w-xs">
             <a href="{{.URL}}" target="_blank" class="text-brand-600 hover:underline">{{.Title}}</a>
@@ -107,14 +132,17 @@
               <button type="submit" class="handled-btn text-xs px-2 py-1 rounded {{if .HandledAt}}border border-emerald-300 text-emerald-800{{else}}bg-emerald-600 text-white{{end}}">{{if .HandledAt}}清除已查看{{else}}已查看{{end}}</button>
             </form>
           </td>
-        </tr>{{else}}<tr><td colspan="10" class="px-4 py-8 text-center text-gray-400">暂无帖子</td></tr>{{end}}
+        </tr>{{else}}<tr><td colspan="11" class="px-4 py-8 text-center text-gray-400">暂无帖子</td></tr>{{end}}
       </tbody>
     </table>
   </div>
   <div class="mobile-card p-4 space-y-3">
     {{range .Posts}}<div class="border border-gray-100 rounded-xl p-4 bg-gray-50/50 post-row" data-post-id="{{.ID}}">
       <div class="flex justify-between gap-2 mb-2">
-        <a href="{{.URL}}" target="_blank" class="font-medium text-brand-600 text-sm">{{.Title}}</a>
+        <label class="flex items-start gap-2 min-w-0">
+          <input type="checkbox" name="post_id" value="{{.ID}}" form="batch-notify-form" class="post-check mt-1 rounded border-gray-300">
+          <a href="{{.URL}}" target="_blank" class="font-medium text-brand-600 text-sm">{{.Title}}</a>
+        </label>
         <span class="shrink-0 px-2 py-0.5 rounded-full text-xs bg-white border">{{statusLabel .Status}}</span>
       </div>
       <div class="flex flex-col items-start gap-1 mb-2">
@@ -186,6 +214,56 @@
     var el = document.getElementById(id);
     if (el) el.addEventListener('click', closeMark);
   });
+
+  var countEl = document.getElementById('batch-count');
+  var sendBtn = document.getElementById('batch-notify-btn');
+  var selectAll = document.getElementById('select-all-posts');
+  function checks(){ return document.querySelectorAll('.post-check'); }
+  function selectedIds(){
+    var ids = {};
+    checks().forEach(function(c){ if (c.checked) ids[c.value] = true; });
+    return Object.keys(ids);
+  }
+  function uniqueCount(){
+    var ids = {};
+    checks().forEach(function(c){ ids[c.value] = true; });
+    return Object.keys(ids).length;
+  }
+  function syncSameId(src){
+    checks().forEach(function(c){
+      if (c !== src && c.value === src.value) c.checked = src.checked;
+    });
+  }
+  function syncBatch(){
+    var n = selectedIds().length;
+    if (countEl) countEl.textContent = n === 0 ? '未勾选' : ('已选 ' + n + ' 条');
+    if (sendBtn) sendBtn.disabled = n === 0;
+    if (selectAll){
+      var total = uniqueCount();
+      selectAll.checked = total > 0 && n === total;
+    }
+  }
+  checks().forEach(function(c){
+    c.addEventListener('change', function(){
+      syncSameId(c);
+      syncBatch();
+    });
+  });
+  if (selectAll){
+    selectAll.addEventListener('change', function(){
+      checks().forEach(function(c){ c.checked = selectAll.checked; });
+      syncBatch();
+    });
+  }
+  var batchForm = document.getElementById('batch-notify-form');
+  if (batchForm){
+    batchForm.addEventListener('submit', function(e){
+      if (selectedIds().length === 0){
+        e.preventDefault();
+      }
+    });
+  }
+
 })();
 </script>
 </body></html>

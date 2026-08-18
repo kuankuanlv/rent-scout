@@ -1,12 +1,14 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"html/template"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"rent-scout/internal/models"
 	"rent-scout/internal/pkglog"
@@ -16,7 +18,7 @@ import (
 // postsFilter 全览筛选条当前值；With 改一维并清 page，供平铺枚举链接用
 type postsFilter struct {
 	Q, Status, Tag, AI, Handled, Source, Token string
-	PageSize                           int
+	PageSize                                   int
 }
 
 func (f postsFilter) With(key, val string) template.URL {
@@ -48,18 +50,78 @@ func (f postsFilter) With(key, val string) template.URL {
 	return template.URL("/admin/posts?" + enc)
 }
 
-// appendSelectedTag 当前筛选值不在选项里也塞进去，避免平铺丢选中态
-func appendSelectedTag(opts []string, selected string) []string {
-	selected = strings.TrimSpace(selected)
-	if selected == "" {
-		return opts
+// ToggleTag 点一下选中，再点取消；空了就等于点全部
+func (f postsFilter) ToggleTag(text string) template.URL {
+	return f.With("tag", toggleFilterTags(f.Tag, text))
+}
+
+func toggleFilterTags(csv, text string) string {
+	text = strings.TrimSpace(text)
+	cur := models.SplitFilterTags(csv)
+	var next []string
+	off := false
+	for _, t := range cur {
+		if t == text {
+			off = true
+			continue
+		}
+		next = append(next, t)
 	}
-	for _, o := range opts {
-		if o == selected {
-			return opts
+	if !off && models.IsChipText(text) {
+		next = append(next, text)
+	}
+	return strings.Join(next, ",")
+}
+
+const filterTagPreviewN = 10
+
+func splitFilterTagPreview(tags []models.FilterTag, n int) (top, more []models.FilterTag) {
+	if n < 0 {
+		n = 0
+	}
+	if len(tags) <= n {
+		return tags, nil
+	}
+	return tags[:n], tags[n:]
+}
+
+func filterTagsContain(tags []models.FilterTag, selected string) bool {
+	want := map[string]bool{}
+	for _, t := range models.SplitFilterTags(selected) {
+		want[t] = true
+	}
+	if len(want) == 0 {
+		return false
+	}
+	for _, t := range tags {
+		if want[t.Text] {
+			return true
 		}
 	}
-	return append(opts, selected)
+	return false
+}
+
+// appendSelectedTags 当前多选里有选项列表没有的，补到末尾，免得选中态丢了
+func appendSelectedTags(opts []models.FilterTag, selected string) []models.FilterTag {
+	have := map[string]bool{}
+	for _, o := range opts {
+		have[o.Text] = true
+	}
+	for _, t := range models.SplitFilterTags(selected) {
+		if have[t] {
+			continue
+		}
+		opts = append(opts, models.FilterTag{Text: t})
+		have[t] = true
+	}
+	return opts
+}
+
+// chipPosts 全览/API 列表只留地点、拉黑词、未命中、有用无用；AI 理由走独立列
+func chipPosts(posts []models.RentPost) {
+	for i := range posts {
+		posts[i].Tags = models.ChipTags(posts[i].Tags, posts[i].AIReason)
+	}
 }
 
 // postListFilterFromQuery 从 URL 取帖子列表筛选（admin / API 共用）
@@ -71,7 +133,7 @@ func postListFilterFromQuery(q url.Values) store.PostListFilter {
 	return store.PostListFilter{
 		Q:       q.Get("q"),
 		Status:  q.Get("status"),
-		Tag:     q.Get("tag"),
+		Tag:     strings.Join(models.SplitFilterTags(q.Get("tag")), ","),
 		Handled: q.Get("handled"),
 		AI:      q.Get("ai"),
 		Source:  src,
@@ -155,12 +217,14 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
 	if err := s.db.AttachAIReasons(posts); err != nil {
 		pkglog.Component(pkglog.Admin).Warn("AI 原因加载失败", "err", err)
 	}
+	chipPosts(posts)
 	tags, err := s.db.ListFilterTags()
 	if err != nil {
 		pkglog.Component(pkglog.Admin).Warn("标签聚合失败", "err", err)
 		tags = nil
 	}
-	tags = appendSelectedTag(tags, f.Tag)
+	tags = appendSelectedTags(tags, f.Tag)
+	tagsTop, tagsMore := splitFilterTagPreview(tags, filterTagPreviewN)
 	fq := adminPostsQuery(r).Encode()
 	prevQ, nextQ := pageQuery(r, page-1), pageQuery(r, page+1)
 	filter := postsFilter{
@@ -168,25 +232,28 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
 		Token: r.URL.Query().Get("token"), PageSize: size,
 	}
 	if err := s.tmpl.ExecuteTemplate(w, "admin", mergePageCtx(s.pageCtx(r, "posts"), map[string]any{
-		"Posts":       posts,
-		"Q":           f.Q,
-		"Status":      f.Status,
-		"Tag":         f.Tag,
-		"Handled":     f.Handled,
-		"AI":          f.AI,
-		"Source":      f.Source,
-		"Sources":     models.KnownSources(),
-		"Tags":        tags,
-		"Filter":      filter,
-		"Page":        page,
-		"Pages":       pages,
-		"Total":       total,
-		"PageSize":    size,
-		"HasPrev":     page > 1,
-		"HasNext":     page < pages,
-		"PrevQuery":   template.URL(prevQ),
-		"NextQuery":   template.URL(nextQ),
-		"FilterQuery": template.URL(fq), // 避免 action 里 = 被 html/template 编成 %3d
+		"Posts":        posts,
+		"Q":            f.Q,
+		"Status":       f.Status,
+		"Tag":          f.Tag,
+		"Handled":      f.Handled,
+		"AI":           f.AI,
+		"Source":       f.Source,
+		"Sources":      models.KnownSources(),
+		"TagsTop":      tagsTop,
+		"TagsMore":     tagsMore,
+		"TagsMoreOpen": filterTagsContain(tagsMore, f.Tag),
+		"Filter":       filter,
+		"Page":         page,
+		"Pages":        pages,
+		"Total":        total,
+		"PageSize":     size,
+		"HasPrev":      page > 1,
+		"HasNext":      page < pages,
+		"PrevQuery":    template.URL(prevQ),
+		"NextQuery":    template.URL(nextQ),
+		"FilterQuery":  template.URL(fq), // 避免 action 里 = 被 html/template 编成 %3d
+		"Msg":          r.URL.Query().Get("msg"),
 	})); err != nil {
 		pkglog.Component(pkglog.Admin).Error("模板渲染失败", "err", err)
 	}
@@ -213,8 +280,12 @@ func (s *Server) handlePostTags(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "查询失败", http.StatusInternalServerError)
 		return
 	}
+	texts := make([]string, 0, len(tags))
+	for _, t := range tags {
+		texts = append(texts, t.Text)
+	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	_ = json.NewEncoder(w).Encode(map[string]any{"tags": tags})
+	_ = json.NewEncoder(w).Encode(map[string]any{"tags": texts, "items": tags})
 }
 
 // handleMark 标记反馈（POST /admin/mark，表单：post_id/action/reason）
@@ -277,6 +348,63 @@ func (s *Server) handleHandled(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, adminPostsPath(r), http.StatusSeeOther)
 }
 
+const manualNotifyMax = 50
+
+func redirectPostsMsg(w http.ResponseWriter, r *http.Request, msg string) {
+	q := adminPostsQuery(r)
+	if msg != "" {
+		q.Set("msg", msg)
+	}
+	path := "/admin/posts"
+	if enc := q.Encode(); enc != "" {
+		path += "?" + enc
+	}
+	http.Redirect(w, r, path, http.StatusSeeOther)
+}
+
+// handleNotifySelected 勾选帖子后立刻发通知（POST /admin/notify，表单 post_id 可多值）
+func (s *Server) handleNotifySelected(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	if s.notifyManual == nil {
+		redirectPostsMsg(w, r, "通知未配置")
+		return
+	}
+	var ids []int64
+	seen := map[int64]bool{}
+	for _, raw := range r.PostForm["post_id"] {
+		id, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || id <= 0 || seen[id] {
+			continue
+		}
+		seen[id] = true
+		ids = append(ids, id)
+		if len(ids) >= manualNotifyMax {
+			break
+		}
+	}
+	if len(ids) == 0 {
+		redirectPostsMsg(w, r, "请先勾选帖子")
+		return
+	}
+	group := "手动触发-" + time.Now().Format("010215:04:05")
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	if err := s.notifyManual.SendSelected(ctx, ids, group); err != nil {
+		pkglog.Component(pkglog.Admin).Error("手动通知失败", "count", len(ids), "err", err)
+		redirectPostsMsg(w, r, "发送失败："+err.Error())
+		return
+	}
+	pkglog.Component(pkglog.Admin).Info("手动通知已发送", "count", len(ids), "group", group)
+	redirectPostsMsg(w, r, "已发送 "+strconv.Itoa(len(ids))+" 条 · "+group)
+}
+
 // handlePosts 帖子列表（GET /api/posts?q=&status=&tag=&handled=&limit=&offset=，规格 7.1 + §6）
 func (s *Server) handlePosts(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -304,6 +432,7 @@ func (s *Server) handlePosts(w http.ResponseWriter, r *http.Request) {
 	if err := s.db.AttachAIReasons(list); err != nil {
 		pkglog.Component(pkglog.Admin).Warn("AI 原因加载失败", "err", err)
 	}
+	chipPosts(list)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(map[string]any{"posts": list})
 }
@@ -352,6 +481,11 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "查询失败", http.StatusInternalServerError)
 		return
 	}
+	aiReason := ""
+	if filterResult.AI != nil {
+		aiReason = filterResult.AI.Reason
+	}
+	tags = models.ChipTags(tags, aiReason)
 	post.Tags = tags
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(map[string]any{

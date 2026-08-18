@@ -4,7 +4,7 @@
 
 仓库：https://github.com/kuankuanlv/rent-scout
 
-> 当前版本：v0.23
+> 当前版本：v0.24
 
 ## 简介
 

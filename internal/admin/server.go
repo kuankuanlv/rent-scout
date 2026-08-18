@@ -26,6 +26,7 @@ type Server struct {
 	cookieProbe    CookieProbe
 	llmProbe       LLMProbe
 	notifyProbe    NotifyProbe
+	notifyManual   NotifyManual
 }
 
 // NewServer 创建管理面服务
@@ -60,6 +61,8 @@ func (s *Server) SetLLMProbe(p LLMProbe) { s.llmProbe = p }
 
 func (s *Server) SetNotifyProbe(p NotifyProbe) { s.notifyProbe = p }
 
+func (s *Server) SetNotifyManual(p NotifyManual) { s.notifyManual = p }
+
 func (s *Server) notifyRulesChanged() {
 	if s.onRulesChanged != nil {
 		s.onRulesChanged()
@@ -84,6 +87,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/admin/posts", s.handleAdmin)
 	mux.HandleFunc("/admin", s.handleHome)
 	mux.HandleFunc("/admin/mark", s.handleMark)
+	mux.HandleFunc("/admin/notify", s.handleNotifySelected)
 	mux.HandleFunc("/admin/handled", s.handleHandled)
 	mux.HandleFunc("/admin/rules", s.handleRules)
 	mux.HandleFunc("/admin/rules/", s.handleRulesID)

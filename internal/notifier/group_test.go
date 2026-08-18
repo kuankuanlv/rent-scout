@@ -3,6 +3,7 @@ package notifier
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"rent-scout/internal/actionref"
 	"rent-scout/internal/models"
@@ -93,5 +94,14 @@ func TestBuildFeedbackURLNoSecret(t *testing.T) {
 	h := BuildFeedbackURL(123, "handled", "")
 	if !strings.HasPrefix(h, "/h?p=") || strings.Contains(h, "123") {
 		t.Errorf("无 secret 已处理: %s", h)
+	}
+}
+
+func TestManualGroupName(t *testing.T) {
+	at := time.Date(2026, 8, 18, 12, 1, 30, 0, time.Local)
+	got := ManualGroupName(at)
+	want := "手动触发-081812:01:30"
+	if got != want {
+		t.Errorf("ManualGroupName = %q, want %q", got, want)
 	}
 }

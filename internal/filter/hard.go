@@ -66,11 +66,20 @@ func matchAny(post models.RentPost, value string) string {
 	return ""
 }
 
-// splitKeywords 按逗号/顿号/换行拆分关键字列表（同条内 OR）
+// splitKeywords 按逗号/顿号/换行拆分关键字列表（同条内 OR）；标点和长句不当关键词
 func splitKeywords(value string) []string {
-	return strings.FieldsFunc(value, func(r rune) bool {
+	parts := strings.FieldsFunc(value, func(r rune) bool {
 		return r == ',' || r == '\n' || r == '，' || r == '、'
 	})
+	var out []string
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if !models.IsChipText(p) {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
 }
 
 // containsFold 大小写不敏感子串匹配

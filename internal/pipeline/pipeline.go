@@ -15,24 +15,32 @@ type BatchFunc[T any] func(ctx context.Context, batch []T) error
 
 // Options Consumer 参数（规格 2.3 协议语义）
 type Options struct {
-	BatchSize int           // 组批大小：WaitFull 时凑满才处理；否则只是一次拉取上限
-	Linger    time.Duration // 兜底等待：积压不足时最长等多久处理一次
-	Component string        // 日志职责名：filter / ai_review / notifier
-	WaitFull  bool          // true=凑满 BatchSize 或 linger 才处理；false=有信号立刻处理并可抽干
+	BatchSize     int           // 组批大小：WaitFull 时凑满才处理；否则只是一次拉取上限
+	Tick          time.Duration // 协程轮询；跟凑批等待无关；<=0 用 DefaultTick
+	Linger        time.Duration // WaitFull 时不足批最多等多久才发；<=0 用 DefaultLinger
+	Component     string        // 日志职责名：filter / ai_review / notifier
+	WaitFull      bool          // true=凑满 BatchSize 或 linger 才处理；false=有信号立刻处理并可抽干
+	LiveBatchSize func() int
+	LiveLinger    func() time.Duration
 }
 
+// DefaultTick 各消费协程固定 1 分钟扫一次库，热读配置；业务间隔走 Linger
+const DefaultTick = time.Minute
+
 // DefaultLinger 公开配置已移除 linger 字段；代码侧固定兜底间隔
+// AI 等模块的不足批兜底；通知走 notifier.interval
 const DefaultLinger = 120 * time.Second
 
 // Consumer 通用组批触发协议：trigger 主动触发（加速器，丢信号不致命）
-// + linger 定时兜底（数据在库里，兜底必捞回，at-least-once）+ 批处理。
+// + tick 定时扫库（热读配置、捞漏）+ WaitFull 时 linger 才把不足批发掉。
 // filter/notifier 复用（规格 2.3）
 type Consumer[T any] struct {
-	fetch   FetchFunc[T]
-	process BatchFunc[T]
-	opts    Options
-	trigger chan struct{} // 有界信号通道：满则丢（靠 linger 兜底）
-	stop    chan struct{}
+	fetch        FetchFunc[T]
+	process      BatchFunc[T]
+	opts         Options
+	trigger      chan struct{} // 有界信号通道：满则丢（靠 tick 兜底）
+	stop         chan struct{}
+	pendingSince time.Time // WaitFull 第一次看到不足批的时刻；发完清掉
 }
 
 // New 创建 Consumer；未指定 BatchSize 时默认 20
@@ -57,17 +65,40 @@ func (c *Consumer[T]) Signal() {
 	}
 }
 
-// Run 阻塞消费循环：trigger / linger 触发 → 拉批 → 处理 → 循环。
+func (c *Consumer[T]) batchSize() int {
+	if c.opts.LiveBatchSize != nil {
+		if n := c.opts.LiveBatchSize(); n > 0 {
+			return n
+		}
+	}
+	return c.opts.BatchSize
+}
+
+func (c *Consumer[T]) linger() time.Duration {
+	if c.opts.LiveLinger != nil {
+		if d := c.opts.LiveLinger(); d > 0 {
+			return d
+		}
+	}
+	if c.opts.Linger > 0 {
+		return c.opts.Linger
+	}
+	return DefaultLinger
+}
+
+func (c *Consumer[T]) tick() time.Duration {
+	if c.opts.Tick > 0 {
+		return c.opts.Tick
+	}
+	return DefaultTick
+}
+
+// Run 阻塞消费循环：trigger / tick 触发 → 拉批 → 处理 → 循环。
 // ctx 取消或 Stop 调用后退出
 func (c *Consumer[T]) Run(ctx context.Context) {
 	log := pkglog.Component(c.opts.Component)
 	log.Info(startedLog(c.opts.Component))
-	// 防御：Linger<=0 时 time.NewTicker 会 panic；兜底用 DefaultLinger
-	linger := c.opts.Linger
-	if linger <= 0 {
-		linger = DefaultLinger
-	}
-	ticker := time.NewTicker(linger)
+	ticker := time.NewTicker(c.tick())
 	defer ticker.Stop()
 	for {
 		select {
@@ -76,34 +107,43 @@ func (c *Consumer[T]) Run(ctx context.Context) {
 		case <-c.stop:
 			return
 		case <-c.trigger:
-			c.step(ctx, false)
+			c.step(ctx)
 		case <-ticker.C:
-			c.step(ctx, true)
+			c.step(ctx)
 		}
 	}
 }
 
-// step 拉一批处理。WaitFull 且非 linger 时不足批就等；否则立刻处理。
+// step 拉一批处理。WaitFull 时不足批就等到 linger；满批立刻发。
 // 不等批时满批再抽一轮，把积压抽干。
-func (c *Consumer[T]) step(ctx context.Context, linger bool) {
+func (c *Consumer[T]) step(ctx context.Context) {
 	log := pkglog.Component(c.opts.Component)
+	batchSize := c.batchSize()
+	linger := c.linger()
 	for {
-		batch, err := c.fetch(ctx, c.opts.BatchSize)
+		batch, err := c.fetch(ctx, batchSize)
 		if err != nil {
 			log.Error("拉批失败", "err", err)
 			return
 		}
 		if len(batch) == 0 {
+			c.pendingSince = time.Time{}
 			return
 		}
-		if c.opts.WaitFull && !linger && len(batch) < c.opts.BatchSize {
-			return
+		if c.opts.WaitFull && len(batch) < batchSize {
+			if c.pendingSince.IsZero() {
+				c.pendingSince = time.Now()
+			}
+			if time.Since(c.pendingSince) < linger {
+				return
+			}
 		}
 		if err := c.process(ctx, batch); err != nil {
 			log.Error("批处理失败", "err", err, "count", len(batch))
 			return
 		}
-		if c.opts.WaitFull || len(batch) < c.opts.BatchSize {
+		c.pendingSince = time.Time{}
+		if c.opts.WaitFull || len(batch) < batchSize {
 			return
 		}
 	}

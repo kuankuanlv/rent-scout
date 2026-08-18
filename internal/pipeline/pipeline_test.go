@@ -20,12 +20,12 @@ func TestTriggerImmediate(t *testing.T) {
 		default:
 		}
 		return nil
-	}, Options{BatchSize: 10, Linger: time.Hour})
+	}, Options{BatchSize: 10, Tick: time.Hour, Linger: time.Hour})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go c.Run(ctx)
 
-	c.Signal() // 主动触发：不等 linger 立即处理
+	c.Signal() // 主动触发：不等 tick 立即处理
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
@@ -49,16 +49,16 @@ func TestLingerFallback(t *testing.T) {
 		default:
 		}
 		return nil
-	}, Options{BatchSize: 10, Linger: 50 * time.Millisecond})
+	}, Options{BatchSize: 10, Tick: 50 * time.Millisecond})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go c.Run(ctx)
 
-	// 不发信号：靠 linger 兜底（50ms）
+	// 不发信号：靠 tick 兜底（50ms）
 	select {
 	case <-done:
 	case <-time.After(3 * time.Second):
-		t.Fatal("linger 兜底未触发")
+		t.Fatal("tick 兜底未触发")
 	}
 }
 
@@ -70,12 +70,12 @@ func TestEmptyBatchSkipped(t *testing.T) {
 	}, func(ctx context.Context, batch []int) error {
 		processed.Add(1)
 		return nil
-	}, Options{BatchSize: 10, Linger: 30 * time.Millisecond})
+	}, Options{BatchSize: 10, Tick: 30 * time.Millisecond})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go c.Run(ctx)
 
-	time.Sleep(150 * time.Millisecond) // 多个 linger 周期
+	time.Sleep(150 * time.Millisecond) // 多个 tick 周期
 	if processed.Load() != 0 {
 		t.Errorf("空批不应调用 process, got %d 次", processed.Load())
 	}
@@ -94,7 +94,7 @@ func TestBatchSizeLimit(t *testing.T) {
 		return nil, nil
 	}, func(ctx context.Context, batch []int) error {
 		return nil
-	}, Options{BatchSize: 5, Linger: 30 * time.Millisecond})
+	}, Options{BatchSize: 5, Tick: 30 * time.Millisecond})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go c.Run(ctx)
@@ -122,7 +122,7 @@ func TestWaitFullSkipsPartialUntilLinger(t *testing.T) {
 		default:
 		}
 		return nil
-	}, Options{BatchSize: 3, Linger: 80 * time.Millisecond, WaitFull: true})
+	}, Options{BatchSize: 3, Tick: 20 * time.Millisecond, Linger: 80 * time.Millisecond, WaitFull: true})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go c.Run(ctx)
@@ -155,7 +155,7 @@ func TestWaitFullProcessesWhenFull(t *testing.T) {
 		default:
 		}
 		return nil
-	}, Options{BatchSize: 3, Linger: time.Hour, WaitFull: true})
+	}, Options{BatchSize: 3, Tick: time.Hour, Linger: time.Hour, WaitFull: true})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go c.Run(ctx)
@@ -175,8 +175,54 @@ func TestWaitFullProcessesWhenFull(t *testing.T) {
 func TestRunStopsOnCancel(t *testing.T) {
 	c := New(func(ctx context.Context, limit int) ([]int, error) { return nil, nil },
 		func(ctx context.Context, batch []int) error { return nil },
-		Options{BatchSize: 10, Linger: time.Hour})
+		Options{BatchSize: 10, Tick: time.Hour})
 	ctx, cancel := context.WithCancel(context.Background())
 	go c.Run(ctx)
 	cancel() // 取消即退出
+}
+
+// WaitFull：LiveBatchSize / LiveLinger 每轮热读，改间隔下一 tick 就生效
+func TestLiveBatchAndLinger(t *testing.T) {
+	var gotLimit atomic.Int32
+	var processed atomic.Int32
+	done := make(chan struct{}, 1)
+	c := New(func(ctx context.Context, limit int) ([]int, error) {
+		gotLimit.Store(int32(limit))
+		return []int{1}, nil
+	}, func(ctx context.Context, batch []int) error {
+		processed.Add(int32(len(batch)))
+		select {
+		case done <- struct{}{}:
+		default:
+		}
+		return nil
+	}, Options{
+		BatchSize: 99,
+		Tick:      20 * time.Millisecond,
+		Linger:    time.Hour,
+		WaitFull:  true,
+		LiveBatchSize: func() int {
+			return 2
+		},
+		LiveLinger: func() time.Duration {
+			return 60 * time.Millisecond
+		},
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go c.Run(ctx)
+
+	c.Signal()
+	time.Sleep(25 * time.Millisecond)
+	if processed.Load() != 0 {
+		t.Fatalf("linger 未到不应发, got %d", processed.Load())
+	}
+	if gotLimit.Load() != 2 {
+		t.Fatalf("limit = %d, want LiveBatchSize 2", gotLimit.Load())
+	}
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("热读 linger 到期后应发出不足批")
+	}
 }

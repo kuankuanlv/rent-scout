@@ -23,9 +23,11 @@ type ServerConfig struct {
 
 // 控制台内存日志条数：默认 1000；探测 raw 单条可到数 KB，调太大占内存
 const (
-	DefaultLogMemoryLines = 1000
-	MinLogMemoryLines     = 100
-	MaxLogMemoryLines     = 10000
+	DefaultLogMemoryLines   = 1000
+	MinLogMemoryLines       = 100
+	MaxLogMemoryLines       = 10000
+	DefaultNotifierBatch    = 10
+	DefaultNotifierInterval = 7200 // 秒，满批或等到这个间隔，谁先到谁先发
 )
 
 // LogConfig 日志（path 空 = stdout，配了才写文件轮转）
@@ -79,16 +81,17 @@ type FilterConfig struct {
 // NotifierConfig 通知：重试参数；只有 Channels 勾选的渠道才会发。
 // 各渠道差异在 SecretsNotifier 子结构，同样扁平 kv，不是渠道子表或 JSON blob
 type NotifierConfig struct {
-	MaxAttempts       int
-	RetryBaseInterval int
-	BatchSize         int      // pipeline 拉批大小
-	Channels          []string // 启用渠道；空 = 不发通知
+	BatchSize int      // pipeline 拉批大小
+	Interval  int      // 不足批最多等多久才发（秒）；和 BatchSize 谁先到谁先发
+	Channels  []string // 启用渠道；空 = 不发通知
+	// 失败重试次数和间隔不进配置，通知包内部写死
 }
 
 // AdminConfig 管理面鉴权（规格 7.1；Docker 部署安全考虑）
 type AdminConfig struct {
 	AuthRequired bool   // 是否启用鉴权；false=默认不鉴权（启动 WARN 强提醒）
 	Token        string // 访问口令；auth_required=true 且为空时启动随机生成
+	// 配置保存：开了鉴权就必须有 token，空提交会被拦住；启动补生成只兜底旧库
 }
 
 // Secrets 敏感配置（存 SQLite secret.* 前缀）
@@ -300,14 +303,11 @@ func applyDefaults(cfg *AppConfig) {
 		if cfg.Pipeline.BatchSize > 0 {
 			cfg.Notifier.BatchSize = cfg.Pipeline.BatchSize
 		} else {
-			cfg.Notifier.BatchSize = 20
+			cfg.Notifier.BatchSize = DefaultNotifierBatch
 		}
 	}
-	if cfg.Notifier.MaxAttempts == 0 {
-		cfg.Notifier.MaxAttempts = 3
-	}
-	if cfg.Notifier.RetryBaseInterval == 0 {
-		cfg.Notifier.RetryBaseInterval = 300
+	if cfg.Notifier.Interval == 0 {
+		cfg.Notifier.Interval = DefaultNotifierInterval
 	}
 }
 

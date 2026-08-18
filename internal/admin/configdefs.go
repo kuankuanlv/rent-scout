@@ -200,9 +200,8 @@ func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[stri
 	notifyBase := func(channel, group string) []configField {
 		return []configField{
 			{Key: "notifier.channels", Label: "启用", Value: channelsVal, Type: "sources", Options: []string{channel}, Group: group, Wide: true, Hint: "勾选后该渠道才会发通知"},
-			{Key: "notifier.batch_size", Label: "组批大小", Value: get("notifier.batch_size", strconv.Itoa(app.Notifier.BatchSize)), Type: "number", Hint: "凑满这个条数就发；没凑满则等到「重试间隔」也发。两个条件满足其一即执行发送", Group: group},
-			{Key: "notifier.max_attempts", Label: "最大重试", Value: get("notifier.max_attempts", strconv.Itoa(app.Notifier.MaxAttempts)), Type: "number", Group: group},
-			{Key: "notifier.retry_base_interval", Label: "重试间隔(秒)", Value: get("notifier.retry_base_interval", strconv.Itoa(app.Notifier.RetryBaseInterval)), Type: "number", Group: group, Wide: true, Hint: "没凑满组批大小时，最多等这么久也发；和组批大小满足其一即执行发送。失败帖也按这个间隔再扫"},
+			{Key: "notifier.batch_size", Label: "组批大小", Value: get("notifier.batch_size", strconv.Itoa(app.Notifier.BatchSize)), Type: "number", Group: group, Hint: "凑满这个条数立刻发；默认 10。和「发送间隔」谁先到谁先发"},
+			{Key: "notifier.interval", Label: "发送间隔(秒)", Value: get("notifier.interval", strconv.Itoa(app.Notifier.Interval)), Type: "number", Group: group, Wide: true, Hint: "没凑满组批时最多等这么久也发；默认 7200（2 小时）。改完最多 1 分钟生效"},
 		}
 	}
 	return []configSection{
@@ -322,8 +321,8 @@ func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[stri
 			{
 				Title: "鉴权", Class: "bg-rose-50/70 border-rose-100",
 				Items: []configField{
-					{Key: "admin.auth_required", Label: "启用鉴权", Value: get("admin.auth_required", auth), Type: "checkbox"},
-					{Key: "admin.token", Label: "访问 Token", Value: "", Type: "password", CanClear: true},
+					{Key: "admin.auth_required", Label: "启用鉴权", Value: get("admin.auth_required", auth), Type: "checkbox", Hint: "开启后必须填写 Token，否则不能保存"},
+					{Key: "admin.token", Label: "访问 Token", Value: "", Type: "password", CanClear: true, Hint: "启用鉴权时必填；留空表示不改已保存的值"},
 				},
 			},
 		}),
@@ -397,6 +396,12 @@ func ParseSectionForm(form url.Values, section string, keepSecrets map[string]st
 			}
 			continue
 		}
+		if key == "admin.token" && v == "" {
+			if old, ok := keepSecrets[key]; ok {
+				updates[key] = old
+			}
+			continue
+		}
 		updates[key] = v
 	}
 	if allowed["collector.sources"] {
@@ -461,12 +466,12 @@ func keyInConfigGroup(key, group string) bool {
 		}
 		return strings.Contains(key, ".weibo.") || strings.HasPrefix(key, "collector.weibo.")
 	case "feishu":
-		if key == "notifier.channels" || key == "notifier.batch_size" || key == "notifier.max_attempts" || key == "notifier.retry_base_interval" {
+		if key == "notifier.channels" || key == "notifier.batch_size" || key == "notifier.interval" {
 			return true
 		}
 		return strings.Contains(key, ".feishu.")
 	case "pushplus":
-		if key == "notifier.channels" || key == "notifier.batch_size" || key == "notifier.max_attempts" || key == "notifier.retry_base_interval" {
+		if key == "notifier.channels" || key == "notifier.batch_size" || key == "notifier.interval" {
 			return true
 		}
 		return strings.Contains(key, ".pushplus.")

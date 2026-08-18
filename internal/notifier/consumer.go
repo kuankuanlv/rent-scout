@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 
 	"rent-scout/internal/config"
 	"rent-scout/internal/models"
@@ -13,11 +14,10 @@ import (
 
 // NotifierOptions 通知重试参数（规格 6.6）
 type NotifierOptions struct {
-	MaxAttempts       int               // 单渠道失败重试次数（超过进死信）；<=0 用 3
-	RetryBaseInterval int               // 重试退避基础间隔（秒）；<=0 用 300
-	HotConfig         *config.HotConfig // 签名密钥、对外地址、最大重试
-	FeedbackSecret    string
-	LiveChannels      func() []Channel // 生产每轮读热配置；测试不设则用构造注入的 channels
+	MaxAttempts    int               // 单渠道失败重试次数；<=0 用 DefaultMaxAttempts
+	HotConfig      *config.HotConfig // 签名密钥、对外地址
+	FeedbackSecret string
+	LiveChannels   func() []Channel // 生产每轮读热配置；测试不设则用构造注入的 channels
 }
 
 // Notifier 通知消费器：按渠道过滤未 sent → 地址分组 → 每组 Send → 状态写库（规格 6.5/6.6）
@@ -30,10 +30,7 @@ type Notifier struct {
 // NewNotifier 创建通知消费器；channels 为启用渠道（至少一个）
 func NewNotifier(st *store.Store, opts NotifierOptions, channels ...Channel) *Notifier {
 	if opts.MaxAttempts <= 0 {
-		opts.MaxAttempts = 3
-	}
-	if opts.RetryBaseInterval <= 0 {
-		opts.RetryBaseInterval = 300
+		opts.MaxAttempts = DefaultMaxAttempts
 	}
 	return &Notifier{st: st, channels: channels, opts: opts}
 }
@@ -53,8 +50,6 @@ func (n *Notifier) publicOrigin() string {
 	return config.ResolvePublicOrigin(nil)
 }
 
-// ProcessBatch 处理一批 passed 帖子（pipeline.BatchFunc）：
-// 拉批内渠道状态 → 按渠道过滤 → 地址分组 → 每组 Send → 写状态（sent/failed/dead）
 func (n *Notifier) liveChannels() []Channel {
 	if n.opts.LiveChannels != nil {
 		return n.opts.LiveChannels()
@@ -63,17 +58,14 @@ func (n *Notifier) liveChannels() []Channel {
 }
 
 func (n *Notifier) maxAttempts() int {
-	if n.opts.HotConfig != nil {
-		if v := n.opts.HotConfig.Get().Notifier.MaxAttempts; v > 0 {
-			return v
-		}
-	}
 	if n.opts.MaxAttempts <= 0 {
-		return 3
+		return DefaultMaxAttempts
 	}
 	return n.opts.MaxAttempts
 }
 
+// ProcessBatch 处理一批 passed 帖子（pipeline.BatchFunc）：
+// 拉批内渠道状态 → 按渠道过滤 → 地址分组 → 每组 Send → 写状态（sent/failed/dead）
 func (n *Notifier) ProcessBatch(ctx context.Context, batch []models.RentPost) error {
 	chs := n.liveChannels()
 	if len(batch) == 0 || len(chs) == 0 {
@@ -100,6 +92,32 @@ func (n *Notifier) ProcessBatch(ctx context.Context, batch []models.RentPost) er
 	var firstErr error
 	for _, ch := range chs {
 		if err := n.sendChannel(ctx, ch, batch, statuses); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+// ProcessManual 控制台勾选直发：不按地点拆组、不等凑批，已发过的也会再发一次
+func (n *Notifier) ProcessManual(ctx context.Context, batch []models.RentPost, group string) error {
+	chs := n.liveChannels()
+	if len(batch) == 0 {
+		return nil
+	}
+	if len(chs) == 0 {
+		return fmt.Errorf("当前没有可用的通知渠道")
+	}
+	if strings.TrimSpace(group) == "" {
+		group = GroupUnknown
+	}
+	log := pkglog.Component(pkglog.Notifier)
+	log.Info("手动通知触发", "count", len(batch), "group", group)
+	if err := n.st.AttachPostTags(batch); err != nil {
+		return fmt.Errorf("加载标签: %w", err)
+	}
+	var firstErr error
+	for _, ch := range chs {
+		if err := n.sendGroup(ctx, ch, group, batch); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}

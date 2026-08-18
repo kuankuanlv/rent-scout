@@ -63,3 +63,8 @@ type NotifyProbeItem struct {
 type NotifyProbe interface {
 	Send(ctx context.Context, channel, webhook, token, topic string, items []NotifyProbeItem) error
 }
+
+// NotifyManual 控制台勾选帖子后直发
+type NotifyManual interface {
+	SendSelected(ctx context.Context, ids []int64, group string) error
+}

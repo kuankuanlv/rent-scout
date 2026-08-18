@@ -1,0 +1,166 @@
+# 推送 v* tag（或手动指定 tag）时交叉编译各平台产物并挂到 GitHub Release
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "要挂产物的已有 tag（如 v0.1.0）"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # tag 推送用 github.ref_name；手动跑用输入的 tag
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Test
+        run: go test ./...
+
+  build:
+    name: Build (${{ matrix.name }})
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-amd64
+            goos: linux
+            goarch: amd64
+            artifact_key: linux-amd64
+          - name: linux-aarch64
+            goos: linux
+            goarch: arm64
+            artifact_key: linux-aarch64
+          - name: macos-amd64
+            goos: darwin
+            goarch: amd64
+            artifact_key: macos-amd64
+          - name: macos-aarch64
+            goos: darwin
+            goarch: arm64
+            artifact_key: macos-aarch64
+          - name: windows-amd64
+            goos: windows
+            goarch: amd64
+            artifact_key: windows-amd64
+            ext: .exe
+          - name: windows-aarch64
+            goos: windows
+            goarch: arm64
+            artifact_key: windows-aarch64
+            ext: .exe
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # 手动跑时也按指定 tag 检出，保证版本与产物一致
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Resolve version
+        id: ver
+        shell: bash
+        run: |
+          TAG="${{ env.RELEASE_TAG }}"
+          case "$TAG" in
+            v*) VERSION="${TAG#v}" ;;
+            *) VERSION="$TAG" ;;
+          esac
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          VERSION="${{ steps.ver.outputs.version }}"
+          KEY="${{ matrix.artifact_key }}"
+          EXT="${{ matrix.ext }}"
+          BIN="rent-scout-${VERSION}-${KEY}${EXT}"
+          mkdir -p staged
+          go build -trimpath -ldflags="-s -w" -o "staged/${BIN}" ./cmd/rent-scout
+          test -s "staged/${BIN}"
+          ls -lh staged/
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rent-scout-${{ steps.ver.outputs.version }}-${{ matrix.artifact_key }}
+          path: staged/*
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve version
+        id: ver
+        shell: bash
+        run: |
+          TAG="${{ env.RELEASE_TAG }}"
+          case "$TAG" in
+            v*) VERSION="${TAG#v}" ;;
+            *) VERSION="$TAG" ;;
+          esac
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          pattern: rent-scout-${{ steps.ver.outputs.version }}-*
+          merge-multiple: true
+
+      - name: List assets
+        run: ls -lah release-assets/
+
+      - name: Create or update Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: rent-scout ${{ steps.ver.outputs.version }}
+          draft: false
+          prerelease: ${{ contains(steps.ver.outputs.tag, '-') }}
+          generate_release_notes: true
+          files: |
+            release-assets/*
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

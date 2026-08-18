@@ -34,6 +34,16 @@
       <p class="mt-6 text-center text-xs text-gray-400">
         令牌在「配置 → 管理」页面中设置
       </p>
+
+      <details class="mt-4 rounded-xl border border-gray-100 bg-gray-50/80 px-3 py-2 text-xs text-gray-600">
+        <summary class="cursor-pointer select-none font-medium text-gray-700">忘记令牌？</summary>
+        <div class="mt-2 space-y-2 leading-relaxed">
+          <p>如果你已经在「配置 → 管理」里填过访问令牌，服务启动时会在启动日志里打印当前访问令牌（搜 <code class="text-gray-800">管理台访问令牌</code> 或 <code class="text-gray-800">token=</code>）。</p>
+          <p>到运行 rent-scout 的机器上，打开 <code class="text-gray-800">{{.LogDir}}/rent-scout-*.log</code>，查看最近一次启动阶段的几行日志即可。</p>
+          <p>也可以直接查 SQLite：<code class="text-gray-800">SELECT value FROM kv_config WHERE key='admin.token';</code></p>
+          <p class="text-gray-500">数据库默认在 <code class="text-gray-800">{{.DBPath}}</code>（可用环境变量 DB_PATH 覆盖）。</p>
+        </div>
+      </details>
     </div>
   </main>
 </body>

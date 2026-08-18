@@ -3,7 +3,7 @@ package config
 import "strings"
 
 // DefaultKV 一键导入的完整基线配置（参考现网 sqlite 脱敏整理）。
-// 规则：敏感项（cookie/cookiecloud/LLM key/webhook）一律空；鉴权与迁移标记键不包含；
+// 规则：敏感项（cookie/cookiecloud/LLM key/webhook）一律空；鉴权键不包含；
 // 仅覆盖同名键，不影响用户已填内容。
 func DefaultKV() map[string]string {
 	return map[string]string{
@@ -15,7 +15,7 @@ func DefaultKV() map[string]string {
 		"log.path":           "",
 		"log.memory_lines":   "1000",
 		// collector
-		"collector.sources":           "douban,weibo",
+		"collector.sources":           "",
 		"collector.interval":          "300",
 		"collector.jitter_ratio":      "0.2",
 		"collector.max_age_days":      "7",

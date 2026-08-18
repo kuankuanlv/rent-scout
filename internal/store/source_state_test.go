@@ -9,36 +9,34 @@ func TestParseSourceProgress(t *testing.T) {
 	if p := ParseSourceProgress(""); p.Page != "" || p.SeenNewest != "" {
 		t.Errorf("空串 = %+v", p)
 	}
-	legacy := ParseSourceProgress("1:0")
-	if legacy.Page != "1:0" || legacy.CatchingUp() {
-		t.Errorf("旧游标 = %+v, want page=1:0 未追新", legacy)
+	if p := ParseSourceProgress("1:0"); p.Page != "" {
+		t.Errorf("非 JSON 应忽略: %+v", p)
 	}
-	raw := SourceProgress{Phase: ProgressIncremental, Page: "", Watermark: "2026-08-13T00:00:00Z", RangeKey: "k"}.Encode()
+	raw := SourceProgress{Page: "0:25", Fingerprint: "fp1", SeenNewest: `{"user:1":"2026-08-13T00:00:00Z"}`}.Encode()
 	got := ParseSourceProgress(raw)
-	if !got.CatchingUp() || got.SeenNewest != "2026-08-13T00:00:00Z" || got.Fingerprint != "k" {
-		t.Errorf("旧 JSON 兼容 = %+v", got)
+	if got.Page != "0:25" || got.Fingerprint != "fp1" || got.SeenNewest == "" {
+		t.Errorf("JSON 进度 = %+v", got)
 	}
 }
 
-func TestDecodeWatermarksLegacyAndMap(t *testing.T) {
-	legacy := "2026-08-13T00:00:00Z"
-	m := DecodeWatermarks(legacy)
-	if m["*"] != legacy {
-		t.Fatalf("legacy = %v", m)
-	}
-	if t0 := LookupWatermark(m, "user:1"); t0.IsZero() {
-		t.Fatal("旧单值应作为所有目标初值")
-	}
-	enc := EncodeWatermarks(map[string]string{"user:1": legacy})
+func TestDecodeWatermarksMap(t *testing.T) {
+	ts := "2026-08-13T00:00:00Z"
+	enc := EncodeWatermarks(map[string]string{"user:1": ts})
 	if !strings.Contains(enc, "user:1") {
 		t.Fatalf("encode=%s", enc)
 	}
 	got := DecodeWatermarks(enc)
-	if got["user:1"] != legacy {
+	if got["user:1"] != ts {
 		t.Fatalf("map roundtrip = %v", got)
 	}
+	if LookupWatermark(got, "user:1").IsZero() {
+		t.Fatal("应有 user:1 水位")
+	}
 	if !LookupWatermark(got, "user:2").IsZero() {
-		t.Fatal("已有分键后，未出现的目标不应再吃 * 初值")
+		t.Fatal("未出现的目标不应有水位")
+	}
+	if len(DecodeWatermarks(ts)) != 0 {
+		t.Fatal("裸时间戳不应解析")
 	}
 }
 

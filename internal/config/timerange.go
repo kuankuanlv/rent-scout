@@ -10,7 +10,7 @@ import (
 
 // ResolveTimeRange 解析拉取时间窗。
 // from/to 按「天」相对 now：负数=过去，正数=未来；now / 空 to = 0。
-// 「从」只能为负且必须小于「至」。仍兼容旧写法 -10d、绝对日期。
+// 「从」只能为负且必须小于「至」。
 func ResolveTimeRange(from, to string, now time.Time) (start, end time.Time, err error) {
 	from = strings.TrimSpace(from)
 	to = strings.TrimSpace(to)
@@ -65,13 +65,12 @@ func parseTimeBound(s string, now time.Time) (time.Time, float64, string, error)
 	return time.Time{}, 0, "", fmt.Errorf("无法解析（支持 now/-10/小数天）")
 }
 
-// parseDayOffset 认 -10、-10d、-10.5、0.5；保留正负号
+// parseDayOffset 认 -10、-10.5、0.5；保留正负号
 func parseDayOffset(s string) (float64, bool) {
 	s = strings.TrimSpace(strings.ToLower(s))
 	if s == "" || strings.EqualFold(s, "now") {
 		return 0, false
 	}
-	s = strings.TrimSuffix(s, "d")
 	n, err := strconv.ParseFloat(s, 64)
 	if err != nil || math.IsNaN(n) || math.IsInf(n, 0) {
 		return 0, false
@@ -106,7 +105,7 @@ func CollectorReplayWindow(cfg *AppConfig, now time.Time) (start, end time.Time,
 	return start, end, nil
 }
 
-// CanonicalDayOffset 存库/展示：-10d → -10；now 保持；绝对时间原样
+// CanonicalDayOffset 存库/展示：now 保持；绝对时间原样；相对天归一化小数
 func CanonicalDayOffset(s string) string {
 	s = strings.TrimSpace(s)
 	if s == "" {

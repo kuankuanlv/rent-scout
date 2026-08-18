@@ -383,7 +383,7 @@ func TestRunnerResetsWhenRangeChanges(t *testing.T) {
 func TestRunnerKeepsProgressWhenURLsAdded(t *testing.T) {
 	now := time.Now()
 	wm := now.Add(-2 * time.Hour).Format(time.RFC3339Nano)
-	src := &fakeSource{
+	src := &weiboWMSource{fakeSource: fakeSource{
 		name: models.SourceWeibo.String(),
 		pages: [][]ListItem{{{
 			ExternalID: "old", URL: "u/old", Title: "旧",
@@ -392,7 +392,7 @@ func TestRunnerKeepsProgressWhenURLsAdded(t *testing.T) {
 		details: map[string]models.RentPost{
 			"old": {Source: "weibo", ExternalID: "old", Title: "旧", CollectedAt: now, Status: models.PostStatusCollected},
 		},
-	}
+	}}
 	st, err := store.Open(t.TempDir() + "/t.db")
 	if err != nil {
 		t.Fatal(err)
@@ -410,7 +410,7 @@ func TestRunnerKeepsProgressWhenURLsAdded(t *testing.T) {
 	r := NewRunner(rt, st, nil, nil)
 	fp := sourceFingerprint("weibo", rt.Get())
 	if err := st.SetProgress("weibo", store.SourceProgress{
-		Page: "", SeenNewest: wm, Fingerprint: fp,
+		Page: "", SeenNewest: store.EncodeWatermarks(map[string]string{"user:1234567890": wm}), Fingerprint: fp,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -435,6 +435,13 @@ func TestRunnerKeepsProgressWhenURLsAdded(t *testing.T) {
 type wmSource struct {
 	fakeSource
 }
+
+type weiboWMSource struct {
+	fakeSource
+}
+
+func (weiboWMSource) WatermarkKey(string) string { return "user:1234567890" }
+func (weiboWMSource) TimeOrdered(string) bool    { return true }
 
 func (f *wmSource) SkipGroup(cursor string) string {
 	g, _ := parsePageCursor(cursor)

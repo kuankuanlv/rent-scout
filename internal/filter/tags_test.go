@@ -12,15 +12,15 @@ func TestSystemTagsFromHardSkipsLongReason(t *testing.T) {
 		Status:    models.PostStatusRejected,
 		HardRules: []models.RuleHit{{RuleID: 1, Reason: long}},
 	}, nil)
-	if len(got) != 0 {
-		t.Errorf("长句不应写成标签: %+v", got)
+	if len(got) != 1 || got[0].Kind != models.TagKindUnmatched || got[0].Text != models.RejectedByUnmatched {
+		t.Errorf("拒绝应写成未命中: %+v", got)
 	}
 	got = SystemTagsFromHard(models.FilterResult{
 		Status:    models.PostStatusRejected,
 		HardRules: []models.RuleHit{{RuleID: 1, Reason: "中介"}},
 	}, nil)
-	if len(got) != 1 || got[0].Kind != models.TagKindBlock || got[0].Text != "中介" {
-		t.Errorf("短拉黑词应写成标签: %+v", got)
+	if len(got) != 1 || got[0].Kind != models.TagKindUnmatched || got[0].Text != models.RejectedByUnmatched {
+		t.Errorf("黑名单短词也不该写成标签: %+v", got)
 	}
 }
 

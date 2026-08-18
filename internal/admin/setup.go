@@ -31,16 +31,14 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 	}
 	kv := CurrentConfigKV(s.db)
 	env := config.KVToSecrets(kv)
-	cookieRawHint := "粘贴 cookie 原文；留空不修改"
-	if raw := env.Collector.Douban.CookieRaw; raw != "" {
-		cookieRawHint = fmt.Sprintf("已保存 · 长度 %d；留空不修改", len(raw))
-	}
+	cookieRawHint := cookiePasteHint(env.Collector.Douban.CookieRaw)
 	data := mergePageCtx(s.pageCtx(r, ""), map[string]any{
 		"Step":          step,
 		"Total":         setupTotalSteps,
 		"App":           config.KVToApp(kv),
 		"Env":           env,
 		"KV":            kv,
+		"SourcesCSV":    kv["collector.sources"],
 		"CookieRawHint": cookieRawHint,
 		"SkipNav":       true,
 	})

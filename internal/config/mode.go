@@ -49,9 +49,6 @@ func (s LLMAPIStyle) String() string { return string(s) }
 
 func ParseLLMAPIStyle(s string) LLMAPIStyle {
 	s = strings.ToLower(strings.TrimSpace(s))
-	if s == "custom" {
-		return LLMStyleOther
-	}
 	switch LLMAPIStyle(s) {
 	case LLMStyleNone, LLMStyleOpenAI, LLMStyleOther:
 		return LLMAPIStyle(s)

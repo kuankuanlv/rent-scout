@@ -279,6 +279,9 @@ func TestImportDefaults(t *testing.T) {
 	if m["admin.token"] != "setup-tok" {
 		t.Errorf("admin.token = %q, want 预置值 setup-tok", m["admin.token"])
 	}
+	if strings.TrimSpace(m["collector.sources"]) != "" {
+		t.Errorf("collector.sources = %q, 导入后应默认关闭", m["collector.sources"])
+	}
 }
 
 // TestSetupWelcomeChoice GET /admin/setup -> 200，body 含选择项

@@ -69,7 +69,7 @@ func TestRunnerDoubanBackfillThenIncremental(t *testing.T) {
 			Sources: []string{"douban"},
 			Douban: config.DoubanConfig{
 				Groups:    []string{group},
-				RangeFrom: "-10d",
+				RangeFrom: "-10",
 				RangeTo:   "now",
 			},
 		},

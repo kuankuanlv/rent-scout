@@ -338,7 +338,7 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 			ng := skipGroup(src, listCursor)
 			if ng == "" {
 				leaveGroup("", "本组页数用尽", groupNew == 0)
-				prog = sealProgress(prog, wms, end)
+				prog = sealProgress(prog, wms)
 				if err := persist(); err != nil {
 					return roundResult{}, err
 				}
@@ -422,7 +422,7 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 					continue
 				}
 				leaveGroup("", idleReason, groupNew == 0)
-				prog = sealProgress(prog, wms, end)
+				prog = sealProgress(prog, wms)
 				if err := persist(); err != nil {
 					return roundResult{}, err
 				}
@@ -430,7 +430,7 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 			}
 			if next == "" {
 				leaveGroup("", idleReason, groupNew == 0)
-				prog = sealProgress(prog, wms, end)
+				prog = sealProgress(prog, wms)
 				if err := persist(); err != nil {
 					return roundResult{}, err
 				}
@@ -511,7 +511,7 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 				continue
 			}
 			leaveGroup("", idleReason, groupNew == 0)
-			prog = sealProgress(prog, wms, end)
+			prog = sealProgress(prog, wms)
 			if err := persist(); err != nil {
 				return roundResult{}, err
 			}
@@ -521,7 +521,7 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 			if groupNew == 0 {
 				log.Info(fmt.Sprintf("【%s 第%d轮 %s 本组结束，未收集到任何新帖】", src.Name(), round, pageLabel))
 			}
-			prog = sealProgress(prog, wms, end)
+			prog = sealProgress(prog, wms)
 			if err := persist(); err != nil {
 				return roundResult{}, err
 			}
@@ -546,12 +546,11 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 	return out(), nil
 }
 
-func sealProgress(p store.SourceProgress, wms map[string]string, end time.Time) store.SourceProgress {
+func sealProgress(p store.SourceProgress, wms map[string]string) store.SourceProgress {
 	p.Page = ""
-	if len(wms) == 0 {
-		wms = map[string]string{"*": end.Format(time.RFC3339Nano)}
+	if len(wms) > 0 {
+		p.SeenNewest = store.EncodeWatermarks(wms)
 	}
-	p.SeenNewest = store.EncodeWatermarks(wms)
 	return p
 }
 

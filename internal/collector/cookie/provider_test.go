@@ -10,9 +10,9 @@ import (
 	"rent-scout/internal/config"
 )
 
-// file 模式已移除：应报错
+// 未知 file 模式：应报错
 func TestFileCookieProviderRejected(t *testing.T) {
-	if _, err := New("file", config.DoubanCookieConfig{CookieFile: "/tmp/x"}); err == nil {
+	if _, err := New("file", config.DoubanCookieConfig{}); err == nil {
 		t.Fatal("file 模式应报错")
 	}
 }

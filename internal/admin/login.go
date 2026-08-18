@@ -4,8 +4,18 @@ import (
 	"crypto/subtle"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
+
+	"rent-scout/internal/pkglog"
 )
+
+func defaultDBPathHint() string {
+	if p := os.Getenv("DB_PATH"); p != "" {
+		return p
+	}
+	return "db/rent-scout.db"
+}
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
@@ -14,9 +24,11 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			next = "/admin"
 		}
 		data := map[string]any{
-			"Title": "访问验证",
-			"Error": r.URL.Query().Get("error"),
-			"Next":  next,
+			"Title":  "访问验证",
+			"Error":  r.URL.Query().Get("error"),
+			"Next":   next,
+			"LogDir": pkglog.LogDir(),
+			"DBPath": defaultDBPathHint(),
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := s.tmpl.ExecuteTemplate(w, "login", data); err != nil {

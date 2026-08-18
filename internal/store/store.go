@@ -22,7 +22,7 @@ type Store struct {
 	postTags *posttags.Repo
 }
 
-// Open 打开（不存在则创建）SQLite 库并执行迁移。
+// Open 打开（不存在则创建）SQLite 库并初始化表结构。
 // 建表幂等，重复启动安全；WAL 模式提升并发读写。
 func Open(dbPath string) (*Store, error) {
 	// 确保目录存在（db/ 由 .gitignore 排除，运行时创建）
@@ -56,8 +56,7 @@ func Open(dbPath string) (*Store, error) {
 // Close 关闭底层连接
 func (s *Store) Close() error { return s.db.Close() }
 
-// migrate 建表（规格 3.5 表清单 + 状态机 2.4）
-// modernc 驱动单次 Exec 只支持一条语句：逐条执行，建表幂等
+// migrate 建表（规格 3.5 表清单 + 状态机 2.4）；CREATE IF NOT EXISTS 幂等
 func (s *Store) migrate() error {
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS posts (
@@ -74,6 +73,7 @@ func (s *Store) migrate() error {
 		    status       TEXT    NOT NULL DEFAULT 'collected',
 		    price        TEXT    NOT NULL DEFAULT '暂无',
 		    contact      TEXT    NOT NULL DEFAULT '暂无',
+		    handled_at   DATETIME,
 		    raw          TEXT    NOT NULL DEFAULT '',
 		    UNIQUE(source, external_id)
 		)`,
@@ -143,136 +143,8 @@ func (s *Store) migrate() error {
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.Exec(stmt); err != nil {
-			return fmt.Errorf("迁移建表: %w", err)
-		}
-	}
-	// 已处理时间列：NULL=未处理；幂等 ALTER
-	handledExists, err := s.columnExists("posts", "handled_at")
-	if err != nil {
-		return err
-	}
-	if !handledExists {
-		if _, err := s.db.Exec(`ALTER TABLE posts ADD COLUMN handled_at DATETIME NULL`); err != nil {
-			return fmt.Errorf("追加 handled_at 列: %w", err)
-		}
-	}
-	priceExists, err := s.columnExists("posts", "price")
-	if err != nil {
-		return err
-	}
-	if !priceExists {
-		if _, err := s.db.Exec(`ALTER TABLE posts ADD COLUMN price TEXT NOT NULL DEFAULT '暂无'`); err != nil {
-			return fmt.Errorf("追加 price 列: %w", err)
-		}
-	}
-	contactExists, err := s.columnExists("posts", "contact")
-	if err != nil {
-		return err
-	}
-	if !contactExists {
-		if _, err := s.db.Exec(`ALTER TABLE posts ADD COLUMN contact TEXT NOT NULL DEFAULT '暂无'`); err != nil {
-			return fmt.Errorf("追加 contact 列: %w", err)
-		}
-	}
-	// 规则 type：旧 hard_* / hard_keyword+mode → whitelist|blacklist|ai_natural（Spec 09 §2.2）
-	if err := s.migrateRuleTypes(); err != nil {
-		return err
-	}
-	// cookie_mode=file 已废弃 → none（保留 cookie_file 键但不使用）
-	if err := s.migrateCookieModeFile(); err != nil {
-		return err
-	}
-	if err := s.migrateResetRulesV2(); err != nil {
-		return err
-	}
-	if err := s.migratePostStatusV3(); err != nil {
-		return err
-	}
-	return nil
-}
-
-// migrateRuleTypes 把旧四 type+mode 写成三 type；幂等可重复跑
-func (s *Store) migrateRuleTypes() error {
-	stmts := []struct {
-		sql  string
-		what string
-	}{
-		{`UPDATE rules SET type='whitelist' WHERE type='hard_whitelist'`, "hard_whitelist→whitelist"},
-		{`UPDATE rules SET type='blacklist' WHERE type='hard_blacklist'`, "hard_blacklist→blacklist"},
-		{`UPDATE rules SET type='whitelist' WHERE type='hard_keyword' AND mode='include'`, "hard_keyword+include→whitelist"},
-		{`UPDATE rules SET type='blacklist' WHERE type='hard_keyword'`, "hard_keyword→blacklist"},
-	}
-	for _, st := range stmts {
-		if _, err := s.db.Exec(st.sql); err != nil {
-			return fmt.Errorf("迁移规则类型(%s): %w", st.what, err)
+			return fmt.Errorf("建表: %w", err)
 		}
 	}
 	return nil
-}
-
-// migrateCookieModeFile 旧 file 模式改为 none；幂等
-func (s *Store) migrateCookieModeFile() error {
-	res, err := s.db.Exec(`UPDATE kv_config SET value='none' WHERE key='secret.collector.douban.cookie_mode' AND lower(value)='file'`)
-	if err != nil {
-		return fmt.Errorf("迁移 cookie_mode=file→none: %w", err)
-	}
-	_ = res
-	return nil
-}
-
-const rulesDefaultsVersionKey = "rules.defaults_version"
-const rulesDefaultsVersion = "2"
-
-// migrateResetRulesV2 清空旧规则，由 EnsureDefaultRule 按新默认值重种；只跑一次
-func (s *Store) migrateResetRulesV2() error {
-	v, err := GetConfig(s, rulesDefaultsVersionKey)
-	if err != nil {
-		return err
-	}
-	if v == rulesDefaultsVersion {
-		return nil
-	}
-	if _, err := s.db.Exec(`DELETE FROM rules`); err != nil {
-		return fmt.Errorf("清空旧规则: %w", err)
-	}
-	return SetConfig(s, rulesDefaultsVersionKey, rulesDefaultsVersion)
-}
-
-const postStatusV3Key = "posts.status_v3"
-
-// migratePostStatusV3 清掉旧 pending 状态；只跑一次
-func (s *Store) migratePostStatusV3() error {
-	v, err := GetConfig(s, postStatusV3Key)
-	if err != nil {
-		return err
-	}
-	if v == "1" {
-		return nil
-	}
-	if _, err := s.db.Exec(`UPDATE posts SET status='collected' WHERE status='pending'`); err != nil {
-		return fmt.Errorf("pending→collected: %w", err)
-	}
-	return SetConfig(s, postStatusV3Key, "1")
-}
-
-// columnExists 检查表是否已存在指定列（迁移幂等辅助）
-func (s *Store) columnExists(table, column string) (bool, error) {
-	rows, err := s.db.Query(`PRAGMA table_info(` + table + `)`)
-	if err != nil {
-		return false, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var cid int
-		var name, ctype string
-		var notnull, pk int
-		var dflt any
-		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
-			return false, err
-		}
-		if name == column {
-			return true, nil
-		}
-	}
-	return false, rows.Err()
 }

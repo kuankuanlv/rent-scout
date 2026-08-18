@@ -1,8 +1,6 @@
 package app
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"os"
 
@@ -75,30 +73,25 @@ func Bootstrap(opts Options) (*Resources, func(), error) {
 	boot = pkglog.Component(pkglog.Main)
 	boot.Info("服务启动",
 		"log_dir", pkglog.LogDir(),
+		"db_path", dbPath,
 		"addr", cfg.Server.Addr,
 		"sources", cfg.Collector.Sources,
 		"config_keys", cnt,
 		"setup_done", store.IsSetupComplete(db),
 	)
 
-	adminToken := cfg.Admin.Token
-	if cfg.Admin.AuthRequired && adminToken == "" {
-		adminToken = randomHex(16)
-		boot.Warn("已生成管理员 Token", "token_len", len(adminToken))
-		_ = store.SetConfig(db, "admin.token", adminToken)
-		_ = rt.ReloadOnce()
-	}
-	if !cfg.Admin.AuthRequired {
+	if cfg.Admin.AuthRequired {
+		if cfg.Admin.Token == "" {
+			cleanup()
+			// 鉴权开启但未配置 token：禁止写库，也无法通过登录页建立 token。
+			// 让用户显式在 SQLite 里手动填写 admin.token。
+			boot.Error("鉴权开启但 admin.token 为空，禁止启动")
+			return nil, nil, fmt.Errorf("admin.auth_required=true 但 admin.token 为空：请先手动写入 SQLite kv_config.admin.token")
+		}
+		boot.Warn("管理台访问令牌", "token", cfg.Admin.Token)
+	} else {
 		boot.Warn("鉴权已关闭")
 	}
 
 	return &Resources{Store: db, Config: rt}, cleanup, nil
-}
-
-func randomHex(n int) string {
-	b := make([]byte, n)
-	if _, err := rand.Read(b); err != nil {
-		panic(err)
-	}
-	return hex.EncodeToString(b)
 }

@@ -4,9 +4,12 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 
 	"rent-scout/internal/config"
 	"rent-scout/internal/models"
@@ -26,13 +29,19 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tab := normalizeConfigTab(r.URL.Query().Get("tab"))
+	token := r.URL.Query().Get("token")
 	data := mergePageCtx(s.pageCtx(r, "config"), map[string]any{
-		"Tab":  tab,
-		"Tabs": configTabs,
+		"Tab":     tab,
+		"Tabs":    configTabs,
+		"Onboard": onboardHint{},
 	})
-	if ok := r.URL.Query().Get("ok"); ok != "" {
-		data["Message"] = "分区「" + ok + "」已保存"
-	}
+		if ok := r.URL.Query().Get("ok"); ok != "" {
+			if ok == "import" {
+				data["Message"] = "配置已导入"
+			} else {
+				data["Message"] = "分区「" + ok + "」已保存"
+			}
+		}
 	if r.URL.Query().Get("restart") == "1" {
 		data["NeedRestart"] = true
 	}
@@ -59,6 +68,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		data["Section"] = sec
+		data["Onboard"] = onboardForTab(tab, app, env, token)
 		if tab == "general" {
 			history, _ := store.ListConfigHistory(s.db, 20)
 			data["History"] = history
@@ -131,6 +141,73 @@ func (s *Server) handleConfigExport(w http.ResponseWriter, r *http.Request) {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	_ = enc.Encode(kv)
+}
+
+// handleConfigImport POST /admin/config/import：粘贴 key=value 或 JSON（与导出兼容），覆盖对应项
+func (s *Server) handleConfigImport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := parseAdminForm(r); err != nil {
+		http.Error(w, "解析表单失败", http.StatusBadRequest)
+		return
+	}
+	data, err := readConfigImportPayload(r)
+	if err != nil {
+		q := url.Values{"tab": {"general"}, "err": {err.Error()}}
+		if tok := r.URL.Query().Get("token"); tok != "" {
+			q.Set("token", tok)
+		}
+		http.Redirect(w, r, "/admin/config?"+q.Encode(), http.StatusSeeOther)
+		return
+	}
+	updates, err := config.ParseImportKV(data)
+	if err != nil {
+		q := url.Values{"tab": {"general"}, "err": {err.Error()}}
+		if tok := r.URL.Query().Get("token"); tok != "" {
+			q.Set("token", tok)
+		}
+		http.Redirect(w, r, "/admin/config?"+q.Encode(), http.StatusSeeOther)
+		return
+	}
+	needRestart, err := s.saveConfigImport(updates)
+	if err != nil {
+		q := url.Values{"tab": {"general"}, "err": {err.Error()}}
+		if tok := r.URL.Query().Get("token"); tok != "" {
+			q.Set("token", tok)
+		}
+		http.Redirect(w, r, "/admin/config?"+q.Encode(), http.StatusSeeOther)
+		return
+	}
+	pkglog.Component(pkglog.Admin).Info("配置已导入", "keys", len(updates), "need_restart", needRestart)
+	q := url.Values{"tab": {"general"}, "ok": {"import"}}
+	if needRestart {
+		q.Set("restart", "1")
+	}
+	if tok := r.URL.Query().Get("token"); tok != "" {
+		q.Set("token", tok)
+	}
+	http.Redirect(w, r, "/admin/config?"+q.Encode(), http.StatusSeeOther)
+}
+
+func readConfigImportPayload(r *http.Request) ([]byte, error) {
+	if f, _, err := r.FormFile("file"); err == nil {
+		defer f.Close()
+		data, err := io.ReadAll(io.LimitReader(f, 2<<20))
+		if err != nil {
+			return nil, err
+		}
+		if len(strings.TrimSpace(string(data))) == 0 {
+			return nil, fmt.Errorf("文件为空")
+		}
+		return data, nil
+	}
+	data := strings.TrimSpace(r.FormValue("data"))
+	if data == "" {
+		return nil, fmt.Errorf("请粘贴配置或选择文件")
+	}
+	return []byte(data), nil
 }
 
 // handleConfigHistory 变更历史的只读快照页（从当前 KV 倒放 diff 还原）

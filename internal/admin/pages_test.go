@@ -44,6 +44,8 @@ func TestAdminPage(t *testing.T) {
 		t.Errorf("介绍页缺流水线说明")
 	} else if !strings.Contains(body, "🏠 首页") {
 		t.Errorf("顶栏应有首页入口")
+	} else if !strings.Contains(body, "开始使用") || !strings.Contains(body, "去配置采集") {
+		t.Errorf("介绍页应有首次使用清单")
 	}
 	if code, body := get("/admin/posts"); code != http.StatusOK {
 		t.Errorf("GET /admin/posts status = %d, want 200", code)

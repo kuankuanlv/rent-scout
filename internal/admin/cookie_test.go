@@ -165,12 +165,12 @@ func TestCookieTestMethodNotAllowed(t *testing.T) {
 	}
 }
 
-func TestCookieTestFileDraftRejected(t *testing.T) {
+func TestCookieTestInvalidModeRejected(t *testing.T) {
 	s := newAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 
-	form := url.Values{"cookie_mode": {"file"}, "cookie_file": {"/tmp/c.txt"}}
+	form := url.Values{"cookie_mode": {"file"}}
 	req := httptest.NewRequest(http.MethodPost, "/admin/config/cookie/test", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
@@ -183,11 +183,7 @@ func TestCookieTestFileDraftRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 	if out["ok"] != false {
-		t.Errorf("file 草稿应失败: %v", out)
-	}
-	snip, _ := out["snippet"].(string)
-	if !strings.Contains(snip, "file") {
-		t.Errorf("应提示 file 已移除: %v", out)
+		t.Errorf("无效 mode 应失败: %v", out)
 	}
 }
 

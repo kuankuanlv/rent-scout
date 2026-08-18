@@ -15,6 +15,18 @@
 <body class="bg-gradient-to-br from-slate-50 via-white to-brand-50 min-h-screen text-gray-800">
 {{template "nav" .}}
 <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
+{{if .Onboard.Show}}
+<div id="posts-collector-onboard" data-dismiss-key="{{.Onboard.DismissKey}}" class="mb-4 rounded-2xl border border-amber-300 bg-amber-50 px-4 sm:px-5 py-4 text-sm text-amber-950 shadow-sm">
+  <div class="flex flex-wrap items-start justify-between gap-3">
+    <div class="min-w-0 flex-1">
+      <p class="font-semibold text-base">{{.Onboard.Title}}</p>
+      <p class="mt-1.5 leading-relaxed">{{.Onboard.Body}} {{if .Onboard.Href}}<a href="{{.Onboard.Href}}" class="underline font-medium">{{.Onboard.LinkText}}</a>{{end}}</p>
+      <p class="mt-2 text-xs text-amber-800/90">配置路径：配置 → 采集 → 勾选豆瓣/微博 → Cookie 模式选「粘贴原文」→ 把浏览器里复制的 Cookie 整段贴进框里即可。</p>
+    </div>
+    <button type="button" id="posts-collector-onboard-dismiss" class="shrink-0 text-xs text-amber-700 hover:text-amber-900 underline whitespace-nowrap">不再显示</button>
+  </div>
+</div>
+{{end}}
 <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
   <div class="px-4 sm:px-6 py-4 border-b border-gray-100 flex flex-col gap-3">
     <div class="flex flex-wrap items-center gap-2">
@@ -132,7 +144,7 @@
               <button type="submit" class="handled-btn text-xs px-2 py-1 rounded {{if .HandledAt}}border border-emerald-300 text-emerald-800{{else}}bg-emerald-600 text-white{{end}}">{{if .HandledAt}}清除已查看{{else}}已查看{{end}}</button>
             </form>
           </td>
-        </tr>{{else}}<tr><td colspan="11" class="px-4 py-8 text-center text-gray-400">暂无帖子</td></tr>{{end}}
+        </tr>{{else}}<tr><td colspan="11" class="px-4 py-8 text-center text-gray-400"><span class="posts-onboard-empty-hint">{{if .Onboard.Show}}还没有帖子。先启用采集源并贴上 Cookie，过几分钟再来看。{{else}}暂无帖子{{end}}</span></td></tr>{{end}}
       </tbody>
     </table>
   </div>
@@ -158,7 +170,7 @@
         <input type="hidden" name="handled" class="handled-value" value="{{if .HandledAt}}0{{else}}1{{end}}">
         <button type="submit" class="handled-btn w-full text-sm py-2 rounded-lg {{if .HandledAt}}border border-emerald-300 text-emerald-800{{else}}bg-emerald-600 text-white{{end}}">{{if .HandledAt}}清除已查看{{else}}标记已查看{{end}}</button>
       </form>
-    </div>{{else}}<p class="text-center text-gray-400 py-8">暂无帖子</p>{{end}}
+    </div>{{else}}<p class="text-center text-gray-400 py-8"><span class="posts-onboard-empty-hint">{{if .Onboard.Show}}还没有帖子。先启用采集源并贴上 Cookie，过几分钟再来看。{{else}}暂无帖子{{end}}</span></p>{{end}}
   </div>
   <div class="px-4 sm:px-6 py-3 border-t border-gray-100 flex flex-wrap items-center justify-between gap-2 text-xs sm:text-sm text-gray-600">
     <span>共 {{.Total}} 条 · 第 {{.Page}} / {{.Pages}} 页</span>
@@ -196,6 +208,29 @@
 <footer class="text-center text-xs text-gray-400 py-6">rent-scout</footer>
 <script>
 (function(){
+  var onboardBox = document.getElementById('posts-collector-onboard');
+  if (onboardBox) {
+    var dismissStoreKey = 'rent-scout.posts.collector-onboard.dismiss';
+    var dismissVal = onboardBox.getAttribute('data-dismiss-key') || '';
+    function applyOnboardDismiss(){
+      onboardBox.classList.add('hidden');
+      document.querySelectorAll('.posts-onboard-empty-hint').forEach(function(el){
+        el.textContent = '暂无帖子';
+      });
+    }
+    if (dismissVal && localStorage.getItem(dismissStoreKey) === dismissVal) {
+      applyOnboardDismiss();
+    } else {
+      var dismissBtn = document.getElementById('posts-collector-onboard-dismiss');
+      if (dismissBtn) {
+        dismissBtn.addEventListener('click', function(){
+          if (dismissVal) localStorage.setItem(dismissStoreKey, dismissVal);
+          applyOnboardDismiss();
+        });
+      }
+    }
+  }
+
   var modal = document.getElementById('mark-modal');
   var form = document.getElementById('mark-modal-form');
   var postInput = document.getElementById('mark-post-id');

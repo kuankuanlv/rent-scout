@@ -102,14 +102,12 @@ func SecretsToKV(sec *Secrets) map[string]string {
 	return map[string]string{
 		KeyDoubanCookieMode:                   cookieMode,
 		KeyDoubanCookieRaw:                    dc.CookieRaw,
-		"secret.collector.douban.cookie_file": dc.CookieFile,
 		KeyDoubanCookieCloudURL:               dc.CookiecloudURL,
 		KeyDoubanCookieCloudKey:               dc.CookiecloudKey,
 		KeyDoubanCookieCloudPwd:               dc.CookiecloudPass,
 		KeyWeiboCookieMode:                    weiboMode,
 		KeyWeiboCookieRaw:                     wc.CookieRaw,
 		KeyWeiboCookieRawCN:                   wc.CookieRawCN,
-		"secret.collector.weibo.cookie_file":  wc.CookieFile,
 		KeyWeiboCookieCloudURL:                wc.CookiecloudURL,
 		KeyWeiboCookieCloudKey:                wc.CookiecloudKey,
 		KeyWeiboCookieCloudPwd:                wc.CookiecloudPass,
@@ -142,12 +140,10 @@ var SectionKeys = map[string][]string{
 		"collector.weibo.users", "collector.weibo.supertopics",
 		"collector.weibo.interval", "collector.weibo.range_from",
 		"secret.collector.douban.cookie_mode", "secret.collector.douban.cookie_raw",
-		"secret.collector.douban.cookie_file",
 		"secret.collector.douban.cookiecloud_url", "secret.collector.douban.cookiecloud_key",
 		"secret.collector.douban.cookiecloud_password",
 		"secret.collector.weibo.cookie_mode", "secret.collector.weibo.cookie_raw",
 		"secret.collector.weibo.cookie_raw_cn",
-		"secret.collector.weibo.cookie_file",
 		"secret.collector.weibo.cookiecloud_url", "secret.collector.weibo.cookiecloud_key",
 		"secret.collector.weibo.cookiecloud_password",
 	},
@@ -187,14 +183,7 @@ func KVToApp(kv map[string]string) *AppConfig {
 	if v := kv["log.memory_lines"]; v != "" {
 		cfg.Log.MemoryLines = atoi(v, 0)
 	}
-	// 旧 pipeline.* 仅作迁移 fallback；新 key 优先（BatchSize 仍为 0 时 applyDefaults 会回落）
-	if v := kv["pipeline.batch_size"]; v != "" {
-		cfg.Pipeline.BatchSize = atoi(v, 0)
-	}
-	if v := kv["pipeline.linger_interval"]; v != "" {
-		cfg.Pipeline.LingerInterval = atoi(v, 0)
-	}
-	if v := kv["collector.sources"]; v != "" {
+	if v, ok := kv["collector.sources"]; ok {
 		cfg.Collector.Sources = splitComma(v)
 	}
 	if v := kv["collector.interval"]; v != "" {
@@ -289,16 +278,9 @@ func KVToSecrets(kv map[string]string) *Secrets {
 }
 
 func cookieConfigFromKV(kv map[string]string, source string) DoubanCookieConfig {
-	cookieMode := kv[CookieModeKey(source)]
-	if strings.EqualFold(cookieMode, "file") {
-		cookieMode = CookieModeNone.String()
-	} else {
-		cookieMode = ParseCookieMode(cookieMode).String()
-	}
 	return DoubanCookieConfig{
-		CookieMode:      cookieMode,
+		CookieMode:      ParseCookieMode(kv[CookieModeKey(source)]).String(),
 		CookieRaw:       kv[CookieRawKey(source)],
-		CookieFile:      kv["secret.collector."+CookieSource(source)+".cookie_file"],
 		CookiecloudURL:  kv[CookieCloudURLKey(source)],
 		CookiecloudKey:  kv[CookieCloudKeyKey(source)],
 		CookiecloudPass: kv[CookieCloudPwdKey(source)],

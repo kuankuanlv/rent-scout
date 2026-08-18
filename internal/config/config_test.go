@@ -49,27 +49,11 @@ func TestDefaultValues(t *testing.T) {
 	if cfg.Collector.Weibo.Interval != 5 {
 		t.Errorf("默认微博间隔 = %d, want 5", cfg.Collector.Weibo.Interval)
 	}
+	if len(cfg.Collector.Sources) != 0 {
+		t.Errorf("默认采集源应关闭, got %v", cfg.Collector.Sources)
+	}
 	if n := len(HTTPURLs(cfg.Collector.Douban.Groups)); n != 7 {
 		t.Errorf("内置豆瓣小组 URL = %d, want 7", n)
-	}
-}
-
-func TestKVBatchSizeFallback(t *testing.T) {
-	// 仅有旧 pipeline.batch_size 时，filter/notifier 应继承
-	cfg := KVToApp(map[string]string{
-		"pipeline.batch_size": "35",
-	})
-	if cfg.Filter.BatchSize != 35 || cfg.Notifier.BatchSize != 35 {
-		t.Errorf("fallback batch = filter %d notifier %d, want 35", cfg.Filter.BatchSize, cfg.Notifier.BatchSize)
-	}
-	// 新 key 优先
-	cfg = KVToApp(map[string]string{
-		"pipeline.batch_size": "35",
-		"filter.batch_size":   "11",
-		"notifier.batch_size": "12",
-	})
-	if cfg.Filter.BatchSize != 11 || cfg.Notifier.BatchSize != 12 {
-		t.Errorf("新 key 优先 = filter %d notifier %d", cfg.Filter.BatchSize, cfg.Notifier.BatchSize)
 	}
 }
 
@@ -181,10 +165,10 @@ func TestValidateSecretsCookieMode(t *testing.T) {
 		t.Errorf("cookie_mode=none 应通过: %v", errs)
 	}
 
-	fileGone := DefaultSecrets()
-	fileGone.Collector.Douban.CookieMode = "file"
-	if errs := ValidateSecrets(fileGone); len(errs) == 0 {
-		t.Error("cookie_mode=file 应失败（已移除）")
+	invalidMode := DefaultSecrets()
+	invalidMode.Collector.Douban.CookieMode = "file"
+	if errs := ValidateSecrets(invalidMode); len(errs) == 0 {
+		t.Error("未知 cookie_mode 应失败")
 	}
 
 	cloudMissing := DefaultSecrets()

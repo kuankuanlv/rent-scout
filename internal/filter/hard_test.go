@@ -1,7 +1,6 @@
 package filter
 
 import (
-	"strings"
 	"testing"
 
 	"rent-scout/internal/models"
@@ -26,38 +25,38 @@ func TestHardWhitelistProducesTags(t *testing.T) {
 	}
 }
 
-func TestHardBlacklistRejects(t *testing.T) {
+func TestHardBlacklistDoesNotReject(t *testing.T) {
 	rules := []models.Rule{
 		{ID: 5, Type: models.RuleTypeBlacklist, Value: "中介,代理", Priority: 10},
 	}
 	post := models.RentPost{ID: 2, Title: "回龙观精装", Content: "房东直租，中介勿扰，代理绕行"}
-	v, _, hits, rejectedBy, err := EvaluateHard(post, rules)
+	v, tags, hits, rejectedBy, err := EvaluateHard(post, rules)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if v.Passed {
-		t.Error("黑名单命中应拒绝")
+		t.Error("没有白名单命中应拒绝")
 	}
-	if !strings.Contains(rejectedBy, "中介") {
-		t.Errorf("拒绝原因 = %q, want 含中介", rejectedBy)
+	if rejectedBy != models.RejectedByUnmatched {
+		t.Errorf("拒绝原因 = %q, want 未命中", rejectedBy)
 	}
-	if len(hits) == 0 || hits[0].RuleID != 5 {
-		t.Errorf("hits = %+v, want 规则5", hits)
+	if len(tags) != 0 || len(hits) != 0 {
+		t.Errorf("未命中不应记地点/规则命中: tags=%v hits=%v", tags, hits)
 	}
 }
 
-func TestHardBlacklistBeatsWhitelist(t *testing.T) {
+func TestHardFeiZhongjieStillPassesWhitelist(t *testing.T) {
 	rules := []models.Rule{
 		{ID: 1, Type: models.RuleTypeWhitelist, Value: "望京", Priority: 10},
 		{ID: 2, Type: models.RuleTypeBlacklist, Value: "中介", Priority: 9},
 	}
-	post := models.RentPost{ID: 3, Title: "望京整租", Content: "中介勿扰"}
-	v, tags, _, _, err := EvaluateHard(post, rules)
+	post := models.RentPost{ID: 3, Title: "望京整租", Content: "非中介，中介勿扰"}
+	v, tags, _, rejectedBy, err := EvaluateHard(post, rules)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v.Passed || len(tags) != 0 {
-		t.Errorf("黑名单应优先拒绝: passed=%v tags=%v", v.Passed, tags)
+	if !v.Passed || len(tags) != 1 || tags[0] != "望京" {
+		t.Errorf("白名单地点应通过，不要被中介子串误伤: passed=%v tags=%v rejectedBy=%q", v.Passed, tags, rejectedBy)
 	}
 }
 
@@ -82,17 +81,17 @@ func TestHardBothMissRejects(t *testing.T) {
 	}
 }
 
-func TestHardBlacklistMissNotAutoPass(t *testing.T) {
+func TestHardBlacklistOnlyStillUnmatched(t *testing.T) {
 	rules := []models.Rule{
 		{ID: 1, Type: models.RuleTypeBlacklist, Value: "合租", Priority: 10},
 		{ID: 2, Type: models.RuleTypeBlacklist, Value: "中介", Priority: 5},
 	}
-	v, _, _, _, err := EvaluateHard(models.RentPost{ID: 2, Title: "普通整租房源", Content: "x"}, rules)
-	if err != nil || v.Passed {
-		t.Errorf("黑名单未命中应拒绝: %+v %v", v, err)
+	v, _, _, rejectedBy, err := EvaluateHard(models.RentPost{ID: 2, Title: "普通整租房源", Content: "x"}, rules)
+	if err != nil || v.Passed || rejectedBy != models.RejectedByUnmatched {
+		t.Errorf("没有白名单应未命中: %+v %q %v", v, rejectedBy, err)
 	}
-	v, _, _, _, err = EvaluateHard(models.RentPost{ID: 1, Title: "中介房源", Content: "x"}, rules)
-	if err != nil || v.Passed {
-		t.Errorf("命中黑名单应拒绝: %+v %v", v, err)
+	v, _, _, rejectedBy, err = EvaluateHard(models.RentPost{ID: 1, Title: "中介房源", Content: "x"}, rules)
+	if err != nil || v.Passed || rejectedBy != models.RejectedByUnmatched {
+		t.Errorf("含中介也不该当黑名单硬拒: %+v %q %v", v, rejectedBy, err)
 	}
 }

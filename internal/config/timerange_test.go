@@ -22,13 +22,9 @@ func TestResolveTimeRange(t *testing.T) {
 		}
 	})
 
-	t.Run("兼容旧 -10d", func(t *testing.T) {
-		start, end, err := ResolveTimeRange("-10d", "now", now)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !start.Equal(now.Add(-10*24*time.Hour)) || !end.Equal(now) {
-			t.Errorf("got [%v, %v]", start, end)
+	t.Run("-10d 不再支持", func(t *testing.T) {
+		if _, _, err := ResolveTimeRange("-10d", "now", now); err == nil {
+			t.Fatal("应拒绝 -10d")
 		}
 	})
 
@@ -93,7 +89,7 @@ func TestResolveTimeRange(t *testing.T) {
 }
 
 func TestCanonicalDayOffset(t *testing.T) {
-	if got := CanonicalDayOffset("-10d"); got != "-10" {
+	if got := CanonicalDayOffset("-10d"); got != "-10d" {
 		t.Errorf("got %q", got)
 	}
 	if got := CanonicalDayOffset("now"); got != "now" {

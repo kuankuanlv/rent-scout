@@ -78,8 +78,18 @@ func TestConsumerRejects(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("结果缺失: ok=%v err=%v", ok, err)
 	}
-	if res.Status != models.PostStatusRejected || !contains(res.RejectedBy, "中介") {
+	if res.Status != models.PostStatusRejected || res.RejectedBy != models.RejectedByUnmatched {
 		t.Errorf("拒绝记录错误: %+v", res)
+	}
+	posts, err := st.ListPosts(store.PostListFilter{}, 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AttachPostTags(posts); err != nil {
+		t.Fatal(err)
+	}
+	if len(posts) != 1 || len(posts[0].Tags) != 1 || posts[0].Tags[0].Text != models.RejectedByUnmatched {
+		t.Errorf("标签应是未命中: %+v", posts)
 	}
 }
 
@@ -277,18 +287,6 @@ func TestConsumerRulesReadErrorKeepsBatch(t *testing.T) {
 	if len(still) != 2 {
 		t.Errorf("collected 数 = %d, want 2", len(still))
 	}
-}
-
-func contains(s, sub string) bool {
-	return len(s) >= len(sub) && (s == sub || len(s) > 0 && containsIdx(s, sub))
-}
-func containsIdx(s, sub string) bool {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
 }
 
 func TestReplayHardRejectedToPassedClearsNotifications(t *testing.T) {

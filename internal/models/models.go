@@ -69,7 +69,7 @@ func (p RentPost) DedupKey() string {
 // RuleHit 硬编码规则命中详情（规格 3.2）
 type RuleHit struct {
 	RuleID int64  `json:"ruleId"`
-	Mode   string `json:"mode"`   // 废弃；迁移期可空
+	Mode   string `json:"mode"`
 	Reason string `json:"reason"` // 命中的关键词/匹配文本
 }
 
@@ -101,7 +101,7 @@ type Rule struct {
 	ID        int64
 	Name      string
 	Type      string // whitelist / blacklist / ai_natural
-	Mode      string // 废弃：校验忽略，迁移后可不读
+	Mode      string // rules 表字段，当前未使用
 	Value     string // 白/黑：逗号分隔词；ai_natural：自然语言
 	Enabled   bool
 	Priority  int

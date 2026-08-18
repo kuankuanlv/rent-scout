@@ -11,17 +11,9 @@ type HardVerdict struct {
 	Passed bool
 }
 
-// EvaluateHard 先黑后白：黑名单命中拒绝并记 tag；白名单命中通过并记地点；都未命中也拒绝，原因写成未命中。
+// EvaluateHard 只看白名单地点：命中通过并记地点；没命中就拒绝，原因写成未命中。
+// 黑名单不再硬筛——「中介」会误伤「非中介」，真假中介交给 AI。
 func EvaluateHard(post models.RentPost, rules []models.Rule) (v HardVerdict, tags []string, hits []models.RuleHit, rejectedBy string, err error) {
-	for _, r := range rules {
-		if r.Type != models.RuleTypeBlacklist {
-			continue
-		}
-		if kw := matchAny(post, r.Value); kw != "" {
-			hits = append(hits, models.RuleHit{RuleID: r.ID, Mode: r.Mode, Reason: kw})
-			return HardVerdict{Passed: false}, nil, hits, "黑名单命中:" + kw, nil
-		}
-	}
 	whitelistHit := false
 	for _, r := range rules {
 		if r.Type != models.RuleTypeWhitelist {
@@ -51,19 +43,6 @@ func matchLocations(post models.RentPost, value string) []string {
 		}
 	}
 	return found
-}
-
-// matchAny 返回第一个命中的关键字（标题+正文）
-func matchAny(post models.RentPost, value string) string {
-	for _, kw := range splitKeywords(value) {
-		if kw == "" {
-			continue
-		}
-		if containsFold(post.Title, kw) || containsFold(post.Content, kw) {
-			return kw
-		}
-	}
-	return ""
 }
 
 // splitKeywords 按逗号/顿号/换行拆分关键字列表（同条内 OR）；标点和长句不当关键词

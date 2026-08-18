@@ -39,9 +39,7 @@ func ValidateApp(cfg *AppConfig) []string {
 	if cfg.Collector.MaxAgeDays <= 0 {
 		errs = append(errs, "collector.max_age_days 必须 > 0")
 	}
-	if len(cfg.Collector.Sources) == 0 {
-		errs = append(errs, "collector.sources 至少配置一个源")
-	}
+	// 源可以全关：默认不采集，等用户勾选后再跑
 	// 豆瓣源校验
 	for _, src := range cfg.Collector.Sources {
 		if src == models.SourceDouban.String() && len(HTTPURLs(cfg.Collector.Douban.Groups)) == 0 {
@@ -107,11 +105,7 @@ func validateSourceCookie(source string, dc DoubanCookieConfig) []string {
 			errs = append(errs, prefix+".cookiecloud_password 不能为空（cookie_mode=cookiecloud）")
 		}
 	default:
-		if strings.EqualFold(dc.CookieMode, "file") {
-			errs = append(errs, prefix+".cookie_mode=file 已移除，请改用 none/raw/cookiecloud")
-		} else {
-			errs = append(errs, prefix+".cookie_mode 必须是 none/raw/cookiecloud")
-		}
+		errs = append(errs, prefix+".cookie_mode 必须是 none/raw/cookiecloud")
 	}
 	return errs
 }

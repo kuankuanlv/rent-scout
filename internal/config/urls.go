@@ -68,9 +68,8 @@ func parseWeiboUIDLine(line string) (string, bool) {
 	s = strings.Trim(s, "/")
 	if i := strings.Index(s, "/u/"); i >= 0 {
 		s = s[i+3:]
-	} else if strings.HasPrefix(s, "u/") {
-		s = s[2:]
 	}
+	s = strings.TrimPrefix(s, "u/")
 	if i := strings.IndexAny(s, "/?#"); i >= 0 {
 		s = s[:i]
 	}
@@ -109,9 +108,8 @@ func parseWeiboContainerLine(line string) (string, bool) {
 	s = strings.Trim(s, "/")
 	if i := strings.Index(s, "/p/"); i >= 0 {
 		s = s[i+3:]
-	} else if strings.HasPrefix(s, "p/") {
-		s = s[2:]
 	}
+	s = strings.TrimPrefix(s, "p/")
 	if i := strings.IndexAny(s, "/?#"); i >= 0 {
 		s = s[:i]
 	}

@@ -10,19 +10,36 @@ import (
 	"rent-scout/internal/pkglog"
 )
 
+// probeTimeout 探测类 handler 公共样板：POST 检查 + 12s 超时 ctx
+func probeTimeout(r *http.Request) (context.Context, context.CancelFunc, bool) {
+	if r.Method != http.MethodPost {
+		return nil, nil, false
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
+	return ctx, cancel, true
+}
+
+// modelsPreview 模型列表预览：最多 8 个
+func modelsPreview(models []string) []string {
+	if len(models) > 8 {
+		return models[:8]
+	}
+	return models
+}
+
 // handleLLMTest POST /admin/config/llm/test：草稿连通检测，不写库
 func (s *Server) handleLLMTest(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
+	ctx, cancel, ok := probeTimeout(r)
+	if !ok {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	defer cancel()
 	draft, err := s.parseLLMDraft(r)
 	if err != nil {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
-	defer cancel()
 
 	// 轻量探测：优先 GET /models；失败再极短 chat
 	pkglog.Component(pkglog.Admin).Info("LLM 连通检测开始",
@@ -37,16 +54,12 @@ func (s *Server) handleLLMTest(w http.ResponseWriter, r *http.Request) {
 	}
 	models, listErr := s.llmProbe.ListModels(ctx, draft.baseURL, draft.apiKey, draft.model)
 	if listErr == nil {
-		preview := models
-		if len(preview) > 8 {
-			preview = preview[:8]
-		}
 		pkglog.Component(pkglog.Admin).Info("LLM 连通检测",
 			"stage", "models",
 			"ok", true,
 			"base_url", draft.baseURL,
 			"count", len(models),
-			"preview", preview,
+			"preview", modelsPreview(models),
 		)
 		writeJSON(w, map[string]any{"ok": true, "detail": "models 接口可达", "via": "models", "count": len(models)})
 		return
@@ -85,17 +98,17 @@ func (s *Server) handleLLMTest(w http.ResponseWriter, r *http.Request) {
 
 // handleLLMModels POST /admin/config/llm/models：草稿拉取模型列表，不写库
 func (s *Server) handleLLMModels(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
+	ctx, cancel, ok := probeTimeout(r)
+	if !ok {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	defer cancel()
 	draft, err := s.parseLLMDraft(r)
 	if err != nil {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
-	defer cancel()
 	pkglog.Component(pkglog.Admin).Info("拉取模型开始", "stage", "start", "base_url", draft.baseURL)
 	if s.llmProbe == nil {
 		writeJSON(w, map[string]any{"ok": false, "error": "探测未配置"})
@@ -107,11 +120,7 @@ func (s *Server) handleLLMModels(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"ok": false, "detail": err.Error(), "error": err.Error()})
 		return
 	}
-	preview := models
-	if len(preview) > 8 {
-		preview = preview[:8]
-	}
-	pkglog.Component(pkglog.Admin).Info("拉取模型成功", "stage", "models", "base_url", draft.baseURL, "count", len(models), "preview", preview)
+	pkglog.Component(pkglog.Admin).Info("拉取模型成功", "stage", "models", "base_url", draft.baseURL, "count", len(models), "preview", modelsPreview(models))
 	writeJSON(w, map[string]any{"ok": true, "models": models})
 }
 

@@ -19,9 +19,6 @@ func LiveAIEvaluator(rt *config.HotConfig) (AIEvaluator, string) {
 		return nil, "当前配置 AI 未启用，无需执行"
 	}
 	env := rt.Secrets()
-	if env == nil || env.Filter.LLM.APIKey == "" {
-		return nil, "当前配置 AI 密钥为空，无需执行"
-	}
 	baseURL := env.Filter.LLM.BaseURL
 	if baseURL == "" {
 		baseURL = config.DefaultLLMBaseURL

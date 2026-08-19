@@ -35,7 +35,7 @@ func New(opts Options) (*Service, error) {
 		if rt == nil {
 			return nil
 		}
-		return liveChannels(rt.Get(), rt.Secrets())
+		return channels.Live(rt.Get(), rt.Secrets())
 	}
 	n := notifier.NewNotifier(db, notifier.NotifierOptions{HotConfig: rt, LiveChannels: live})
 	s := &Service{rt: rt, db: db, n: n}
@@ -88,7 +88,7 @@ func (s *Service) fetch(ctx context.Context, limit int) ([]models.RentPost, erro
 		log.Info("当前配置通知未启用，无需执行")
 		return nil, nil
 	}
-	chs := liveChannels(app, s.rt.Secrets())
+	chs := channels.Live(app, s.rt.Secrets())
 	if len(chs) == 0 {
 		log.Info("当前配置通知渠道密钥为空，无需执行")
 		return nil, nil
@@ -104,58 +104,13 @@ func (s *Service) fetch(ctx context.Context, limit int) ([]models.RentPost, erro
 }
 
 // channelSwitchSummary 当前通知渠道开关摘要（每分钟探测日志用）：
-// 渠道=勾选且密钥非空（与 liveChannels 同一判定），固定顺序输出
+// 渠道=勾选且密钥非空（与 channels.Live 同一判定），固定顺序输出
 func channelSwitchSummary(app *config.AppConfig, env *config.Secrets) string {
-	on := map[string]bool{}
-	for _, c := range liveChannels(app, env) {
-		on[c.Name()] = true
-	}
-	order := []string{
-		notifier.ChannelFeishu, notifier.ChannelDingtalk, notifier.ChannelWecom,
-		notifier.ChannelPushplus, notifier.ChannelServerchan, notifier.ChannelWebhook,
-	}
-	parts := make([]string, 0, len(order))
-	for _, name := range order {
-		parts = append(parts, fmt.Sprintf("%s=%t", name, on[name]))
+	parts := make([]string, 0, len(channels.Names()))
+	for _, name := range channels.Names() {
+		parts = append(parts, fmt.Sprintf("%s=%t", name, channels.Enabled(app, env, name)))
 	}
 	return strings.Join(parts, "、")
-}
-
-func liveChannels(app *config.AppConfig, env *config.Secrets) []notifier.Channel {
-	if app == nil || env == nil {
-		return nil
-	}
-	n := env.Notifier
-	var chs []notifier.Channel
-	for _, name := range app.Notifier.Channels {
-		switch name {
-		case notifier.ChannelFeishu:
-			if n.Feishu.Webhook != "" {
-				chs = append(chs, channels.NewFeishuChannel(n.Feishu.Webhook))
-			}
-		case notifier.ChannelDingtalk:
-			if n.Dingtalk.Webhook != "" {
-				chs = append(chs, channels.NewDingtalkChannel(n.Dingtalk.Webhook, n.Dingtalk.Secret))
-			}
-		case notifier.ChannelWecom:
-			if n.Wecom.Webhook != "" {
-				chs = append(chs, channels.NewWecomChannel(n.Wecom.Webhook))
-			}
-		case notifier.ChannelPushplus:
-			if n.Pushplus.Token != "" {
-				chs = append(chs, channels.NewPushplusChannel("", n.Pushplus.Token, n.Pushplus.Topic))
-			}
-		case notifier.ChannelServerchan:
-			if n.Serverchan.Sendkey != "" {
-				chs = append(chs, channels.NewServerchanChannel(n.Serverchan.Sendkey))
-			}
-		case notifier.ChannelWebhook:
-			if n.Webhook.URL != "" {
-				chs = append(chs, channels.NewWebhookChannel(n.Webhook.URL, n.Webhook.Template))
-			}
-		}
-	}
-	return chs
 }
 
 // Signal 上游落库后的非阻塞信号（满批立刻发；不足批继续等 interval）

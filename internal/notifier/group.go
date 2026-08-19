@@ -80,7 +80,8 @@ func hmacSHA256(secret, data string) string {
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-func absActionURL(origin, path string) string {
+// AbsActionURL 工具函数：拼装 origin 与 path
+func AbsActionURL(origin, path string) string {
 	if origin == "" || path == "" || strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
 		return path
 	}

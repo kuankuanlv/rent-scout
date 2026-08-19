@@ -194,21 +194,6 @@ func pickCookieCloudCipher(b []byte) (cookieCloudData, string, string, error) {
 	return data, "", "", fmt.Errorf("CookieCloud 响应无 encrypted/data/cookie_data raw=%s", clipLog(string(b), 300))
 }
 
-func redactCookieCloudJSON(b []byte) []byte {
-	var m map[string]any
-	if err := json.Unmarshal(b, &m); err != nil {
-		return []byte("(非 JSON)")
-	}
-	if _, ok := m["password"]; ok {
-		m["password"] = "***"
-	}
-	out, err := json.Marshal(m)
-	if err != nil {
-		return []byte("(脱敏失败)")
-	}
-	return out
-}
-
 func clipLog(s string, n int) string {
 	s = strings.TrimSpace(s)
 	r := []rune(s)
@@ -243,11 +228,6 @@ func filterInterestDomains(plain, interest string) (hit []string, skipN int) {
 		}
 	}
 	return hit, skipN
-}
-
-func listCookieCloudDomains(plain string) []string {
-	hit, _ := filterInterestDomains(plain, InterestDomain)
-	return hit
 }
 
 // buildCookieString 解析 CookieCloud 明文 JSON，只保留目标域，拼装 "k=v; k=v"

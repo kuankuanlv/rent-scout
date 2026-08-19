@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"rent-scout/internal/config"
+	"rent-scout/internal/notifier/channels"
 	"rent-scout/internal/store"
 )
 
@@ -27,7 +28,7 @@ func TestNewAlwaysHasPipe(t *testing.T) {
 func TestLiveChannelsSkipMissingCreds(t *testing.T) {
 	app := &config.AppConfig{Notifier: config.NotifierConfig{Channels: []string{"feishu", "wecom"}}}
 	env := &config.Secrets{Notifier: config.SecretsNotifier{Feishu: config.WebhookSecretConfig{Webhook: "https://x"}}}
-	chs := liveChannels(app, env)
+	chs := channels.Live(app, env)
 	if len(chs) != 1 || chs[0].Name() != "feishu" {
 		t.Fatalf("got %v", chs)
 	}

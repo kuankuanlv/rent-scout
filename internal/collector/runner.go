@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/rand"
 	"strconv"
 	"strings"
@@ -130,67 +131,76 @@ func (r *Runner) hasSource(name string) bool {
 	return false
 }
 
-// runSource 单源循环：停用判定 → 手动触发/定时轮次（失败退避 + jitter 抖动）。
-// 停用态不跑轮次，仅响应手动触发（规格 7.1 手动触发抓取）与 ctx 取消；
-// 周期轮询恢复判定——enable 后无需额外信号，循环自然恢复
+// runSource 单源循环：编排「启用检查 → 采集轮次 → 等待下一轮」，细节见各 helper
 func (r *Runner) runSource(ctx context.Context, src Source) {
 	log := pkglog.Component(pkglog.SourceCollector(src.Name()))
 	log.Info("采集协程已启动", "source", src.Name())
 	failStreak := 0
-	prevEnabled := true
 	for {
 		cfg := r.rt.Get()
-		interval := time.Duration(cfg.Collector.SourceInterval(src.Name())) * time.Second
-		jitter := cfg.Collector.JitterRatio
 		if !r.SourceEnabled(src.Name()) {
-			if r.configEnabled(src.Name()) {
-				if prevEnabled {
-					log.Info("源已暂停", "source", src.Name())
-				}
-			} else {
-				log.Info("当前配置采集源未启用，无需执行", "source", src.Name())
-			}
-			prevEnabled = false
-			wait := time.Duration(cfg.Collector.SourceInterval(src.Name())) * time.Second
-			if wait > 30*time.Second {
-				wait = 30 * time.Second
-			}
-			if wait <= 0 {
-				wait = time.Second
-			}
-			select {
-			case <-ctx.Done():
+			if !r.waitWhileDisabled(ctx, src, cfg, log) {
 				return
-			case <-r.manual[src.Name()]:
-				if _, err := r.runSourceOnce(ctx, src, r.trigger); err != nil {
-					log.Warn("手动触发失败", "err", err)
-				} else {
-					failStreak = 0
-				}
-			case <-time.After(wait):
 			}
 			continue
 		}
-		prevEnabled = true
 		t0 := time.Now()
 		_, err := r.runSourceOnce(ctx, src, r.trigger)
-		if err != nil {
-			failStreak++
-			wait := time.Duration(1<<min(failStreak-1, 5)) * time.Minute
-			log.Warn("本轮失败，等待下一轮", "err", err, "耗时", time.Since(t0).Round(time.Millisecond).String(),
-				"wait_s", int(wait.Seconds()), "attempt", failStreak)
-			if !waitRound(ctx, r.manual[src.Name()], wait) {
-				return
-			}
-			continue
-		}
-		failStreak = 0
-		wait := jittered(interval, jitter)
-		log.Info("等待下一轮", "wait_s", int(wait.Seconds()))
-		if !waitRound(ctx, r.manual[src.Name()], wait) {
+		var ok bool
+		failStreak, ok = r.waitAfterRound(ctx, src, err, t0, cfg, failStreak, log)
+		if !ok {
 			return
 		}
 	}
+}
+
+// waitWhileDisabled 源未启用时的待机：周期轮询恢复判定，仅响应手动触发与 ctx 取消
+func (r *Runner) waitWhileDisabled(ctx context.Context, src Source, cfg *config.AppConfig, log *slog.Logger) bool {
+	prevEnabled := true
+	for {
+		if r.SourceEnabled(src.Name()) {
+			return true
+		}
+		if r.configEnabled(src.Name()) {
+			if prevEnabled {
+				log.Info("源已暂停", "source", src.Name())
+			}
+		} else {
+			log.Info("当前配置采集源未启用，无需执行", "source", src.Name())
+		}
+		prevEnabled = false
+		wait := time.Duration(cfg.Collector.SourceInterval(src.Name())) * time.Second
+		if wait > 30*time.Second {
+			wait = 30 * time.Second
+		}
+		if wait <= 0 {
+			wait = time.Second
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-r.manual[src.Name()]:
+			if _, err := r.runSourceOnce(ctx, src, r.trigger); err != nil {
+				log.Warn("手动触发失败", "err", err)
+			}
+		case <-time.After(wait):
+		}
+	}
+}
+
+// waitAfterRound 一轮采集后的等待：失败指数退避，成功按配置间隔+抖动；返回下一轮 failStreak 与是否继续
+func (r *Runner) waitAfterRound(ctx context.Context, src Source, err error, t0 time.Time, cfg *config.AppConfig, failStreak int, log *slog.Logger) (int, bool) {
+	if err != nil {
+		failStreak++
+		wait := time.Duration(1<<min(failStreak-1, 5)) * time.Minute
+		log.Warn("本轮失败，等待下一轮", "err", err, "耗时", time.Since(t0).Round(time.Millisecond).String(),
+			"wait_s", int(wait.Seconds()), "attempt", failStreak)
+		return failStreak, waitRound(ctx, r.manual[src.Name()], wait)
+	}
+	interval := time.Duration(cfg.Collector.SourceInterval(src.Name())) * time.Second
+	wait := jittered(interval, cfg.Collector.JitterRatio)
+	log.Info("等待下一轮", "wait_s", int(wait.Seconds()))
+	return 0, waitRound(ctx, r.manual[src.Name()], wait)
 }
 
 func waitRound(ctx context.Context, manual <-chan struct{}, wait time.Duration) bool {

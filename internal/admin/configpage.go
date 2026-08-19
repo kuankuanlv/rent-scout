@@ -102,7 +102,7 @@ func (s *Server) handleConfigSectionSave(w http.ResponseWriter, r *http.Request)
 	rawKV, _ := store.GetConfigMap(s.db)
 	updates := ParseSectionForm(r.Form, section, rawKV)
 	needRestart := len(ChangedRestartKeys(rawKV, updates)) > 0
-	if err := s.saveSectionUpdates(section, updates); err != nil {
+	if _, err := s.saveUpdates(updates); err != nil {
 		if wantsJSON(r) {
 			writeJSONStatus(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
 			return
@@ -171,7 +171,7 @@ func (s *Server) handleConfigImport(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/admin/config?"+q.Encode(), http.StatusSeeOther)
 		return
 	}
-	needRestart, err := s.saveConfigImport(updates)
+	needRestart, err := s.saveUpdates(updates)
 	if err != nil {
 		q := url.Values{"tab": {"general"}, "err": {err.Error()}}
 		if tok := r.URL.Query().Get("token"); tok != "" {

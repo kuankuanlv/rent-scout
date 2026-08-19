@@ -110,41 +110,39 @@ var configTabs = []configTab{
 	{ID: "admin", Title: "管理"},
 }
 
+// tabSectionMap 配置 Tab ↔ Section 双向映射
+var tabSectionMap = map[string]string{
+	"sources": "collector",
+	"ai":      "filter",
+}
+
+// normalizeConfigTab URL tab → 标准化名称
 func normalizeConfigTab(tab string) string {
 	switch tab {
 	case "general", "sources", "rules", "ai", "notifier", "admin":
 		return tab
-	case "collector": // 旧内部名，映射到 sources
-		return "sources"
-	case "filter": // 旧「筛选」tab → AI
-		return "ai"
-	default:
-		return "general"
+	case "collector": return "sources"
+	case "filter":    return "ai"
+	default:         return "general"
 	}
 }
 
-// tabToSectionID URL tab → KV SectionKeys 分区名；rules 无分区
+// tabToSectionID URL tab → KV SectionKeys 分区名
 func tabToSectionID(tab string) string {
-	switch tab {
-	case "sources":
-		return "collector"
-	case "ai":
-		return "filter"
-	default:
-		return tab
+	if s, ok := tabSectionMap[tab]; ok {
+		return s
 	}
+	return tab
 }
 
-// sectionIDToTab 保存后 PRG 用：collector → sources；filter → ai
+// sectionIDToTab 保存后 PRG 用
 func sectionIDToTab(section string) string {
-	switch section {
-	case "collector":
-		return "sources"
-	case "filter":
-		return "ai"
-	default:
-		return section
+	for k, v := range tabSectionMap {
+		if v == section {
+			return k
+		}
 	}
+	return section
 }
 
 func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[string]string) []configSection {
@@ -537,7 +535,7 @@ func MergeDefaultsInto(updates map[string]string, kv map[string]string) {
 	}
 }
 
-func (s *Server) saveConfigImport(updates map[string]string) (needRestart bool, err error) {
+func (s *Server) saveUpdates(updates map[string]string) (bool, error) {
 	if len(updates) == 0 {
 		return false, fmt.Errorf("没有有效的配置项")
 	}
@@ -545,7 +543,7 @@ func (s *Server) saveConfigImport(updates map[string]string) (needRestart bool, 
 		updates[k] = config.NormalizeValue(v)
 	}
 	current := CurrentConfigKV(s.db)
-	needRestart = len(ChangedRestartKeys(current, updates)) > 0
+	needRestart := len(ChangedRestartKeys(current, updates)) > 0
 	merged := config.MergeKV(current, updates)
 	app := config.KVToApp(merged)
 	if errs := config.ValidateApp(app); len(errs) > 0 {
@@ -562,29 +560,6 @@ func (s *Server) saveConfigImport(updates map[string]string) (needRestart bool, 
 		return needRestart, err
 	}
 	return needRestart, nil
-}
-
-func (s *Server) saveSectionUpdates(section string, updates map[string]string) error {
-	if len(updates) == 0 {
-		return fmt.Errorf("没有有效的配置项")
-	}
-	for k, v := range updates {
-		updates[k] = config.NormalizeValue(v)
-	}
-	current := CurrentConfigKV(s.db)
-	merged := config.MergeKV(current, updates)
-	app := config.KVToApp(merged)
-	if errs := config.ValidateApp(app); len(errs) > 0 {
-		return fmt.Errorf("校验失败: %s", strings.Join(errs, "; "))
-	}
-	env := config.KVToSecrets(merged)
-	if errs := config.ValidateSecrets(env); len(errs) > 0 {
-		return fmt.Errorf("校验失败: %s", strings.Join(errs, "; "))
-	}
-	if err := store.SetConfigBatch(s.db, updates); err != nil {
-		return err
-	}
-	return s.rt.ReloadOnce()
 }
 
 // snapshotSections 历史快照：用当时 KV 填表单，全部只读，敏感值打码

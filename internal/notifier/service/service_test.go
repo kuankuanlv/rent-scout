@@ -32,3 +32,50 @@ func TestLiveChannelsSkipMissingCreds(t *testing.T) {
 		t.Fatalf("got %v", chs)
 	}
 }
+
+func TestChannelSwitchSummary(t *testing.T) {
+	cases := []struct {
+		name string
+		app  *config.AppConfig
+		env  *config.Secrets
+		want string
+	}{
+		{
+			name: "全部关闭",
+			app:  &config.AppConfig{Notifier: config.NotifierConfig{Channels: nil}},
+			env:  &config.Secrets{},
+			want: "feishu=false、dingtalk=false、wecom=false、pushplus=false、serverchan=false、webhook=false",
+		},
+		{
+			name: "部分启用且密钥齐全",
+			app:  &config.AppConfig{Notifier: config.NotifierConfig{Channels: []string{"feishu", "pushplus"}}},
+			env: &config.Secrets{Notifier: config.SecretsNotifier{
+				Feishu:   config.WebhookSecretConfig{Webhook: "https://x"},
+				Pushplus: config.PushplusConfig{Token: "t"},
+			}},
+			want: "feishu=true、dingtalk=false、wecom=false、pushplus=true、serverchan=false、webhook=false",
+		},
+		{
+			name: "勾选但密钥缺失按关闭算",
+			app:  &config.AppConfig{Notifier: config.NotifierConfig{Channels: []string{"feishu", "wecom"}}},
+			env:  &config.Secrets{Notifier: config.SecretsNotifier{Feishu: config.WebhookSecretConfig{Webhook: "https://x"}}},
+			want: "feishu=true、dingtalk=false、wecom=false、pushplus=false、serverchan=false、webhook=false",
+		},
+		{
+			name: "密钥齐全但未勾选按关闭算",
+			app:  &config.AppConfig{Notifier: config.NotifierConfig{Channels: []string{"dingtalk"}}},
+			env: &config.Secrets{Notifier: config.SecretsNotifier{
+				Dingtalk: config.DingtalkConfig{Webhook: "https://x"},
+				Wecom:    config.WebhookSecretConfig{Webhook: "https://w"},
+			}},
+			want: "feishu=false、dingtalk=true、wecom=false、pushplus=false、serverchan=false、webhook=false",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := channelSwitchSummary(tc.app, tc.env); got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

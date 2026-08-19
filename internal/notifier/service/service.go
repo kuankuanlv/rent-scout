@@ -78,7 +78,13 @@ func (s *Service) fetch(ctx context.Context, limit int) ([]models.RentPost, erro
 		return nil, nil
 	}
 	app := s.rt.Get()
-	if app == nil || len(app.Notifier.Channels) == 0 {
+	if app == nil {
+		log.Info("当前配置通知未启用，无需执行")
+		return nil, nil
+	}
+	// 每分钟探测日志：先打当前各渠道开关，再决定后续逻辑
+	log.Info("当前通知配置：" + channelSwitchSummary(app, s.rt.Secrets()))
+	if len(app.Notifier.Channels) == 0 {
 		log.Info("当前配置通知未启用，无需执行")
 		return nil, nil
 	}
@@ -95,6 +101,24 @@ func (s *Service) fetch(ctx context.Context, limit int) ([]models.RentPost, erro
 	// AI 开启时只通知已 AI 审核过的帖（通过/未通过都发，等 ai_result 落库）；未开启直接通知 passed
 	requireAI := app.Filter.AIEnabled != nil && *app.Filter.AIEnabled
 	return s.db.FetchNotifyBatch(names, limit, requireAI)
+}
+
+// channelSwitchSummary 当前通知渠道开关摘要（每分钟探测日志用）：
+// 渠道=勾选且密钥非空（与 liveChannels 同一判定），固定顺序输出
+func channelSwitchSummary(app *config.AppConfig, env *config.Secrets) string {
+	on := map[string]bool{}
+	for _, c := range liveChannels(app, env) {
+		on[c.Name()] = true
+	}
+	order := []string{
+		notifier.ChannelFeishu, notifier.ChannelDingtalk, notifier.ChannelWecom,
+		notifier.ChannelPushplus, notifier.ChannelServerchan, notifier.ChannelWebhook,
+	}
+	parts := make([]string, 0, len(order))
+	for _, name := range order {
+		parts = append(parts, fmt.Sprintf("%s=%t", name, on[name]))
+	}
+	return strings.Join(parts, "、")
 }
 
 func liveChannels(app *config.AppConfig, env *config.Secrets) []notifier.Channel {

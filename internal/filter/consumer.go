@@ -119,13 +119,16 @@ func (c *Consumer) ReplayHard(ctx context.Context, batch []models.RentPost) erro
 }
 
 func (c *Consumer) processAI(ctx context.Context, batch []models.RentPost) error {
-	if len(batch) == 0 {
-		return nil
-	}
 	log := pkglog.Component(pkglog.AIReview)
 	rules, err := c.rules()
 	if err != nil {
-		log.Error("规则读取失败", "count", len(batch), "err", err)
+		log.Error("规则读取失败", "err", err)
+		return nil
+	}
+	enabled := enabledAIRules(rules)
+	log.Info("当前 AI 审核状态", "active_rules", len(enabled), "pending_posts", len(batch))
+
+	if len(batch) == 0 {
 		return nil
 	}
 	if c.rt != nil {
@@ -138,8 +141,7 @@ func (c *Consumer) processAI(ctx context.Context, batch []models.RentPost) error
 	} else if !c.chain.HasAI() {
 		return nil
 	}
-	if len(enabledAIRules(rules)) == 0 {
-		log.Info("当前配置没有启用的 AI 规则，无需执行")
+	if len(enabled) == 0 {
 		return nil
 	}
 	for _, sub := range splitBatches(batch, c.aiSize()) {

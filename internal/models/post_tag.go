@@ -87,12 +87,22 @@ func SplitFilterTags(csv string) []string {
 	return out
 }
 
-// ChipTags 全览标签列：地点/拉黑词/未命中/有用无用；人工备注和 AI 理由去掉
+// 标签列固定排除的文案：非实际 tag，不对用户展示
+var chipExcludeTexts = map[string]bool{
+	"未命中": true,
+	"隔断":  true,
+	"求租":  true,
+}
+
+// ChipTags 全览标签列：地点/拉黑词/有用无用；排除固定噪音标签和 AI 理由
 func ChipTags(tags []PostTag, aiReason string) []PostTag {
 	aiReason = strings.TrimSpace(aiReason)
 	out := make([]PostTag, 0, len(tags))
 	for _, t := range tags {
 		if !IsChipKind(t.Kind) || !IsChipText(t.Text) {
+			continue
+		}
+		if chipExcludeTexts[t.Text] {
 			continue
 		}
 		if aiReason != "" && t.Text == aiReason {

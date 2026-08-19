@@ -16,28 +16,6 @@ import (
 	"rent-scout/internal/pkglog"
 )
 
-type profileResp struct {
-	OK   json.RawMessage `json:"ok"`
-	Data struct {
-		List []profileStatus `json:"list"`
-	} `json:"data"`
-}
-
-type profileStatus struct {
-	ID         json.RawMessage `json:"id"`
-	IDStr      string          `json:"idstr"`
-	Mid        string          `json:"mid"`
-	MblogID    string          `json:"mblogid"`
-	CreatedAt  string          `json:"created_at"`
-	TextRaw    string          `json:"text_raw"`
-	IsLongText bool            `json:"isLongText"`
-	User       struct {
-		ID         json.RawMessage `json:"id"`
-		IDStr      string          `json:"idstr"`
-		ScreenName string          `json:"screen_name"`
-	} `json:"user"`
-}
-
 func (s *Source) listUser(ctx context.Context, t crawlTarget, offset string, start, end time.Time) ([]collector.ListItem, error) {
 	page := pageFromOffset(offset)
 	u, err := url.Parse(s.pcBase() + "/ajax/statuses/searchProfile")
@@ -343,14 +321,6 @@ func ownerCommentText(body, authorID string) string {
 	return strings.Join(texts, "\n")
 }
 
-func jsonNum(raw json.RawMessage) string {
-	s := strings.Trim(strings.TrimSpace(string(raw)), `"`)
-	if s == "null" || s == "" {
-		return ""
-	}
-	return s
-}
-
 func anyID(v any) string {
 	switch x := v.(type) {
 	case nil:
@@ -379,13 +349,4 @@ func strAny(v any) string {
 		return ""
 	}
 	return s
-}
-
-func firstNonEmpty(ss ...string) string {
-	for _, s := range ss {
-		if strings.TrimSpace(s) != "" {
-			return strings.TrimSpace(s)
-		}
-	}
-	return ""
 }

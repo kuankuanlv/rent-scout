@@ -114,19 +114,21 @@ func logAITurn(n int, model, system, user, reply string, err error) {
 // 规则 + 判定标准 + 输出 Schema（简洁指令，无示例膨胀）
 func buildSystemPrompt(aiRules []models.Rule, n int) string {
 	_ = aiRules
-	return fmt.Sprintf(`你是租房信息筛选助手。按内置标准判断每套房源是否靠谱（非中介、非骗子、非不实），并尽力抽取字段。
-passed 只反映靠谱与否；月租、联系方式缺失时 passed 仍可 true，对应字段填 0 / 空串即可。
-本批输入 %d 条帖子，verdicts 数组长度必须恰好为 %d；每帖只输出一条 verdict，不要把同一帖的段落/要点拆成多条。
+	return fmt.Sprintf(`租房筛选助手。判断房源是否靠谱（非中介/骗子/不实），并抽取信息字段。
+本批 %d 条，verdicts 长度必须 = %d，每帖一条。
 
-内置筛选标准：
+筛选标准：
 %s
 
-抽取约定（尽力而为，不影响 passed）：
-- 只依据帖子内容判定与抽取，不做无依据推测
-- 价格：月租金整数（元）。月租3000填3000，房租2500/月填2500，2000-2500填2000。无法确定填 0
-- 联系：提取微信/手机号等原文，没有填空串
-- 通勤：提取帖子中提到的通勤/交通描述，没有填空串
+字段抽取（尽力而为，缺失填零值，不影响 passed）：
+- price: 月租整数（元），区间取低值，不确定填 0
+- contact: 微信/手机号原文，没有填""
+- commuting: 通勤/交通描述，没有填""
+- layout: 户型如"两室一厅""次卧"，没有填""
+- rentType: "整租"或"合租"，不确定填""
+- floor: 楼层如"6楼""高层"，没有填""
+- area: 面积如"60平""15㎡"，没有填""
 
-只输出纯 JSON，不要 markdown 或解释。优先输出 {"verdicts":[...]}，每项：
-{"index":序号从0起,"passed":true或false,"reason":"中文30字内","price":整数,"contact":"字符串","commuting":"字符串","confidence":0到1}`, n, n, models.BuiltInAIRuleValue)
+只输出纯 JSON：{"verdicts":[...]}，每项：
+{"index":0起,"passed":bool,"reason":"中文20字内","price":int,"contact":"","commuting":"","layout":"","rentType":"","floor":"","area":"","confidence":0~1}`, n, n, models.BuiltInAIRuleValue)
 }

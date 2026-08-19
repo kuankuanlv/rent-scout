@@ -52,11 +52,27 @@ func feishuPost(items []notifier.NotifyItem) map[string]interface{} {
 		if it.URL != "" {
 			paras = append(paras, []feishuNode{feishuLink("打开原帖", it.URL)})
 		}
+		var info []string
 		if it.Price > 0 {
-			paras = append(paras, []feishuNode{feishuText(fmt.Sprintf("价格: %d 元/月", it.Price))})
+			info = append(info, fmt.Sprintf("%d元/月", it.Price))
+		}
+		if it.RentType != "" {
+			info = append(info, it.RentType)
+		}
+		if it.Layout != "" {
+			info = append(info, it.Layout)
+		}
+		if it.Area != "" {
+			info = append(info, it.Area)
+		}
+		if it.Floor != "" {
+			info = append(info, it.Floor)
+		}
+		if len(info) > 0 {
+			paras = append(paras, []feishuNode{feishuText(strings.Join(info, " · "))})
 		}
 		if it.Contact != "" {
-			paras = append(paras, []feishuNode{feishuText("联系人: " + it.Contact)})
+			paras = append(paras, []feishuNode{feishuText("联系: " + it.Contact)})
 		}
 		if it.Commuting != "" {
 			paras = append(paras, []feishuNode{feishuText("通勤: " + it.Commuting)})
@@ -65,7 +81,11 @@ func feishuPost(items []notifier.NotifyItem) map[string]interface{} {
 		if reason == "" {
 			reason = "暂无"
 		}
-		paras = append(paras, []feishuNode{feishuText("AI审核原因:" + reason)})
+		verdict := "AI审核通过："
+		if !it.Passed {
+			verdict = "AI审核拒绝："
+		}
+		paras = append(paras, []feishuNode{feishuText(verdict + reason)})
 
 		var actions []feishuNode
 		if it.FeedbackURL != "" {

@@ -27,6 +27,11 @@ type NotifyItem struct {
 	Contact            string
 	Commuting          string
 	Reason             string // AI 推荐理由
+	Passed             bool   // AI 审核通过/拒绝
+	Layout             string // 户型（AI 抽取）
+	RentType           string // 整租/合租（AI 抽取）
+	Floor              string // 楼层（AI 抽取）
+	Area               string // 面积（AI 抽取）
 	AddressTag         string // 分组主 tag（AddressTags[0]；无 tag = GroupUnknown）
 	FeedbackURL        string // 卡片内嵌「有用」反馈链接（action=useful，HMAC 签名，规格 7.1）
 	FeedbackUselessURL string // 卡片内嵌「无用」反馈链接（action=useless，规格 5.5 负向归因数据源）

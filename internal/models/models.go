@@ -80,6 +80,10 @@ type AIResult struct {
 	Price       int     `json:"price"`       // 月租金（AI 识别）
 	Contact     string  `json:"contact"`     // 联系人信息（AI 识别）
 	Commuting   string  `json:"commuting"`   // 通勤信息
+	Layout      string  `json:"layout"`      // 户型（如"三室一厅"）
+	RentType    string  `json:"rentType"`    // 整租/合租
+	Floor       string  `json:"floor"`       // 楼层
+	Area        string  `json:"area"`        // 面积
 	Confidence  float64 `json:"confidence"`  // 置信度
 	Model       string  `json:"model"`       // 实际使用的模型
 	RawResponse string  `json:"rawResponse"` // LLM 原始输出（JSON）

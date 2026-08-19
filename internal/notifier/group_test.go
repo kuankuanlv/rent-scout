@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"rent-scout/internal/actionref"
+	"rent-scout/internal/security/actionref"
 	"rent-scout/internal/models"
 )
 

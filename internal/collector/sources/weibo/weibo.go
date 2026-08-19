@@ -14,15 +14,14 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"github.com/PuerkitoBio/goquery"
 
 	"rent-scout/internal/collector"
 	"rent-scout/internal/collector/cookie"
 	"rent-scout/internal/config"
+	"rent-scout/internal/log"
 	"rent-scout/internal/models"
-	"rent-scout/internal/pkglog"
 )
 
 // 编译断言：Source 满足接口。注意 since_id 在内存维持，不跨重启
@@ -115,11 +114,11 @@ func (s *Source) Name() string { return models.SourceWeibo.String() }
 
 func (s *Source) users() []string {
 	if len(s.fixedUsers) > 0 {
-		return config.WeiboUIDs(s.fixedUsers)
+		return parseWeiboUIDs(s.fixedUsers)
 	}
 	if s.rt != nil {
 		if app := s.rt.Get(); app != nil {
-			return config.WeiboUIDs(app.Collector.Weibo.Users)
+			return parseWeiboUIDs(app.Collector.Weibo.Users)
 		}
 	}
 	return nil
@@ -127,14 +126,114 @@ func (s *Source) users() []string {
 
 func (s *Source) supers() []string {
 	if len(s.fixedSuper) > 0 {
-		return config.WeiboContainerIDs(s.fixedSuper)
+		return parseWeiboContainerIDs(s.fixedSuper)
 	}
 	if s.rt != nil {
 		if app := s.rt.Get(); app != nil {
-			return config.WeiboContainerIDs(app.Collector.Weibo.SuperTopics)
+			return parseWeiboContainerIDs(app.Collector.Weibo.SuperTopics)
 		}
 	}
 	return nil
+}
+
+func parseWeiboUIDLine(line string) (string, bool) {
+	s := strings.TrimSpace(line)
+	if s == "" || strings.HasPrefix(s, "//") || (strings.HasPrefix(s, "#") && len(s) > 1 && (s[1] == ' ' || s[1] == '\t')) {
+		return "", false
+	}
+	if i := indexInlineHash(s); i >= 0 {
+		s = strings.TrimSpace(s[:i])
+	}
+	if strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://") {
+		u, err := url.Parse(s)
+		if err != nil {
+			return "", false
+		}
+		s = u.Path
+	}
+	s = strings.Trim(s, "/")
+	if i := strings.Index(s, "/u/"); i >= 0 {
+		s = s[i+3:]
+	}
+	s = strings.TrimPrefix(s, "u/")
+	if i := strings.IndexAny(s, "/?#"); i >= 0 {
+		s = s[:i]
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return "", false
+		}
+	}
+	return s, s != ""
+}
+
+func parseWeiboUIDs(lines []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, line := range lines {
+		id, ok := parseWeiboUIDLine(line)
+		if !ok || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return out
+}
+
+func parseWeiboContainerLine(line string) (string, bool) {
+	s := strings.TrimSpace(line)
+	if s == "" || strings.HasPrefix(s, "//") || (strings.HasPrefix(s, "#") && len(s) > 1 && (s[1] == ' ' || s[1] == '\t')) {
+		return "", false
+	}
+	if i := indexInlineHash(s); i >= 0 {
+		s = strings.TrimSpace(s[:i])
+	}
+	if strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://") {
+		u, err := url.Parse(s)
+		if err != nil {
+			return "", false
+		}
+		s = u.Path
+	}
+	s = strings.Trim(s, "/")
+	if i := strings.Index(s, "/p/"); i >= 0 {
+		s = s[i+3:]
+	}
+	s = strings.TrimPrefix(s, "p/")
+	if i := strings.IndexAny(s, "/?#"); i >= 0 {
+		s = s[:i]
+	}
+	if i := strings.Index(s, "_-_"); i > 0 {
+		s = s[:i]
+	}
+	if len(s) < 10 {
+		return "", false
+	}
+	return s, true
+}
+
+func parseWeiboContainerIDs(lines []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, line := range lines {
+		id, ok := parseWeiboContainerLine(line)
+		if !ok || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return out
+}
+
+func indexInlineHash(s string) int {
+	for i := 0; i < len(s)-1; i++ {
+		if (s[i] == ' ' || s[i] == '\t') && s[i+1] == '#' {
+			return i
+		}
+	}
+	return -1
 }
 
 type crawlTarget struct {
@@ -168,7 +267,7 @@ func (s *Source) List(ctx context.Context, cursor string) ([]collector.ListItem,
 func (s *Source) ListInWindow(ctx context.Context, cursor string, start, end time.Time) ([]collector.ListItem, string, error) {
 	ts := s.targets()
 	if len(ts) == 0 {
-		pkglog.Component(pkglog.SourceCollector(s.Name())).Info("当前配置微博超话、博主均为空，无需执行")
+		log.Info(s.Name(), "当前配置微博超话、博主均为空，无需执行")
 		return nil, "", nil
 	}
 	gi, offset := parseListCursor(cursor)
@@ -377,7 +476,7 @@ func (s *Source) getSoft(ctx context.Context, rawURL string) (string, error) {
 }
 
 func (s *Source) doGet(ctx context.Context, rawURL string, strict bool) (string, error) {
-	pkglog.Component(pkglog.SourceCollector(s.Name())).Info("请求 " + rawURL)
+	log.Info(s.Name(), "请求 "+rawURL)
 	ck, err := s.cookie.Get(ctx, s.cookieSourceFor(rawURL))
 	if err != nil {
 		return "", err
@@ -407,7 +506,7 @@ func (s *Source) doGet(ctx context.Context, rawURL string, strict bool) (string,
 	resp, err := s.client.Do(req)
 	if err != nil {
 		if strict {
-			pkglog.Component(pkglog.SourceCollector(s.Name())).Error("请求失败", "url", rawURL, "err", err)
+			log.Error(s.Name(), "请求失败", "url", rawURL, "err", err)
 		}
 		return "", fmt.Errorf("请求失败 %s: %w", rawURL, err)
 	}
@@ -421,8 +520,7 @@ func (s *Source) doGet(ctx context.Context, rawURL string, strict bool) (string,
 		if !strict {
 			return body, err
 		}
-		pkglog.Component(pkglog.SourceCollector(s.Name())).Error("微博请求异常",
-			"url", rawURL, "http", resp.StatusCode, "err", err)
+		log.Error(s.Name(), "微博请求异常", "url", rawURL, "http", resp.StatusCode, "err", err)
 		return "", err
 	}
 	return body, nil
@@ -520,14 +618,3 @@ func htmlToPlain(raw string) string {
 	return stripUnfoldChrome(doc.Text())
 }
 
-func clipTitle(s string) string {
-	s = collapseSpace(s)
-	if utf8.RuneCountInString(s) <= 40 {
-		return s
-	}
-	return string([]rune(s)[:40]) + "…"
-}
-
-func collapseSpace(s string) string {
-	return strings.Join(strings.Fields(s), " ")
-}

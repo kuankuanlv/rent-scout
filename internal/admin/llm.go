@@ -175,9 +175,6 @@ func (s *Server) parseLLMDraft(r *http.Request) (llmDraft, error) {
 		r.PostFormValue("secret.filter.llm.model"),
 		stored.Model,
 	)
-	if strings.TrimSpace(apiKey) == "" {
-		return llmDraft{}, errLLMMissingKey
-	}
 	if strings.TrimSpace(baseURL) == "" {
 		return llmDraft{}, errLLMMissingBase
 	}
@@ -188,7 +185,4 @@ type llmDraftError string
 
 func (e llmDraftError) Error() string { return string(e) }
 
-const (
-	errLLMMissingKey  llmDraftError = "缺少 API Key（草稿或已存）"
-	errLLMMissingBase llmDraftError = "缺少 Base URL"
-)
+const errLLMMissingBase llmDraftError = "缺少 Base URL"

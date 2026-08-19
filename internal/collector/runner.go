@@ -242,7 +242,7 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 	now := time.Now()
 
 	// 1. 初始化参数与状态
-	start, end, err := r.resolveWindow(src, cfg, now)
+	start, end, err := sourceTimeWindow(src.Name(), cfg, now)
 	if err != nil {
 		return roundResult{}, err
 	}
@@ -250,7 +250,7 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 	if err != nil {
 		return roundResult{}, err
 	}
-	fp := r.resolveFingerprint(src, cfg)
+	fp := sourceFingerprint(src.Name(), cfg)
 	if prog.Fingerprint != "" && fingerprintIdentity(prog.Fingerprint) != fingerprintIdentity(fp) {
 		log.Info("时间窗或目标清单变了，重置采集进度", "source", src.Name(), "old", prog.Fingerprint, "new", fp)
 		prog = store.SourceProgress{}
@@ -502,45 +502,23 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 			idleReason := "到水位线"
 			if hitOld {
 				idleReason = "超出时间窗"
+				log.Info(fmt.Sprintf("【%s 第%d轮 %s 已超出时间窗，本搜索后续页更旧，不再翻页】", src.Name(), round, pageLabel))
 			}
-			if ng := skipGroup(src, listCursor); ng != "" {
-				if hitOld {
-					log.Info(fmt.Sprintf("【%s 第%d轮 %s 已超出时间窗，本搜索后续页更旧，不再翻页】", src.Name(), round, pageLabel))
-				}
-				leaveGroup(ng, idleReason, groupNew == 0)
-				if !catchUp {
-					prog.Page = ng
-				}
-				listCursor = ng
-				if err := persist(); err != nil {
-					return roundResult{}, err
-				}
-				continue
-			}
-			leaveGroup("", idleReason, groupNew == 0)
-			prog = sealProgress(prog, wms)
-			if err := persist(); err != nil {
+			finished, err := advanceCursor(skipGroup(src, listCursor), idleReason, groupNew == 0)
+			if err != nil {
 				return roundResult{}, err
 			}
-			break
-		}
-		if next == "" {
-			if groupNew == 0 {
-				log.Info(fmt.Sprintf("【%s 第%d轮 %s 本组结束，未收集到任何新帖】", src.Name(), round, pageLabel))
+			if finished {
+				break
 			}
-			prog = sealProgress(prog, wms)
-			if err := persist(); err != nil {
-				return roundResult{}, err
-			}
-			break
+			continue
 		}
-		noteGroup(next)
-		listCursor = next
-		if !catchUp {
-			prog.Page = next
-		}
-		if err := persist(); err != nil {
+		finished, err := advanceCursor(next, "", groupNew == 0)
+		if err != nil {
 			return roundResult{}, err
+		}
+		if finished {
+			break
 		}
 	}
 	if newPosts > 0 && trigger != nil {

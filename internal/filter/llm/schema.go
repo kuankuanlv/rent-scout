@@ -16,6 +16,10 @@ type aiResultRaw struct {
 	Price      int
 	Contact    string
 	Commuting  string
+	Layout     string
+	RentType   string
+	Floor      string
+	Area       string
 	Confidence float64
 	Model      string
 }
@@ -31,6 +35,10 @@ func (r *aiResultRaw) UnmarshalJSON(data []byte) error {
 	r.Price = lookupInt(raw, "price", "价格", "租金", "月租", "月租金", "monthly_price", "monthly_rent", "rent_price", "rent")
 	r.Contact = lookupString(raw, "contact", "联系人", "联系方式", "微信")
 	r.Commuting = lookupString(raw, "commuting", "time", "通勤", "通勤时间")
+	r.Layout = lookupString(raw, "layout", "户型", "房型", "room_type")
+	r.RentType = lookupString(raw, "rentType", "rent_type", "租赁方式", "整租合租")
+	r.Floor = lookupString(raw, "floor", "楼层")
+	r.Area = lookupString(raw, "area", "面积")
 	r.Confidence = lookupFloat(raw, "confidence")
 	r.Model = lookupString(raw, "model")
 	return nil
@@ -90,8 +98,9 @@ func alignAIResults(raws []aiResultRaw, expected int, raw string) ([]models.AIRe
 		}
 		results[idx] = models.AIResult{
 			Passed: r.Passed, Reason: r.Reason, Price: r.Price,
-			Contact: r.Contact, Commuting: r.Commuting, Confidence: r.Confidence,
-			Model: r.Model, RawResponse: raw,
+			Contact: r.Contact, Commuting: r.Commuting,
+			Layout: r.Layout, RentType: r.RentType, Floor: r.Floor, Area: r.Area,
+			Confidence: r.Confidence, Model: r.Model, RawResponse: raw,
 		}
 		filled++
 	}
@@ -251,6 +260,8 @@ func unmarshalAIResult(raw string, ai *models.AIResult) error {
 		return err
 	}
 	*ai = models.AIResult{Passed: r.Passed, Reason: r.Reason, Price: r.Price,
-		Contact: r.Contact, Commuting: r.Commuting, Confidence: r.Confidence, Model: r.Model, RawResponse: raw}
+		Contact: r.Contact, Commuting: r.Commuting,
+		Layout: r.Layout, RentType: r.RentType, Floor: r.Floor, Area: r.Area,
+		Confidence: r.Confidence, Model: r.Model, RawResponse: raw}
 	return nil
 }

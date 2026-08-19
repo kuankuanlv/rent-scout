@@ -181,7 +181,7 @@ FeedbackURL:        AbsActionURL(origin, BuildFeedbackURL(p.ID, "useful", secret
 		if models.HasContact(p.Contact) {
 			item.Contact = p.Contact
 		}
-		// 展示字段来自 filter_results（价格/联系人/通勤/理由）；库里已有则优先
+		// 展示字段来自 filter_results（价格/联系人/通勤/理由/户型等）；库里已有则优先
 		if fr, ok, err := n.st.FilterResultByPostID(p.ID); err == nil && ok && fr.AI != nil {
 			if item.Price <= 0 {
 				item.Price = fr.AI.Price
@@ -191,6 +191,11 @@ FeedbackURL:        AbsActionURL(origin, BuildFeedbackURL(p.ID, "useful", secret
 			}
 			item.Commuting = fr.AI.Commuting
 			item.Reason = fr.AI.Reason
+			item.Passed = fr.AI.Passed
+			item.Layout = fr.AI.Layout
+			item.RentType = fr.AI.RentType
+			item.Floor = fr.AI.Floor
+			item.Area = fr.AI.Area
 		}
 		items = append(items, item)
 	}

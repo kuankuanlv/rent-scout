@@ -12,8 +12,6 @@ import (
 	"rent-scout/internal/store"
 )
 
-const notifyProbeMax = 10
-
 // handleNotifyTest POST /admin/config/notify/test：用草稿试发最近一批帖，不写通知账本
 func (s *Server) handleNotifyTest(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel, ok := probeTimeout(r)
@@ -44,15 +42,7 @@ func (s *Server) handleNotifyTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limit := 5
-	if s.rt != nil {
-		if app := s.rt.Get(); app != nil && app.Notifier.BatchSize > 0 {
-			limit = app.Notifier.BatchSize
-		}
-	}
-	if limit > notifyProbeMax {
-		limit = notifyProbeMax
-	}
+	limit := 2
 
 	posts, err := s.db.ListPosts(store.PostListFilter{}, limit, 0)
 	if err != nil {

@@ -107,7 +107,7 @@ func TestPushplusChannelSend(t *testing.T) {
 	if got["template"] != "html" {
 		t.Errorf("template: %v", got["template"])
 	}
-	if !strings.Contains(got["content"], "AI审核原因") || !strings.Contains(got["content"], "有用") {
+	if !strings.Contains(got["content"], "AI审核") || !strings.Contains(got["content"], "有用") {
 		t.Errorf("content: %v", got["content"])
 	}
 }

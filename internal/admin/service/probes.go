@@ -69,14 +69,12 @@ func (notifyProbe) Send(ctx context.Context, channel, webhook, token, topic stri
 			HandledURL:         it.HandledURL,
 		}
 	}
-	var ch notifier.Channel
-	switch channel {
-	case notifier.ChannelFeishu:
-		ch = channels.NewFeishuChannel(webhook)
-	case notifier.ChannelPushplus:
-		ch = channels.NewPushplusChannel("", token, topic)
-	default:
-		return fmt.Errorf("不支持的渠道")
+	ch := channels.Build(channel, config.SecretsNotifier{
+		Feishu:   config.WebhookSecretConfig{Webhook: webhook},
+		Pushplus: config.PushplusConfig{Token: token, Topic: topic},
+	})
+	if ch == nil {
+		return fmt.Errorf("不支持的渠道或密钥缺失")
 	}
 	_, _, err := ch.Send(ctx, nitems)
 	return err

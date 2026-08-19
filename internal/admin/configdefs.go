@@ -453,11 +453,6 @@ func ParseSectionForm(form url.Values, section string, keepSecrets map[string]st
 	return updates
 }
 
-// normalizeLLMAPIStyle 旧 custom → other；非法空串原样
-func normalizeLLMAPIStyle(s string) string {
-	return config.ParseLLMAPIStyle(s).String()
-}
-
 func keyInConfigGroup(key, group string) bool {
 	switch group {
 	case "douban":
@@ -504,9 +499,7 @@ func mergeToggleCSV(csv, item string, on bool) string {
 func joinFormValues(values []string) string {
 	var parts []string
 	for _, x := range values {
-		for _, p := range splitFlexible(x) {
-			parts = append(parts, p)
-		}
+		parts = append(parts, splitFlexible(x)...)
 	}
 	return strings.Join(parts, ",")
 }

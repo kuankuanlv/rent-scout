@@ -174,10 +174,10 @@ func (n *Notifier) sendGroup(ctx context.Context, ch Channel, tag string, posts 
 			URL:                p.URL,
 			AddressTag:         tag,
 			Price:              models.PriceYuan(p.Price),
-			FeedbackURL:        absActionURL(origin, BuildFeedbackURL(p.ID, "useful", secret)),
-			FeedbackUselessURL: absActionURL(origin, BuildFeedbackURL(p.ID, "useless", secret)),
-			HandledURL:         absActionURL(origin, BuildFeedbackURL(p.ID, "handled", secret)),
-		}
+FeedbackURL:        AbsActionURL(origin, BuildFeedbackURL(p.ID, "useful", secret)),
+				FeedbackUselessURL: AbsActionURL(origin, BuildFeedbackURL(p.ID, "useless", secret)),
+				HandledURL:         AbsActionURL(origin, BuildFeedbackURL(p.ID, "handled", secret)),
+			}
 		if models.HasContact(p.Contact) {
 			item.Contact = p.Contact
 		}

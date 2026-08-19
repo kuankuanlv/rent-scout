@@ -1,18 +1,13 @@
 package admin
 
 import (
-	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"net/http"
 	"strings"
-	"time"
 
-	"rent-scout/internal/actionref"
 	"rent-scout/internal/config"
 	"rent-scout/internal/models"
+	"rent-scout/internal/notifier"
 	"rent-scout/internal/pkglog"
 	"rent-scout/internal/store"
 )
@@ -21,10 +16,12 @@ const notifyProbeMax = 10
 
 // handleNotifyTest POST /admin/config/notify/test：用草稿试发最近一批帖，不写通知账本
 func (s *Server) handleNotifyTest(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
+	ctx, cancel, ok := probeTimeout(r)
+	if !ok {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	defer cancel()
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
 		_ = r.ParseForm()
 	}
@@ -69,8 +66,6 @@ func (s *Server) handleNotifyTest(w http.ResponseWriter, r *http.Request) {
 		mocked = true
 	}
 	items := s.postsToProbeItems(posts)
-	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
-	defer cancel()
 	if err := s.notifyProbe.Send(ctx, ch, webhook, token, topic, items); err != nil {
 		pkglog.Component(pkglog.Admin).Info("通知连通检测", "stage", "send", "channel", ch, "err", err, "mocked", mocked, "count", len(items))
 		writeJSON(w, map[string]any{"ok": false, "summary": "失败：" + err.Error(), "mocked": mocked, "count": len(items)})
@@ -141,60 +136,29 @@ func (s *Server) postsToProbeItems(posts []models.RentPost) []NotifyProbeItem {
 			URL:                p.URL,
 			AddressTag:         tag,
 			Price:              models.PriceYuan(p.Price),
-			FeedbackURL:        absProbeURL(origin, probeFeedbackURL(p.ID, "useful", secret)),
-			FeedbackUselessURL: absProbeURL(origin, probeFeedbackURL(p.ID, "useless", secret)),
-			HandledURL:         absProbeURL(origin, probeFeedbackURL(p.ID, "handled", secret)),
-		}
-		if models.HasContact(p.Contact) {
-			item.Contact = p.Contact
-		}
-		if fr, ok, err := s.db.FilterResultByPostID(p.ID); err == nil && ok && fr.AI != nil {
-			if item.Price <= 0 {
-				item.Price = fr.AI.Price
+				FeedbackURL:        notifier.AbsActionURL(origin, notifier.BuildFeedbackURL(p.ID, "useful", secret)),
+				FeedbackUselessURL: notifier.AbsActionURL(origin, notifier.BuildFeedbackURL(p.ID, "useless", secret)),
+				HandledURL:         notifier.AbsActionURL(origin, notifier.BuildFeedbackURL(p.ID, "handled", secret)),
 			}
-			if item.Contact == "" && models.HasContact(fr.AI.Contact) {
-				item.Contact = fr.AI.Contact
+			if models.HasContact(p.Contact) {
+				item.Contact = p.Contact
 			}
-			item.Commuting = fr.AI.Commuting
-			item.Reason = fr.AI.Reason
+			if fr, ok, err := s.db.FilterResultByPostID(p.ID); err == nil && ok && fr.AI != nil {
+				if item.Price <= 0 {
+					item.Price = fr.AI.Price
+				}
+				if item.Contact == "" && models.HasContact(fr.AI.Contact) {
+					item.Contact = fr.AI.Contact
+				}
+				item.Commuting = fr.AI.Commuting
+				item.Reason = fr.AI.Reason
+			}
+			items = append(items, item)
 		}
-		items = append(items, item)
+		return items
 	}
-	return items
-}
 
-func probeFeedbackURL(postID int64, action, secret string) string {
-	if postID <= 0 {
-		return "#"
-	}
-	ref := actionref.Seal(postID, secret)
-	var base string
-	if action == "handled" {
-		base = fmt.Sprintf("/h?p=%s", ref)
-	} else {
-		base = fmt.Sprintf("/f?p=%s&action=%s", ref, action)
-	}
-	if secret == "" {
-		return base
-	}
-	exp := time.Now().Add(7 * 24 * time.Hour).Unix()
-	mac := hmac.New(sha256.New, []byte(secret))
-	fmt.Fprintf(mac, "%d|%s|%d", postID, action, exp)
-	sig := hex.EncodeToString(mac.Sum(nil))
-	return fmt.Sprintf("%s&exp=%d&sig=%s", base, exp, sig)
-}
-
-func absProbeURL(origin, path string) string {
-	if origin == "" || path == "" || path == "#" || strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
-		return path
-	}
-	if !strings.HasPrefix(path, "/") {
-		path = "/" + path
-	}
-	return strings.TrimRight(origin, "/") + path
-}
-
-func mockNotifyPosts() []models.RentPost {
+	func mockNotifyPosts() []models.RentPost {
 	return []models.RentPost{
 		{
 			ID: -1, Source: "douban", Title: "【连通检测】望京一居示例",

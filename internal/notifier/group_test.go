@@ -74,14 +74,14 @@ func TestBuildHandledURL(t *testing.T) {
 }
 
 func TestAbsActionURL(t *testing.T) {
-	got := absActionURL("http://192.168.1.8:7777", "/f?p=abc")
+	got := AbsActionURL("http://192.168.1.8:7777", "/f?p=abc")
 	if got != "http://192.168.1.8:7777/f?p=abc" {
 		t.Errorf("got %q", got)
 	}
-	if absActionURL("", "/f") != "/f" {
+	if AbsActionURL("", "/f") != "/f" {
 		t.Errorf("空 origin 应保持相对路径")
 	}
-	if absActionURL("http://x", "https://already") != "https://already" {
+	if AbsActionURL("http://x", "https://already") != "https://already" {
 		t.Errorf("已是绝对地址不应再拼")
 	}
 }

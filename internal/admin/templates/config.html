@@ -550,6 +550,15 @@
         });
     });
   })();
+  document.addEventListener('click', function(e){
+    var btn = e.target.closest('.pw-toggle');
+    if (!btn) return;
+    var input = btn.parentElement.querySelector('input[type="password"], input[type="text"]');
+    if (!input) return;
+    var show = input.type === 'password';
+    input.type = show ? 'text' : 'password';
+    btn.textContent = show ? '隐藏' : '显示';
+  });
   </script>
   {{end}}
   {{if eq .Tab "general"}}
@@ -611,7 +620,10 @@
             {{end}}
           </select>
           {{else if eq .Type "password"}}
-          <input type="password" name="{{.Key}}" value="{{.Value}}" {{if eq .Value ""}}placeholder="留空不修改"{{end}} autocomplete="off" class="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white{{if .Readonly}} bg-gray-50{{end}}" {{if .Readonly}}disabled{{end}}>
+          <div class="flex gap-2">
+            <input type="password" name="{{.Key}}" value="{{.Value}}" {{if .Placeholder}}placeholder="{{.Placeholder}}"{{else if eq .Value ""}}placeholder="留空不修改"{{end}} autocomplete="off" class="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white{{if .Readonly}} bg-gray-50{{end}}" {{if .Readonly}}disabled{{end}}>
+            {{if not .Readonly}}<button type="button" class="pw-toggle shrink-0 px-3 py-2 border border-gray-300 text-gray-600 hover:bg-gray-50 rounded-xl text-sm bg-white">显示</button>{{end}}
+          </div>
           {{if and .CanClear (not .Readonly)}}<label class="inline-flex items-center gap-1 mt-1 text-xs text-gray-500"><input type="checkbox" name="clear_{{.Key}}" value="on"> 清空此项</label>{{end}}
           {{else if eq .Type "number"}}
           <input type="number" name="{{.Key}}" value="{{.Value}}" class="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white{{if .Readonly}} bg-gray-50{{end}}" {{if .Readonly}}disabled{{end}}>

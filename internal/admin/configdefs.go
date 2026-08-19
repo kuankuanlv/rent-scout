@@ -247,10 +247,10 @@ func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[stri
 				Title: "豆瓣 Cookie", Hint: "选「粘贴原文」后，把浏览器里复制的 Cookie 整段贴进框即可，不用改格式。也可用 CookieCloud。", Class: "bg-amber-50 border-amber-200", Group: "douban", Tools: "cookie",
 				Items: []configField{
 					{Key: config.KeyDoubanCookieMode, Label: "Cookie 模式", Value: get(config.KeyDoubanCookieMode, env.Collector.Douban.CookieMode), Type: "select", Options: []string{config.CookieModeNone.String(), config.CookieModeRaw.String(), config.CookieModeCookieCloud.String()}, Hint: "none 不带 cookie；raw 粘贴原文；cookiecloud 只填三元组", Group: "douban"},
-					{Key: config.KeyDoubanCookieRaw, Label: "Cookie 原文", Value: "", Type: "textarea", CanClear: true, Placeholder: "把 Cookie 整段贴进来即可，留空不改已保存的值", Hint: cookieRawHint(env.Collector.Douban), ShowWhen: config.CookieModeRaw.String(), Group: "douban"},
+					{Key: config.KeyDoubanCookieRaw, Label: "Cookie 原文", Value: get(config.KeyDoubanCookieRaw, env.Collector.Douban.CookieRaw), Type: "password", CanClear: true, Placeholder: "把 Cookie 整段贴进来即可，留空不改已保存的值", Hint: cookieRawHint(env.Collector.Douban), ShowWhen: config.CookieModeRaw.String(), Group: "douban"},
 					{Key: config.KeyDoubanCookieCloudURL, Label: "CookieCloud 地址", Value: get(config.KeyDoubanCookieCloudURL, env.Collector.Douban.CookiecloudURL), Type: "text", Hint: "如 https://cc.example.com；检测用当前输入，不读库", CanClear: true, ShowWhen: config.CookieModeCookieCloud.String(), Group: "douban"},
-					{Key: config.KeyDoubanCookieCloudKey, Label: "CookieCloud UUID", Value: get(config.KeyDoubanCookieCloudKey, env.Collector.Douban.CookiecloudKey), Type: "text", CanClear: true, ShowWhen: config.CookieModeCookieCloud.String(), Group: "douban"},
-					{Key: config.KeyDoubanCookieCloudPwd, Label: "CookieCloud 密码", Value: ccPass, Type: "text", CanClear: true, Hint: "明文回显；勾选清空可删除", ShowWhen: config.CookieModeCookieCloud.String(), Group: "douban", Wide: true},
+					{Key: config.KeyDoubanCookieCloudKey, Label: "CookieCloud UUID", Value: get(config.KeyDoubanCookieCloudKey, env.Collector.Douban.CookiecloudKey), Type: "password", CanClear: true, ShowWhen: config.CookieModeCookieCloud.String(), Group: "douban"},
+					{Key: config.KeyDoubanCookieCloudPwd, Label: "CookieCloud 密码", Value: ccPass, Type: "password", CanClear: true, Hint: "默认掩码显示，点「显示」查看明文；勾选清空可删除", ShowWhen: config.CookieModeCookieCloud.String(), Group: "douban", Wide: true},
 				},
 			},
 			{
@@ -275,10 +275,10 @@ func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[stri
 				Title: "微博 Cookie", Hint: "超话和博主用 weibo.com Cookie。选「粘贴原文」后整段贴进来即可。cookiecloud 会按域各存一份。raw 只填 weibo.com 时，超话列表仍可用，cn 域的评论/全文会跳过。", Class: "bg-amber-50 border-amber-200", Group: "weibo", Tools: "cookie",
 				Items: []configField{
 					{Key: config.KeyWeiboCookieMode, Label: "Cookie 模式", Value: get(config.KeyWeiboCookieMode, env.Collector.Weibo.CookieMode), Type: "select", Options: []string{config.CookieModeNone.String(), config.CookieModeRaw.String(), config.CookieModeCookieCloud.String()}, Hint: "none 不带 cookie；raw 粘贴原文；cookiecloud 只填三元组", Group: "weibo"},
-					{Key: config.KeyWeiboCookieRaw, Label: "Cookie 原文", Value: "", Type: "textarea", CanClear: true, Placeholder: "把 Cookie 整段贴进来即可，留空不改已保存的值", Hint: cookieRawHint(env.Collector.Weibo) + " 填 weibo.com 域。", ShowWhen: config.CookieModeRaw.String(), Group: "weibo"},
+					{Key: config.KeyWeiboCookieRaw, Label: "Cookie 原文", Value: get(config.KeyWeiboCookieRaw, env.Collector.Weibo.CookieRaw), Type: "password", CanClear: true, Placeholder: "把 Cookie 整段贴进来即可，留空不改已保存的值", Hint: cookieRawHint(env.Collector.Weibo) + " 填 weibo.com 域。", ShowWhen: config.CookieModeRaw.String(), Group: "weibo"},
 					{Key: config.KeyWeiboCookieCloudURL, Label: "CookieCloud 地址", Value: get(config.KeyWeiboCookieCloudURL, env.Collector.Weibo.CookiecloudURL), Type: "text", Hint: "如 https://cc.example.com；检测用当前输入，不读库", CanClear: true, ShowWhen: config.CookieModeCookieCloud.String(), Group: "weibo"},
-					{Key: config.KeyWeiboCookieCloudKey, Label: "CookieCloud UUID", Value: get(config.KeyWeiboCookieCloudKey, env.Collector.Weibo.CookiecloudKey), Type: "text", CanClear: true, ShowWhen: config.CookieModeCookieCloud.String(), Group: "weibo"},
-					{Key: config.KeyWeiboCookieCloudPwd, Label: "CookieCloud 密码", Value: weiboCCPass, Type: "text", CanClear: true, Hint: "明文回显；勾选清空可删除", ShowWhen: config.CookieModeCookieCloud.String(), Group: "weibo", Wide: true},
+					{Key: config.KeyWeiboCookieCloudKey, Label: "CookieCloud UUID", Value: get(config.KeyWeiboCookieCloudKey, env.Collector.Weibo.CookiecloudKey), Type: "password", CanClear: true, ShowWhen: config.CookieModeCookieCloud.String(), Group: "weibo"},
+					{Key: config.KeyWeiboCookieCloudPwd, Label: "CookieCloud 密码", Value: weiboCCPass, Type: "password", CanClear: true, Hint: "默认掩码显示，点「显示」查看明文；勾选清空可删除", ShowWhen: config.CookieModeCookieCloud.String(), Group: "weibo", Wide: true},
 				},
 			},
 		}),
@@ -289,7 +289,7 @@ func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[stri
 					{Key: "filter.ai_enabled", Label: "启用", Value: ai, Type: "checkbox", Wide: true, Hint: "关闭后跳过 AI 审核"},
 					{Key: "secret.filter.llm.api_style", Label: "LLM 提供方", Value: apiStyle, Type: "readonly", OptionLabels: []string{"OpenAI"}},
 					{Key: "secret.filter.llm.base_url", Label: "Base URL", Value: llmBase, Type: "text", CanClear: true, Hint: "默认 DeepSeek 官方 " + config.DefaultLLMBaseURL},
-					{Key: "secret.filter.llm.api_key", Label: "API Key", Value: llmKey, Type: "text", CanClear: true, Hint: "填 DeepSeek API Key（platform.deepseek.com 获取）"},
+					{Key: "secret.filter.llm.api_key", Label: "API Key", Value: llmKey, Type: "password", CanClear: true, Hint: "填 DeepSeek API Key（platform.deepseek.com 获取）"},
 					{Key: "secret.filter.llm.model", Label: "主模型", Value: llmModel, Type: "model_select", Options: modelOpts, Wide: true, Hint: "默认 deepseek-chat；先填 URL 与 Key 再拉取可用列表"},
 				},
 			},
@@ -305,14 +305,14 @@ func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[stri
 			{
 				Title: "飞书", Hint: "发送节奏与 Webhook", Class: "bg-sky-50 border-sky-200", Group: "feishu", Tools: "notify",
 				Items: append(notifyBase("feishu", "feishu"), configField{
-					Key: "secret.notifier.feishu.webhook", Label: "飞书 Webhook", Value: "", Type: "password", CanClear: true, Group: "feishu", Wide: true,
+					Key: "secret.notifier.feishu.webhook", Label: "飞书 Webhook", Value: get("secret.notifier.feishu.webhook", env.Notifier.Feishu.Webhook), Type: "password", CanClear: true, Group: "feishu", Wide: true,
 				}),
 			},
 			{
 				Title: "PushPlus", Hint: "发送节奏与 Token；一对多填群组编码，空则一对一", Class: "bg-orange-50 border-orange-200", Group: "pushplus", Tools: "notify",
 				Items: append(notifyBase("pushplus", "pushplus"),
 					configField{
-						Key: "secret.notifier.pushplus.token", Label: "PushPlus Token", Value: ppToken, Type: "text", CanClear: true, Hint: "明文回显", Group: "pushplus", Wide: true,
+						Key: "secret.notifier.pushplus.token", Label: "PushPlus Token", Value: ppToken, Type: "password", CanClear: true, Hint: "默认掩码显示，点「显示」查看明文", Group: "pushplus", Wide: true,
 					},
 					configField{
 						Key: "secret.notifier.pushplus.topic", Label: "群组编码", Value: get("secret.notifier.pushplus.topic", env.Notifier.Pushplus.Topic), Type: "text", CanClear: true, Hint: "一对多 topic，如 doubanzufang；留空走一对一", Group: "pushplus", Wide: true,
@@ -325,7 +325,7 @@ func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[stri
 				Title: "鉴权", Class: "bg-rose-50/70 border-rose-100",
 				Items: []configField{
 					{Key: "admin.auth_required", Label: "启用鉴权", Value: get("admin.auth_required", auth), Type: "checkbox", Hint: "开启后必须填写 Token，否则不能保存"},
-					{Key: "admin.token", Label: "访问 Token", Value: "", Type: "password", CanClear: true, Hint: "启用鉴权时必填；留空表示不改已保存的值"},
+					{Key: "admin.token", Label: "访问 Token", Value: get("admin.token", app.Admin.Token), Type: "password", CanClear: true, Hint: "启用鉴权时必填；留空表示不改已保存的值"},
 				},
 			},
 		}),

@@ -147,8 +147,8 @@ func TestConfigTabs(t *testing.T) {
 	if !strings.Contains(body, "检测 Cookie") || !strings.Contains(body, "检测 CookieCloud") {
 		t.Errorf("Cookie 检测应放在 Cookie 配置块内")
 	}
-	if strings.Contains(body, `type="password" name="secret.collector.douban.cookiecloud_password"`) {
-		t.Errorf("CookieCloud 密码应为明文 text")
+	if !strings.Contains(body, `type="password" name="secret.collector.douban.cookiecloud_password"`) {
+		t.Errorf("CookieCloud 密码应按 password 掩码回显")
 	}
 	if !strings.Contains(body, "cc-pass-plain") {
 		t.Errorf("CookieCloud 密码应明文回显")
@@ -267,11 +267,14 @@ func TestConfigTabs(t *testing.T) {
 	if strings.Contains(body, "notifier.max_attempts") || strings.Contains(body, "notifier.retry_base_interval") {
 		t.Errorf("重试次数/间隔不应出现在配置页")
 	}
-	if strings.Contains(body, `type="password" name="secret.notifier.pushplus.token"`) {
-		t.Errorf("PushPlus Token 应为明文 text")
+	if !strings.Contains(body, `type="password" name="secret.notifier.pushplus.token"`) {
+		t.Errorf("PushPlus Token 应按 password 掩码回显")
 	}
 	if !strings.Contains(body, "pp-token-plain") {
-		t.Errorf("PushPlus Token 应明文回显")
+		t.Errorf("PushPlus Token 应回显已保存值")
+	}
+	if !strings.Contains(body, `class="pw-toggle`) {
+		t.Errorf("密码字段应提供「显示明文」按钮")
 	}
 	if !strings.Contains(body, `name="notifier.channels"`) || !strings.Contains(body, `>启用<`) {
 		t.Errorf("各通知渠道应有独立启用勾选")

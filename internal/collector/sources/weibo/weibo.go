@@ -2,6 +2,8 @@ package weibo
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -23,10 +25,45 @@ import (
 	"rent-scout/internal/pkglog"
 )
 
+// 编译断言：Source 满足接口。注意 since_id 在内存维持，不跨重启
 var _ collector.Source = (*Source)(nil)
+var _ collector.SourcePolicy = (*Source)(nil)
 var _ collector.GroupSkipper = (*Source)(nil)
 var _ collector.TimeWindowLister = (*Source)(nil)
 var _ collector.GroupWatermarker = (*Source)(nil)
+
+func (s *Source) Fingerprint(cfg *config.AppConfig) string {
+	if cfg == nil {
+		return s.Name()
+	}
+	var keys []string
+	for _, id := range config.WeiboContainerIDs(cfg.Collector.Weibo.SuperTopics) {
+		keys = append(keys, "super:"+id)
+	}
+	for _, id := range config.WeiboUIDs(cfg.Collector.Weibo.Users) {
+		keys = append(keys, "user:"+id)
+	}
+	return s.Name() + "|" + cfg.Collector.Weibo.RangeFrom + "|" + hashLines(keys)
+}
+
+func (s *Source) TimeWindow(cfg *config.AppConfig, now time.Time) (time.Time, time.Time, error) {
+	start, end, err := config.ResolveTimeRange(cfg.Collector.Weibo.RangeFrom, "now", now)
+	if err != nil {
+		return time.Time{}, time.Time{}, fmt.Errorf("微博拉取范围: %w", err)
+	}
+	return start, end, nil
+}
+
+func (s *Source) RequestGap(cfg *config.AppConfig) time.Duration {
+	return time.Duration(cfg.Collector.Weibo.Interval) * time.Second
+}
+
+func hashLines(lines []string) string {
+	var h [8]byte
+	sum := sha256.Sum256([]byte(strings.Join(lines, "\n")))
+	copy(h[:], sum[:8])
+	return hex.EncodeToString(h[:])
+}
 
 const weiboStatusTime = "Mon Jan 02 15:04:05 -0700 2006"
 

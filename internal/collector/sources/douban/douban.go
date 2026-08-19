@@ -2,6 +2,8 @@ package douban
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -19,10 +21,38 @@ import (
 	"rent-scout/internal/pkglog"
 )
 
-// 编译断言：Douban 满足 Source 接口
+// 编译断言：Douban 满足 Source、SourcePolicy 接口
 var _ collector.Source = (*Douban)(nil)
+var _ collector.SourcePolicy = (*Douban)(nil)
 var _ collector.GroupSkipper = (*Douban)(nil)
 var _ collector.GroupWatermarker = (*Douban)(nil)
+
+func (d *Douban) Fingerprint(cfg *config.AppConfig) string {
+	if cfg == nil {
+		return d.Name()
+	}
+	return d.Name() + "|" + cfg.Collector.Douban.RangeFrom + "|" + hashLines(config.HTTPURLs(cfg.Collector.Douban.Groups))
+}
+
+func (d *Douban) TimeWindow(cfg *config.AppConfig, now time.Time) (time.Time, time.Time, error) {
+	start, end, err := config.ResolveTimeRange(cfg.Collector.Douban.RangeFrom, "now", now)
+	if err != nil {
+		return time.Time{}, time.Time{}, fmt.Errorf("豆瓣拉取范围: %w", err)
+	}
+	return start, end, nil
+}
+
+func (d *Douban) RequestGap(cfg *config.AppConfig) time.Duration {
+	return time.Duration(cfg.Collector.Douban.Interval) * time.Second
+}
+
+func hashLines(lines []string) string {
+	// 简单的哈希，保持包级别兼容
+	var h [8]byte
+	sum := sha256.Sum256([]byte(strings.Join(lines, "\n")))
+	copy(h[:], sum[:8])
+	return hex.EncodeToString(h[:])
+}
 
 const listPageSize = 25 // 豆瓣小组讨论列表每页条数
 
@@ -57,11 +87,11 @@ func (d *Douban) groups() []string {
 	if len(d.fixedGroups) > 0 {
 		return d.fixedGroups
 	}
-		if d.rt != nil {
-			if app := d.rt.Get(); app != nil {
-				return config.HTTPURLs(app.Collector.Douban.Groups)
-			}
+	if d.rt != nil {
+		if app := d.rt.Get(); app != nil {
+			return config.HTTPURLs(app.Collector.Douban.Groups)
 		}
+	}
 	return nil
 }
 
@@ -71,37 +101,37 @@ type noopCookie struct{}
 
 func (noopCookie) Get(context.Context, string) (string, error) { return "", nil }
 
-	// Detail 抓取详情页并归一化为 RentPost（只对未存在的新帖调用）。
-	// 正文 = 首帖纯文本（去掉图片）；Raw = 去图后的详情 HTML
-	func (d *Douban) Detail(ctx context.Context, item collector.ListItem) (models.RentPost, error) {
-		body, err := d.get(ctx, item.URL)
-		if err != nil {
-			return models.RentPost{}, err
-		}
-		doc, err := goquery.NewDocumentFromReader(strings.NewReader(body))
-		if err != nil {
-			return models.RentPost{}, fmt.Errorf("解析详情页: %w", err)
-		}
-		doc.Find("img").Remove()
-		box := doc.Find(".topic-content").First()
-		content := collector.PlainText(box.Text())
-		raw, _ := doc.Html()
-		title := item.Title
-		if title == "" {
-			title = strings.TrimSpace(doc.Find("h1").First().Text())
-		}
-		return models.RentPost{
-			Source:      d.Name(),
-			ExternalID:  item.ExternalID,
-			URL:         item.URL,
-			Title:       title,
-			Content:     content,
-			Author:      item.Author,
-			PublishedAt: item.PublishedAt,
-			Status:      models.PostStatusCollected,
-			Raw:         raw,
-		}, nil
+// Detail 抓取详情页并归一化为 RentPost（只对未存在的新帖调用）。
+// 正文 = 首帖纯文本（去掉图片）；Raw = 去图后的详情 HTML
+func (d *Douban) Detail(ctx context.Context, item collector.ListItem) (models.RentPost, error) {
+	body, err := d.get(ctx, item.URL)
+	if err != nil {
+		return models.RentPost{}, err
 	}
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(body))
+	if err != nil {
+		return models.RentPost{}, fmt.Errorf("解析详情页: %w", err)
+	}
+	doc.Find("img").Remove()
+	box := doc.Find(".topic-content").First()
+	content := collector.PlainText(box.Text())
+	raw, _ := doc.Html()
+	title := item.Title
+	if title == "" {
+		title = strings.TrimSpace(doc.Find("h1").First().Text())
+	}
+	return models.RentPost{
+		Source:      d.Name(),
+		ExternalID:  item.ExternalID,
+		URL:         item.URL,
+		Title:       title,
+		Content:     content,
+		Author:      item.Author,
+		PublishedAt: item.PublishedAt,
+		Status:      models.PostStatusCollected,
+		Raw:         raw,
+	}, nil
+}
 
 // List 抓取一页讨论列表。cursor 格式 "组下标:偏移"（如 "0:25"；"" = 从第一组第一页）。
 // 当前组该页有条目 → 同组下一页 "gi:offset+25"；空页 → 推进到下一组 "gi+1:0"；

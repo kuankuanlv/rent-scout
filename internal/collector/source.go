@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"rent-scout/internal/config"
 	"rent-scout/internal/models"
 )
 
@@ -21,6 +22,13 @@ type ListItem struct {
 	PublishedAt time.Time // 源发布时间（窗口过滤依据）
 	Content     string    // 列表页已带正文时 Detail 可直接用；豆瓣留空
 	NeedDetail  bool      // 列表是截断摘要，Detail 再拉全文（微博长微博）
+}
+
+// SourcePolicy 源级采集策略（可选）：指纹、时间窗、请求间隔；未实现则 Runner 用默认兜底
+type SourcePolicy interface {
+	Fingerprint(cfg *config.AppConfig) string
+	TimeWindow(cfg *config.AppConfig, now time.Time) (time.Time, time.Time, error)
+	RequestGap(cfg *config.AppConfig) time.Duration
 }
 
 // Source 信息源适配器（规格 4.2 修订版）：List/Detail 双层。

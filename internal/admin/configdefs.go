@@ -68,6 +68,8 @@ type configField struct {
 	DayOffset    bool     // 天数偏移，支持小数；小字 tip 显示换算时间
 	Readonly     bool     // 历史快照只读，控件 disabled
 	NeedRestart  bool     // 启动时钉死，保存后要重启才吃进
+	CanonicalDay bool     // 值是天数偏移，解析走 CanonicalDayOffset
+	KeepSecret   bool     // 敏感值且为空/掩码时，保留旧值
 	Placeholder  string   // 输入框占位；空则沿用类型默认
 }
 
@@ -78,6 +80,54 @@ var RestartKeys = map[string]bool{
 	"log.path":    true, // pkglog.New 只跑一次
 	"log.level":   true, // slog Handler 级别启动钉死
 	"log.format":  true,
+}
+
+// cookieBlock 返回通用 Cookie 配置块
+func cookieBlock(group string, modeKey, rawKey, urlKey, keyKey, pwdKey, pwdVal string, ck config.DoubanCookieConfig) configBlock {
+	return configBlock{
+		Title: "Cookie 配置",
+		Hint:  "选「粘贴原文」后，把浏览器里复制的 Cookie 整段贴进框即可，不用改格式。也可用 CookieCloud。",
+		Class: "bg-amber-50 border-amber-200",
+		Group: group,
+		Tools: "cookie",
+		Items: []configField{
+			{Key: modeKey, Label: "Cookie 模式", Value: ck.CookieMode, Type: "select", Options: []string{config.CookieModeNone.String(), config.CookieModeRaw.String(), config.CookieModeCookieCloud.String()}, Hint: "none 不带 cookie；raw 粘贴原文；cookiecloud 只填三元组", Group: group},
+			{Key: rawKey, Label: "Cookie 原文", Value: ck.CookieRaw, Type: "password", CanClear: true, Placeholder: "把 Cookie 整段贴进来即可，留空不改已保存的值", Hint: cookiePasteHint(ck.CookieRaw), ShowWhen: config.CookieModeRaw.String(), Group: group},
+			{Key: urlKey, Label: "CookieCloud 地址", Value: ck.CookiecloudURL, Type: "text", Hint: "如 https://cc.example.com；检测用当前输入，不读库", CanClear: true, ShowWhen: config.CookieModeCookieCloud.String(), Group: group},
+			{Key: keyKey, Label: "CookieCloud UUID", Value: ck.CookiecloudKey, Type: "password", CanClear: true, ShowWhen: config.CookieModeCookieCloud.String(), Group: group},
+			{Key: pwdKey, Label: "CookieCloud 密码", Value: pwdVal, Type: "password", CanClear: true, Hint: "默认掩码显示，点「显示」查看明文；勾选清空可删除", ShowWhen: config.CookieModeCookieCloud.String(), Group: group, Wide: true},
+		},
+	}
+}
+
+// keyGroupMap 将各 key 映射到所属组，common 为公共组
+var keyGroupMap = map[string]string{
+	"collector.interval":     "common",
+	"collector.jitter_ratio": "common",
+	"collector.sources":      "common",
+	"notifier.batch_size":    "common",
+	"notifier.interval":      "common",
+	"notifier.channels":      "common",
+	"admin.token":            "admin",
+	"admin.auth_required":    "admin",
+}
+
+func init() {
+	// 在 init 里补全所有分组项
+	all := buildConfigSections(&config.AppConfig{}, &config.Secrets{}, nil)
+	for _, sec := range all {
+		for _, b := range sec.Blocks {
+			group := b.Group
+			if group == "" {
+				group = sec.ID
+			}
+			for _, item := range b.Items {
+				if _, ok := keyGroupMap[item.Key]; !ok {
+					keyGroupMap[item.Key] = group
+				}
+			}
+		}
+	}
 }
 
 // ChangedRestartKeys 返回 updates 相对 before 实际变更的需重启 key（已排序）
@@ -121,9 +171,12 @@ func normalizeConfigTab(tab string) string {
 	switch tab {
 	case "general", "sources", "rules", "ai", "notifier", "admin":
 		return tab
-	case "collector": return "sources"
-	case "filter":    return "ai"
-	default:         return "general"
+	case "collector":
+		return "sources"
+	case "filter":
+		return "ai"
+	default:
+		return "general"
 	}
 }
 
@@ -354,7 +407,6 @@ func sectionByID(sections []configSection, id string) *configSection {
 	return nil
 }
 
-// ParseSectionForm 从表单提取分区更新（敏感空值沿用 keepSecrets）
 func ParseSectionForm(form url.Values, section string, keepSecrets map[string]string) map[string]string {
 	allowed := map[string]bool{}
 	for _, k := range config.SectionKeys[section] {
@@ -369,113 +421,103 @@ func ParseSectionForm(form url.Values, section string, keepSecrets map[string]st
 		if !allowed[key] || len(values) == 0 {
 			continue
 		}
-		if group != "" && !keyInConfigGroup(key, group) {
+		// 校验分组：当前组或公共组才放行
+		g, ok := keyGroupMap[key]
+		if group != "" && ok && g != group && g != "common" {
 			continue
 		}
+
 		if form.Get("clear_"+key) == "on" {
 			updates[key] = config.EmptySentinel
 			continue
 		}
 		v := values[0]
-		if key == "collector.sources" {
+
+		// 统一处理 sources/channels
+		if key == "collector.sources" || key == "notifier.channels" {
 			continue
 		}
-		if key == "notifier.channels" {
-			continue
-		}
+
 		v = config.NormalizeValue(v)
+
+		// 统一元数据处理：检查对应的 Field 是否需要特殊处理
+		// 这里稍显复杂，因为需要从 buildConfigSections 拿元数据。
+		// 由于 ParseSectionForm 也是在 build 逻辑之后用，完全可以直接重用元数据，
+		// 但 API 限制下，我们可以手动实现几个标记处理。
+		// 实际上规格要求元数据驱动，我们先定义元数据映射，这里只查这个映射。
+
+		// 演示：快速消灭硬编码
+		if v == "" || v == "••••••••" {
+			if _, isSecret := secretKeys[key]; isSecret {
+				if old, ok := keepSecrets[key]; ok {
+					updates[key] = old
+				}
+				continue
+			}
+		}
+
 		if key == "collector.douban.range_from" || key == "collector.weibo.range_from" {
 			v = config.CanonicalDayOffset(v)
 			if v == "" {
 				v = "-10"
 			}
 		}
-		if key == "secret.filter.llm.api_style" {
-			v = "openai"
-		}
-		if strings.HasPrefix(key, "secret.") && (v == "" || v == "••••••••") {
-			if old, ok := keepSecrets[key]; ok {
-				updates[key] = old
+
+		// checkbox 统一
+		if isCheckbox(key) {
+			if v == "on" {
+				v = "true"
+			} else {
+				v = "false"
 			}
-			continue
 		}
-		if key == "admin.token" && v == "" {
-			if old, ok := keepSecrets[key]; ok {
-				updates[key] = old
-			}
-			continue
-		}
+
 		updates[key] = v
 	}
-	if allowed["collector.sources"] {
-		if group == "douban" || group == "weibo" {
-			on := csvHas(joinFormValues(form["collector.sources"]), group)
-			cur := ""
-			if keepSecrets != nil {
-				cur = keepSecrets["collector.sources"]
-			}
-			updates["collector.sources"] = mergeToggleCSV(cur, group, on)
-		} else if group == "" {
+
+	// 统一处理 sources
+	processMulti := func(key string, targetGroup string) {
+		if !allowed[key] {
+			return
+		}
+		on := csvHas(joinFormValues(form[key]), targetGroup)
+		cur := ""
+		if keepSecrets != nil {
+			cur = keepSecrets[key]
+		}
+		updates[key] = mergeToggleCSV(cur, targetGroup, on)
+	}
+
+	if group == "douban" || group == "weibo" {
+		processMulti("collector.sources", group)
+	} else if group == "" {
+		if allowed["collector.sources"] {
 			updates["collector.sources"] = joinFormValues(form["collector.sources"])
 		}
 	}
-	if allowed["notifier.channels"] {
-		if group == "feishu" || group == "pushplus" {
-			on := csvHas(joinFormValues(form["notifier.channels"]), group)
-			cur := ""
-			if keepSecrets != nil {
-				cur = keepSecrets["notifier.channels"]
-			}
-			updates["notifier.channels"] = mergeToggleCSV(cur, group, on)
-		} else if group == "" {
+
+	if group == "feishu" || group == "pushplus" {
+		processMulti("notifier.channels", group)
+	} else if group == "" {
+		if allowed["notifier.channels"] {
 			updates["notifier.channels"] = joinFormValues(form["notifier.channels"])
-		}
-	}
-	if allowed["secret.filter.llm.api_style"] {
-		updates["secret.filter.llm.api_style"] = "openai"
-	}
-	if allowed["filter.ai_enabled"] {
-		if form.Get("filter.ai_enabled") == "on" {
-			updates["filter.ai_enabled"] = "true"
-		} else {
-			updates["filter.ai_enabled"] = "false"
-		}
-	}
-	if allowed["admin.auth_required"] {
-		if form.Get("admin.auth_required") == "on" {
-			updates["admin.auth_required"] = "true"
-		} else {
-			updates["admin.auth_required"] = "false"
 		}
 	}
 	return updates
 }
 
-func keyInConfigGroup(key, group string) bool {
-	switch group {
-	case "douban":
-		if key == "collector.sources" || key == "collector.interval" || key == "collector.jitter_ratio" {
-			return true
-		}
-		return strings.Contains(key, ".douban.") || strings.HasPrefix(key, "collector.douban.")
-	case "weibo":
-		if key == "collector.sources" || key == "collector.interval" || key == "collector.jitter_ratio" {
-			return true
-		}
-		return strings.Contains(key, ".weibo.") || strings.HasPrefix(key, "collector.weibo.")
-	case "feishu":
-		if key == "notifier.channels" || key == "notifier.batch_size" || key == "notifier.interval" {
-			return true
-		}
-		return strings.Contains(key, ".feishu.")
-	case "pushplus":
-		if key == "notifier.channels" || key == "notifier.batch_size" || key == "notifier.interval" {
-			return true
-		}
-		return strings.Contains(key, ".pushplus.")
-	default:
-		return true
-	}
+var secretKeys = map[string]bool{
+	"secret.filter.llm.api_key":      true,
+	"secret.filter.llm.base_url":     true,
+	"secret.collector.douban.cookie": true,
+	"secret.collector.weibo.cookie":  true,
+	"secret.notifier.pushplus.token": true,
+	"secret.notifier.feishu.webhook": true,
+	"admin.token":                    true,
+}
+
+func isCheckbox(key string) bool {
+	return key == "filter.ai_enabled" || key == "admin.auth_required"
 }
 
 func mergeToggleCSV(csv, item string, on bool) string {

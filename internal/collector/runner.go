@@ -240,33 +240,32 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 	log := pkglog.Component(pkglog.SourceCollector(src.Name()))
 	cfg := r.rt.Get()
 	now := time.Now()
-	start, end, err := sourceTimeWindow(src.Name(), cfg, now)
+
+	// 1. 初始化参数与状态
+	start, end, err := r.resolveWindow(src, cfg, now)
 	if err != nil {
 		return roundResult{}, err
 	}
-
 	prog, _, err := r.store.GetProgress(src.Name())
 	if err != nil {
 		return roundResult{}, err
 	}
-	fp := sourceFingerprint(src.Name(), cfg)
+	fp := r.resolveFingerprint(src, cfg)
 	if prog.Fingerprint != "" && fingerprintIdentity(prog.Fingerprint) != fingerprintIdentity(fp) {
 		log.Info("时间窗或目标清单变了，重置采集进度", "source", src.Name(), "old", prog.Fingerprint, "new", fp)
 		prog = store.SourceProgress{}
 	}
 	prog.Fingerprint = fp
-
 	catchUp := prog.CatchingUp()
 	listCursor := ""
 	winFrom := start.Format("01-02 15:04")
 	winTo := end.Format("01-02 15:04")
 	round := r.nextRound(src.Name())
-	mode := roundMode(catchUp)
-	scope := formatRoundScope(src)
-	log.Info(fmt.Sprintf("============ %s 第%d轮开始 %s ============", src.Name(), round, mode))
+	log.Info(fmt.Sprintf("============ %s 第%d轮开始 %s ============", src.Name(), round, roundMode(catchUp)))
 	log.Info(fmt.Sprintf("【%s 第%d轮 时间窗=%s~%s 水位=%s %s】",
-		src.Name(), round, winFrom, winTo, formatWatermark(prog.SeenNewest), scope))
+		src.Name(), round, winFrom, winTo, formatWatermark(prog.SeenNewest), formatRoundScope(src)))
 
+	// 2. 状态上下文
 	wms := store.DecodeWatermarks(prog.SeenNewest)
 	var wm time.Time
 	wmKey := ""
@@ -280,22 +279,49 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 		wm = store.LookupWatermark(wms, wmKey)
 	}
 	loadGroupWM(listCursor)
+
+	newPosts, listCount, pages := 0, 0, 0
+	fetched := make([]string, 0, maxPagesPerRound)
+	firstHTTP := true
+	mode := roundMode(catchUp)
+
+	// 3. 闭包 Helper：写进度、组切换/封口（next 空串=整轮结束）、请求节流
 	persist := func() error {
 		prog.Fingerprint = fp
 		prog.SeenNewest = store.EncodeWatermarks(wms)
 		return r.store.SetProgress(src.Name(), prog)
 	}
-	newPosts := 0
-	listCount := 0
-	pages := 0
-	fetched := make([]string, 0, maxPagesPerRound)
-	firstHTTP := true
+	// advanceCursor 把游标推进到 next：空串表示无更多页 → 封口收尾；
+	// 否则更新进度游标继续翻。返回 finished=true 时调用方应结束本轮
+	advanceCursor := func(next, reason string, idle bool) (bool, error) {
+		g1, _ := parsePageCursor(listCursor)
+		g2, _ := parsePageCursor(next)
+		if idle && (next == "" || g1 != g2) {
+			log.Info(fmt.Sprintf("【%s 第%d轮 %s %s，未收集到任何新帖】", src.Name(), round, describeCursor(src, listCursor), reason))
+		}
+		if m := nextGroupMsg(src.Name(), round, listCursor, next, func(c string) string { return describeCursor(src, c) }); m != "" {
+			log.Info(m)
+		}
+		if next == "" {
+			prog = sealProgress(prog, wms)
+			return true, persist()
+		}
+		if !catchUp {
+			prog.Page = next
+		}
+		listCursor = next
+		return false, persist()
+	}
 	pace := func() {
 		if firstHTTP {
 			firstHTTP = false
 			return
 		}
-		if gap := r.requestGap(src); gap > 0 {
+		var gap time.Duration
+		if p, ok := src.(SourcePolicy); ok {
+			gap = p.RequestGap(cfg)
+		}
+		if gap > 0 {
 			select {
 			case <-ctx.Done():
 			case <-time.After(gap):
@@ -314,28 +340,14 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 		log.Info(fmt.Sprintf("============ %s 第%d轮结束 共%d页 列表%d条 新帖%d条 下次=%s ============",
 			src.Name(), round, len(fetched), listCount, newPosts, formatNextPos(prog)))
 	}
-	noteGroup := func(to string) {
-		if m := nextGroupMsg(src.Name(), round, listCursor, to, func(c string) string { return describeCursor(src, c) }); m != "" {
-			log.Info(m)
-		}
-	}
-	leaveGroup := func(to, reason string, idle bool) {
-		g1, _ := parsePageCursor(listCursor)
-		g2, _ := parsePageCursor(to)
-		changing := strings.TrimSpace(to) == "" || g1 != g2
-		if idle && changing {
-			log.Info(fmt.Sprintf("【%s 第%d轮 %s %s，未收集到任何新帖】", src.Name(), round, describeCursor(src, listCursor), reason))
-		}
-		noteGroup(to)
-	}
+	activeG, groupNew, pagesInGroup := 0, 0, 0
 	type numbered struct {
 		idx int
 		it  ListItem
 	}
-	activeG := 0
-	groupNew := 0
-	pagesInGroup := 0
+
 	for pages < maxPagesPerRound {
+		// 组切换：新组重置组内计数与水位
 		g, _ := parsePageCursor(listCursor)
 		if pages == 0 || g != activeG {
 			activeG = g
@@ -344,23 +356,24 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 			loadGroupWM(listCursor)
 			log.Info(fmt.Sprintf("【%s 第%d轮 开始%s】", src.Name(), round, describeCursor(src, listCursor)))
 		}
+		// 本组页数用尽：换下一组，或收尾结束
 		if pagesInGroup >= maxPagesPerGroup {
 			ng := skipGroup(src, listCursor)
 			if ng == "" {
-				leaveGroup("", "本组页数用尽", groupNew == 0)
-				prog = sealProgress(prog, wms)
-				if err := persist(); err != nil {
+				finished, err := advanceCursor("", "本组页数用尽", groupNew == 0)
+				if err != nil {
 					return roundResult{}, err
 				}
-				break
+				if finished {
+					break
+				}
 			}
-			leaveGroup(ng, "本组页数用尽", groupNew == 0)
-			if !catchUp {
-				prog.Page = ng
-			}
-			listCursor = ng
-			if err := persist(); err != nil {
+			finished, err := advanceCursor(ng, "本组页数用尽", groupNew == 0)
+			if err != nil {
 				return roundResult{}, err
+			}
+			if finished {
+				break
 			}
 			continue
 		}
@@ -420,39 +433,23 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 				if hitOld {
 					log.Info(fmt.Sprintf("【%s 第%d轮 %s 已超出时间窗，本搜索后续页更旧，不再翻页】", src.Name(), round, pageLabel))
 				}
-				if ng := skipGroup(src, listCursor); ng != "" {
-					leaveGroup(ng, idleReason, groupNew == 0)
-					if !catchUp {
-						prog.Page = ng
-					}
-					listCursor = ng
-					if err := persist(); err != nil {
-						return roundResult{}, err
-					}
-					continue
-				}
-				leaveGroup("", idleReason, groupNew == 0)
-				prog = sealProgress(prog, wms)
-				if err := persist(); err != nil {
+				// 无更多页则收尾结束，否则换下一组
+				finished, err := advanceCursor(skipGroup(src, listCursor), idleReason, groupNew == 0)
+				if err != nil {
 					return roundResult{}, err
 				}
-				break
-			}
-			if next == "" {
-				leaveGroup("", idleReason, groupNew == 0)
-				prog = sealProgress(prog, wms)
-				if err := persist(); err != nil {
-					return roundResult{}, err
+				if finished {
+					break
 				}
-				break
+				continue
 			}
-			if !catchUp {
-				prog.Page = next
-			}
-			leaveGroup(next, idleReason, groupNew == 0)
-			listCursor = next
-			if err := persist(); err != nil {
+			// 空页：游标有下一页则继续翻，否则本轮收尾
+			finished, err := advanceCursor(next, idleReason, groupNew == 0)
+			if err != nil {
 				return roundResult{}, err
+			}
+			if finished {
+				break
 			}
 			continue
 		}

@@ -8,7 +8,7 @@ import (
 	"rent-scout/internal/models"
 )
 
-// ErrUnrecoverable Cookie 挂了这类修不好的错，外层会冷却 1 小时
+// ErrUnrecoverable Cookie 挂了这类修不好的错，外层会冷却 10 分钟
 var ErrUnrecoverable = errors.New("collector: unrecoverable error")
 
 // ListItem 列表页轻量条目，Detail 前先用它去重

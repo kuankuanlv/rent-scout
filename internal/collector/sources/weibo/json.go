@@ -20,18 +20,19 @@ import (
 // 私有：列表拉取 / 详情补全（供 Iterator / Detail 调用）
 // =============================================================================
 
+// listUser 博主微博列表：走 PC 端 mymblog 接口（用户微博列表，feature=1 只采原创）。
+// 注意：不能用 searchProfile（那是带 keyword 的搜索接口，不带 keyword 基本返回空 list）。
+// 时间窗不传参，服务端按时间倒序返回，靠 iterator 的水位撞线判断停止。
 func (s *Weibo) listUser(ctx context.Context, t crawlTarget, offset string, start, end time.Time) ([]collector.ListItem, error) {
 	page := pageFromOffset(offset)
-	u, err := url.Parse(s.pcBase() + "/ajax/statuses/searchProfile")
+	u, err := url.Parse(s.pcBase() + "/ajax/statuses/mymblog")
 	if err != nil {
 		return nil, err
 	}
 	q := u.Query()
 	q.Set("uid", t.id)
 	q.Set("page", strconv.Itoa(page))
-	q.Set("hasori", "1")
-	q.Set("starttime", strconv.FormatInt(start.Unix(), 10))
-	q.Set("endtime", strconv.FormatInt(end.Unix(), 10))
+	q.Set("feature", "1")
 	u.RawQuery = q.Encode()
 	body, err := s.get(ctx, u.String())
 	if err != nil {

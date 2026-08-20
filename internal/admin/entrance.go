@@ -21,14 +21,17 @@ type Options struct {
 	Addr           string
 }
 
-// Service HTTP 监听与 5 秒关闭
-type Service struct {
-	addr   string
-	server *Server
-	http   *http.Server
+// AdminService HTTP 监听与 5 秒优雅关闭
+type AdminService struct {
+	addr   string       // 监听地址（配置 server.addr，可被 Options.Addr 覆盖）
+	server *Server      // 管理面路由与处理器
+	http   *http.Server // 标准库 HTTP 服务器（ListenAndServe + Shutdown）
 }
 
-func New(opts Options) (*Service, error) {
+// --- 构造 ---
+
+func New(opts Options) (*AdminService, error) {
+
 	addr := opts.Addr
 	if addr == "" && opts.Config != nil {
 		if app := opts.Config.Get(); app != nil {
@@ -41,14 +44,16 @@ func New(opts Options) (*Service, error) {
 	srv.SetLLMProbe(NewLLMProbe())
 	srv.SetNotifyProbe(NewNotifyProbe())
 	srv.SetNotifyManual(opts.NotifyManual)
-	return &Service{
+	return &AdminService{
 		addr:   addr,
 		server: srv,
 		http:   &http.Server{Addr: addr, Handler: srv.Handler()},
 	}, nil
 }
 
-func (s *Service) Run(ctx context.Context) error {
+// --- 生命周期 ---
+
+func (s *AdminService) Run(ctx context.Context) error {
 	log := pkglog.Component(pkglog.Main)
 	go func() {
 		log.Info("HTTP 开始监听", "addr", s.addr)

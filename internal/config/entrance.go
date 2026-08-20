@@ -11,21 +11,25 @@ type Options struct {
 	Interval time.Duration
 }
 
-// Service 管理 WatchDB 生命周期
-type Service struct {
-	hot      *HotConfig
-	interval time.Duration
+// ConfigService 管理 WatchDB 生命周期
+type ConfigService struct {
+	hot      *HotConfig    // 热配置容器（轮询 DB 后 COW 替换快照）
+	interval time.Duration // DB 轮询间隔（默认 10 秒）
 }
 
-func New(opts Options) (*Service, error) {
+// --- 构造 ---
+
+func New(opts Options) (*ConfigService, error) {
 	interval := opts.Interval
 	if interval <= 0 {
 		interval = 10 * time.Second
 	}
-	return &Service{hot: opts.Hot, interval: interval}, nil
+	return &ConfigService{hot: opts.Hot, interval: interval}, nil
 }
 
-func (s *Service) Run(ctx context.Context) error {
+// --- 生命周期 ---
+
+func (s *ConfigService) Run(ctx context.Context) error {
 	if s == nil || s.hot == nil {
 		<-ctx.Done()
 		return nil

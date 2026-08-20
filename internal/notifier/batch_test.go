@@ -12,7 +12,7 @@ import (
 )
 
 // fetchReady 构造支持 fetch 的环境：AI 关闭（无 AI 结果也可通知）+ feishu 渠道
-func fetchReady(t *testing.T, batchSize, posts int) (*Service, *store.Store) {
+func fetchReady(t *testing.T, batchSize, posts int) (*NotifierService, *store.Store) {
 	t.Helper()
 	s, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {

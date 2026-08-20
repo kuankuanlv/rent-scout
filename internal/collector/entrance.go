@@ -18,21 +18,23 @@ type Options struct {
 	OnPostCreated func()
 }
 
-// Service 采集调度 + Cookie 同步
-type Service struct {
-	rt            *config.HotConfig
-	db            *store.Store
-	runner        *Runner
-	syncer        *cookie.Syncer
-	trigger       chan struct{}
-	onPostCreated func()
+// CollectorService 采集调度 + Cookie 同步
+type CollectorService struct {
+	rt            *config.HotConfig // 热配置快照：源开关、间隔、时间窗等运行中读取
+	db            *store.Store      // SQLite：采集进度、去重、帖子落库
+	runner        *Runner           // 每源一条常驻循环的调度器
+	syncer        *cookie.Syncer    // CookieCloud 定时同步登录态
+	trigger       chan struct{}     // 新帖落库信号（容量 64，满则丢），bridge 转发给下游
+	onPostCreated func()            // 新帖回调（通知消费器拉批）
 }
 
-func New(opts Options) (*Service, error) {
+// --- 构造 ---
+
+func New(opts Options) (*CollectorService, error) {
 	rt, db := opts.Config, opts.Store
 	trigger := make(chan struct{}, postCreatedCap)
 	runner := NewRunner(rt, db, opts.Sources, trigger)
-	return &Service{
+	return &CollectorService{
 		rt:            rt,
 		db:            db,
 		runner:        runner,
@@ -42,30 +44,34 @@ func New(opts Options) (*Service, error) {
 	}, nil
 }
 
+// --- SourceController 契约（admin/ports.go 定义，管理台源控制）---
+
 // Controller 管理台源控制；协程常驻，即使配置里源全关也返回自身
-func (s *Service) Controller() *Service {
+func (s *CollectorService) Controller() *CollectorService {
 	if s == nil || s.runner == nil {
 		return nil
 	}
 	return s
 }
 
-func (s *Service) Sources() []string {
+func (s *CollectorService) Sources() []string {
 	if s == nil || s.runner == nil {
 		return nil
 	}
 	return s.runner.Sources()
 }
 
-func (s *Service) SetEnabled(name string, on bool) error {
+func (s *CollectorService) SetEnabled(name string, on bool) error {
 	return s.runner.SetEnabled(name, on)
 }
 
-func (s *Service) SourceEnabled(name string) bool {
+func (s *CollectorService) SourceEnabled(name string) bool {
 	return s.runner.SourceEnabled(name)
 }
 
-func (s *Service) Run(ctx context.Context) error {
+// --- 生命周期 ---
+
+func (s *CollectorService) Run(ctx context.Context) error {
 	if s.runner != nil {
 		go s.runner.Run(ctx)
 	}
@@ -75,7 +81,9 @@ func (s *Service) Run(ctx context.Context) error {
 	return nil
 }
 
-func (s *Service) bridge(ctx context.Context) {
+// --- 内部协程 ---
+
+func (s *CollectorService) bridge(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():

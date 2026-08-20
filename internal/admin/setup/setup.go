@@ -2,16 +2,16 @@ package setup
 
 import (
 	"fmt"
+	"html/template"
 	"net/http"
 	"net/url"
-	"strconv"
-	"strings"
-
 	cfgpage "rent-scout/internal/admin/config"
 	"rent-scout/internal/admin/onboard"
 	"rent-scout/internal/admin/ports"
 	"rent-scout/internal/config"
 	"rent-scout/internal/store"
+	"strconv"
+	"strings"
 )
 
 const (
@@ -244,4 +244,27 @@ func SetupStepTitle(step int) string {
 	default:
 		return fmt.Sprintf("步骤 %d", step)
 	}
+}
+
+// Options 引导安装 handler 依赖
+type Options struct {
+	DB   *store.Store
+	RT   *config.HotConfig
+	Tmpl *template.Template
+}
+
+// Handler 引导安装（/admin/setup*）处理器
+type Handler struct {
+	opts Options
+}
+
+// New 创建引导安装 handler
+func New(opts Options) *Handler {
+	return &Handler{opts: opts}
+}
+
+// Routes 注册引导安装路由
+func (h *Handler) Routes(mux *http.ServeMux) {
+	mux.HandleFunc("/admin/setup", h.handleSetup)
+	mux.HandleFunc("/admin/setup/import-defaults", h.handleImportDefaults)
 }

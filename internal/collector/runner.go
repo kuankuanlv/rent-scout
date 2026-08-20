@@ -11,23 +11,23 @@ import (
 	"sync"
 	"time"
 
+	"rent-scout/internal/collector/cookie"
 	"rent-scout/internal/config"
 	"rent-scout/internal/config/urls"
 	"rent-scout/internal/config/window"
-	"rent-scout/internal/collector/cookie"
-	"rent-scout/internal/pkglog"
 	"rent-scout/internal/models"
+	"rent-scout/internal/pkglog"
 	"rent-scout/internal/store"
 )
 
 // Runner 只管调度：开循环、落库去重、冷却；翻页细节交给 Iterator。
 type Runner struct {
-	rt            *config.HotConfig
-	store         *store.Store
-	sources       []Source
-	trigger       chan<- struct{}
-	mu            sync.Mutex
-	enabled       map[string]bool
+	rt      *config.HotConfig
+	store   *store.Store
+	sources []Source
+	trigger chan<- struct{}
+	mu      sync.Mutex
+	enabled map[string]bool
 	// coolDownUntil Cookie 挂了之类的致命错，先歇 1 小时别狂打
 	coolDownUntil map[string]time.Time
 }
@@ -80,29 +80,23 @@ func (r *Runner) Run(ctx context.Context) {
 	<-ctx.Done()
 }
 
-// runSourceLoop 每个源一条常驻协程：按间隔 tick；未启用只空转；真正抓取走 runSourceOnce。
+// runSourceLoop 每个源一条常驻协程：首轮立即执行一次，之后每轮重算带抖动的间隔再等待；
+// 未启用/冷却中跳过本轮；真正抓取走 runSourceOnce。
 // 冷却是旁路：熔断期内跳过本轮，致命错再进冷却，不掺进 run 命名。
 func (r *Runner) runSourceLoop(ctx context.Context, src Source) {
 	name := src.Name()
-	interval := r.roundInterval()
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
 	for {
+		if !r.SourceEnabled(name) {
+			// 未启用：空转一轮，等下一个间隔再查
+		} else if r.inCoolDown(name) {
+			// 冷却中：跳过本轮
+		} else if _, err := r.runSourceOnce(ctx, src, r.trigger); err != nil && errors.Is(err, ErrUnrecoverable) {
+			r.enterCoolDown(name, err)
+		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			if !r.SourceEnabled(name) {
-				continue
-			}
-			if r.inCoolDown(name) {
-				continue
-			}
-			_, err := r.runSourceOnce(ctx, src, r.trigger)
-			if err != nil && errors.Is(err, ErrUnrecoverable) {
-				r.enterCoolDown(name, err)
-			}
+		case <-time.After(r.roundInterval()):
 		}
 	}
 }
@@ -244,7 +238,9 @@ func (r *Runner) fingerprintForSource(src Source) string {
 		return src.Name()
 	}
 	app := r.rt.Get()
-	if fp, ok := src.(interface{ Fingerprint(*config.AppConfig) string }); ok {
+	if fp, ok := src.(interface {
+		Fingerprint(*config.AppConfig) string
+	}); ok {
 		return fp.Fingerprint(app)
 	}
 	// 微博包装源没实现 Fingerprint 时，按超话/博主清单自己算
@@ -291,7 +287,9 @@ func (r *Runner) timeWindowForSource(sourceName string, now time.Time) (time.Tim
 
 func (r *Runner) Sources() []string {
 	names := make([]string, 0, len(r.sources))
-	for _, src := range r.sources { names = append(names, src.Name()) }
+	for _, src := range r.sources {
+		names = append(names, src.Name())
+	}
 	return names
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"rent-scout/internal/admin/ports"
 	"rent-scout/internal/collector/cookie"
 	"rent-scout/internal/config"
 	"rent-scout/internal/filter/ai/llm"
@@ -13,11 +14,11 @@ import (
 
 type cookieProbe struct{}
 
-func NewCookieProbe() CookieProbe { return cookieProbe{} }
+func NewCookieProbe() ports.CookieProbe { return cookieProbe{} }
 
-func (cookieProbe) InspectCookieCloud(ctx context.Context, draft config.DoubanCookieConfig, source string) (CookieCloudInspect, error) {
+func (cookieProbe) InspectCookieCloud(ctx context.Context, draft config.DoubanCookieConfig, source string) (ports.CookieCloudInspect, error) {
 	ins, err := cookie.InspectCookieCloudFor(ctx, draft, source)
-	return CookieCloudInspect{
+	return ports.CookieCloudInspect{
 		Cookie:      ins.Cookie,
 		Names:       ins.Names,
 		Previews:    ins.Previews,
@@ -28,14 +29,14 @@ func (cookieProbe) InspectCookieCloud(ctx context.Context, draft config.DoubanCo
 	}, err
 }
 
-func (cookieProbe) ProbePage(ctx context.Context, probeURL, rawCookie string) DoubanPageResult {
+func (cookieProbe) ProbePage(ctx context.Context, probeURL, rawCookie string) ports.DoubanPageResult {
 	page := cookie.ProbePage(ctx, probeURL, rawCookie, nil)
-	return DoubanPageResult{OK: page.OK, HTTP: page.HTTP, Snippet: page.Snippet}
+	return ports.DoubanPageResult{OK: page.OK, HTTP: page.HTTP, Snippet: page.Snippet}
 }
 
 type llmProbe struct{}
 
-func NewLLMProbe() LLMProbe { return llmProbe{} }
+func NewLLMProbe() ports.LLMProbe { return llmProbe{} }
 
 func (llmProbe) ListModels(ctx context.Context, baseURL, apiKey, model string) ([]string, error) {
 	c := llm.NewClient(llm.ClientOptions{BaseURL: baseURL, APIKey: apiKey, Model: model, DumpHTTP: true})
@@ -49,9 +50,9 @@ func (llmProbe) Chat(ctx context.Context, baseURL, apiKey, model, system, user s
 
 type notifyProbe struct{}
 
-func NewNotifyProbe() NotifyProbe { return notifyProbe{} }
+func NewNotifyProbe() ports.NotifyProbe { return notifyProbe{} }
 
-func (notifyProbe) Send(ctx context.Context, channel, webhook, token, topic string, items []NotifyProbeItem) error {
+func (notifyProbe) Send(ctx context.Context, channel, webhook, token, topic string, items []ports.NotifyProbeItem) error {
 	nitems := make([]notifier.NotifyItem, len(items))
 	for i, it := range items {
 		nitems[i] = notifier.NotifyItem{

@@ -1,4 +1,4 @@
-package admin
+package logs
 
 import (
 	"encoding/json"
@@ -7,16 +7,17 @@ import (
 	"strconv"
 	"time"
 
+	"rent-scout/internal/admin/ports"
 	"rent-scout/internal/pkglog"
 )
 
 // handleLogs 系统日志页（GET /admin/logs）：SSE 滚动，成熟方案是内存 ring + EventSource
-func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) handleLogs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if err := s.tmpl.ExecuteTemplate(w, "logs", mergePageCtx(s.pageCtx(r, "logs"), map[string]any{
+	if err := h.opts.Tmpl.ExecuteTemplate(w, "logs", ports.MergePageCtx(ports.PageCtx(h.opts.RT, r, "logs"), map[string]any{
 		"MemoryLines": pkglog.HubCap(),
 	})); err != nil {
 		pkglog.Component(pkglog.Admin).Error("模板渲染失败", "err", err)
@@ -24,7 +25,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleLogsRecent 最近日志 JSON（GET /admin/logs/recent?n=200）
-func (s *Server) handleLogsRecent(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) handleLogsRecent(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -37,11 +38,11 @@ func (s *Server) handleLogsRecent(w http.ResponseWriter, r *http.Request) {
 	if n > capN {
 		n = capN
 	}
-	writeJSON(w, map[string]any{"logs": pkglog.RecentLogs(n), "cap": capN})
+	ports.WriteJSON(w, map[string]any{"logs": pkglog.RecentLogs(n), "cap": capN})
 }
 
 // handleLogsStream SSE 实时尾巴（GET /admin/logs/stream）
-func (s *Server) handleLogsStream(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) handleLogsStream(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return

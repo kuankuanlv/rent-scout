@@ -1,4 +1,4 @@
-package admin
+package config
 
 import (
 	"context"
@@ -7,13 +7,14 @@ import (
 	"strings"
 	"time"
 
+	"rent-scout/internal/admin/ports"
 	"rent-scout/internal/config"
 	"rent-scout/internal/config/urls"
 	"rent-scout/internal/pkglog"
 )
 
 // handleCookieCloudTest POST /admin/config/cookiecloud/test：只测连通和解密，不打豆瓣
-func (s *Server) handleCookieCloudTest(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) handleCookieCloudTest(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -22,22 +23,22 @@ func (s *Server) handleCookieCloudTest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "解析表单失败", http.StatusBadRequest)
 		return
 	}
-	draft := s.draftCookieConfig(r)
+	draft := h.draftCookieConfig(r)
 	source := cookieSource(r)
 	if strings.ToLower(draft.CookieMode) != "cookiecloud" {
 		draft.CookieMode = "cookiecloud"
 	}
 	if strings.TrimSpace(draft.CookiecloudURL) == "" || strings.TrimSpace(draft.CookiecloudKey) == "" || strings.TrimSpace(draft.CookiecloudPass) == "" {
-		writeJSON(w, map[string]any{"ok": false, "summary": "失败：请填写页面上的 CookieCloud 地址、UUID 和密码"})
+		ports.WriteJSON(w, map[string]any{"ok": false, "summary": "失败：请填写页面上的 CookieCloud 地址、UUID 和密码"})
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
-	if s.cookieProbe == nil {
-		writeJSON(w, map[string]any{"ok": false, "summary": "失败：探测未配置"})
+	if h.opts.CookieProbe == nil {
+		ports.WriteJSON(w, map[string]any{"ok": false, "summary": "失败：探测未配置"})
 		return
 	}
-	ins, err := s.cookieProbe.InspectCookieCloud(ctx, draft, source)
+	ins, err := h.opts.CookieProbe.InspectCookieCloud(ctx, draft, source)
 	resp := map[string]any{
 		"ok":      err == nil && ins.Cookie != "",
 		"http":    ins.HTTPStatus,
@@ -59,7 +60,7 @@ func (s *Server) handleCookieCloudTest(w http.ResponseWriter, r *http.Request) {
 			"algo", ins.Algo,
 			"err", err,
 		)
-		writeJSON(w, resp)
+		ports.WriteJSON(w, resp)
 		return
 	}
 	resp["summary"] = "通过"
@@ -71,11 +72,11 @@ func (s *Server) handleCookieCloudTest(w http.ResponseWriter, r *http.Request) {
 		"cookies", ins.Names,
 		"domains", ins.Domains,
 	)
-	writeJSON(w, resp)
+	ports.WriteJSON(w, resp)
 }
 
 // handleCookieTest POST /admin/config/cookie/test：用当前 Cookie 打豆瓣；通过或 HTTP+摘要
-func (s *Server) handleCookieTest(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) handleCookieTest(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -85,7 +86,7 @@ func (s *Server) handleCookieTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mode := strings.ToLower(strings.TrimSpace(firstNonEmpty(
+	mode := strings.ToLower(strings.TrimSpace(ports.FirstNonEmpty(
 		r.PostFormValue("cookie_mode"),
 		r.PostFormValue(config.CookieModeKey(cookieSource(r))),
 	)))
@@ -93,24 +94,24 @@ func (s *Server) handleCookieTest(w http.ResponseWriter, r *http.Request) {
 		mode = config.CookieModeNone.String()
 	}
 
-	draft := s.draftCookieConfig(r)
+	draft := h.draftCookieConfig(r)
 	draft.CookieMode = mode
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
 
-	rawCookie, err := s.fetchDraftCookie(ctx, mode, draft, cookieSource(r))
+	rawCookie, err := h.fetchDraftCookie(ctx, mode, draft, cookieSource(r))
 	if err != nil {
 		pkglog.Component(pkglog.Admin).Info("Cookie 检测", "stage", "fetch_cookie", "mode", mode, "err", err)
-		writeJSON(w, map[string]any{"ok": false, "http": 0, "summary": "失败：" + err.Error(), "snippet": err.Error()})
+		ports.WriteJSON(w, map[string]any{"ok": false, "http": 0, "summary": "失败：" + err.Error(), "snippet": err.Error()})
 		return
 	}
 
-	if s.cookieProbe == nil {
-		writeJSON(w, map[string]any{"ok": false, "http": 0, "summary": "失败：探测未配置"})
+	if h.opts.CookieProbe == nil {
+		ports.WriteJSON(w, map[string]any{"ok": false, "http": 0, "summary": "失败：探测未配置"})
 		return
 	}
-	probeURL := cookieProbeURL(r, s.rt)
-	page := s.cookieProbe.ProbePage(ctx, probeURL, rawCookie)
+	probeURL := cookieProbeURL(r, h.opts.RT)
+	page := h.opts.CookieProbe.ProbePage(ctx, probeURL, rawCookie)
 	resp := map[string]any{"ok": page.OK, "http": page.HTTP}
 	if page.OK {
 		resp["summary"] = "通过"
@@ -131,7 +132,7 @@ func (s *Server) handleCookieTest(w http.ResponseWriter, r *http.Request) {
 		"http", page.HTTP,
 		"url", probeURL,
 	)
-	writeJSON(w, resp)
+	ports.WriteJSON(w, resp)
 }
 
 func parseAdminForm(r *http.Request) error {
@@ -143,12 +144,12 @@ func parseAdminForm(r *http.Request) error {
 }
 
 func cookieSource(r *http.Request) string {
-	return config.CookieSource(firstNonEmpty(r.PostFormValue("source"), r.FormValue("source")))
+	return config.CookieSource(ports.FirstNonEmpty(r.PostFormValue("source"), r.FormValue("source")))
 }
 
-func (s *Server) draftCookieConfig(r *http.Request) config.DoubanCookieConfig {
+func (h *Handler) draftCookieConfig(r *http.Request) config.DoubanCookieConfig {
 	source := cookieSource(r)
-	mode := strings.ToLower(strings.TrimSpace(firstNonEmpty(
+	mode := strings.ToLower(strings.TrimSpace(ports.FirstNonEmpty(
 		r.PostFormValue("cookie_mode"),
 		r.PostFormValue(config.CookieModeKey(source)),
 	)))
@@ -157,32 +158,32 @@ func (s *Server) draftCookieConfig(r *http.Request) config.DoubanCookieConfig {
 	}
 	return config.DoubanCookieConfig{
 		CookieMode: mode,
-		CookieRaw: firstNonEmpty(
+		CookieRaw: ports.FirstNonEmpty(
 			r.PostFormValue("cookie_raw"),
 			r.PostFormValue(config.CookieRawKey(source)),
 		),
-		CookiecloudURL: firstNonEmpty(
+		CookiecloudURL: ports.FirstNonEmpty(
 			r.PostFormValue("cookiecloud_url"),
 			r.PostFormValue(config.CookieCloudURLKey(source)),
 		),
-		CookiecloudKey: firstNonEmpty(
+		CookiecloudKey: ports.FirstNonEmpty(
 			r.PostFormValue("cookiecloud_key"),
 			r.PostFormValue(config.CookieCloudKeyKey(source)),
 		),
-		CookiecloudPass: firstNonEmpty(
+		CookiecloudPass: ports.FirstNonEmpty(
 			r.PostFormValue("cookiecloud_password"),
 			r.PostFormValue(config.CookieCloudPwdKey(source)),
 		),
 	}
 }
 
-func (s *Server) fetchDraftCookie(ctx context.Context, mode string, draft config.DoubanCookieConfig, source string) (string, error) {
+func (h *Handler) fetchDraftCookie(ctx context.Context, mode string, draft config.DoubanCookieConfig, source string) (string, error) {
 	m := config.ParseCookieMode(mode)
 	if m == config.CookieModeNone {
 		return "", nil
 	}
 	if m == config.CookieModeCookieCloud {
-		ins, err := s.cookieProbe.InspectCookieCloud(ctx, draft, source)
+		ins, err := h.opts.CookieProbe.InspectCookieCloud(ctx, draft, source)
 		if err != nil {
 			return "", err
 		}
@@ -203,7 +204,7 @@ func (s *Server) fetchDraftCookie(ctx context.Context, mode string, draft config
 func cookieProbeURL(r *http.Request, rt *config.HotConfig) string {
 	source := cookieSource(r)
 	if source == "weibo" {
-		raw := firstNonEmpty(
+		raw := ports.FirstNonEmpty(
 			r.PostFormValue("collector.weibo.supertopics"),
 			r.PostFormValue("collector.weibo.users"),
 			r.PostFormValue("urls"),
@@ -226,7 +227,7 @@ func cookieProbeURL(r *http.Request, rt *config.HotConfig) string {
 		}
 		return "https://weibo.com/"
 	}
-	raw := firstNonEmpty(
+	raw := ports.FirstNonEmpty(
 		r.PostFormValue("collector.douban.groups"),
 		r.PostFormValue("groups"),
 	)

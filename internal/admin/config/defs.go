@@ -1,4 +1,4 @@
-package admin
+package config
 
 import (
 	"fmt"
@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 
+	"rent-scout/internal/admin/onboard"
+	"rent-scout/internal/admin/ports"
 	"rent-scout/internal/config"
 	"rent-scout/internal/config/window"
 	"rent-scout/internal/models"
@@ -93,7 +95,7 @@ func cookieBlock(group string, modeKey, rawKey, urlKey, keyKey, pwdKey, pwdVal s
 		Tools: "cookie",
 		Items: []configField{
 			{Key: modeKey, Label: "Cookie 模式", Value: ck.CookieMode, Type: "select", Options: []string{config.CookieModeNone.String(), config.CookieModeRaw.String(), config.CookieModeCookieCloud.String()}, Hint: "none 不带 cookie；raw 粘贴原文；cookiecloud 只填三元组", Group: group},
-			{Key: rawKey, Label: "Cookie 原文", Value: ck.CookieRaw, Type: "password", CanClear: true, Placeholder: "把 Cookie 整段贴进来即可，留空不改已保存的值", Hint: cookiePasteHint(ck.CookieRaw), ShowWhen: config.CookieModeRaw.String(), Group: group},
+			{Key: rawKey, Label: "Cookie 原文", Value: ck.CookieRaw, Type: "password", CanClear: true, Placeholder: "把 Cookie 整段贴进来即可，留空不改已保存的值", Hint: onboard.CookiePasteHint(ck.CookieRaw), ShowWhen: config.CookieModeRaw.String(), Group: group},
 			{Key: urlKey, Label: "CookieCloud 地址", Value: ck.CookiecloudURL, Type: "text", Hint: "如 https://cc.example.com；检测用当前输入，不读库", CanClear: true, ShowWhen: config.CookieModeCookieCloud.String(), Group: group},
 			{Key: keyKey, Label: "CookieCloud UUID", Value: ck.CookiecloudKey, Type: "password", CanClear: true, ShowWhen: config.CookieModeCookieCloud.String(), Group: group},
 			{Key: pwdKey, Label: "CookieCloud 密码", Value: pwdVal, Type: "password", CanClear: true, Hint: "默认掩码显示，点「显示」查看明文；勾选清空可删除", ShowWhen: config.CookieModeCookieCloud.String(), Group: group, Wide: true},
@@ -215,7 +217,7 @@ func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[stri
 		auth = "true"
 	}
 	cookieRawHint := func(ck config.DoubanCookieConfig) string {
-		return cookiePasteHint(ck.CookieRaw)
+		return onboard.CookiePasteHint(ck.CookieRaw)
 	}
 	apiStyle := "openai"
 	ccPass := get(config.KeyDoubanCookieCloudPwd, env.Collector.Douban.CookiecloudPass)
@@ -350,7 +352,6 @@ func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[stri
 			{
 				Title: "高级", Hint: "一般不用改", Class: "bg-slate-50 border-dashed border-slate-200",
 				Items: []configField{
-					{Key: "filter.batch_size", Label: "组批大小", Value: get("filter.batch_size", strconv.Itoa(app.Filter.BatchSize)), Type: "number", Hint: "筛选一次抽干上限，有帖立刻处理不等凑批", Advanced: true},
 					{Key: "filter.ai_batch_size", Label: "AI 批大小", Value: get("filter.ai_batch_size", strconv.Itoa(app.Filter.AIBatchSize)), Type: "number", Hint: "AI 审核从库读 pending 凑满此数（或超时）再调模型", Advanced: true},
 					{Key: "filter.ai_linger", Label: "AI 兜底时间(秒)", Value: get("filter.ai_linger", strconv.Itoa(app.Filter.AILinger)), Type: "number", Hint: "AI 凑不满批时最多等多久再调模型，默认 600（10 分钟）", Advanced: true},
 				},
@@ -482,7 +483,7 @@ func ParseSectionForm(form url.Values, section string, keepSecrets map[string]st
 		if !allowed[key] {
 			return
 		}
-		on := csvHas(joinFormValues(form[key]), targetGroup)
+		on := ports.CSVHas(joinFormValues(form[key]), targetGroup)
 		cur := ""
 		if keepSecrets != nil {
 			cur = keepSecrets[key]
@@ -514,11 +515,11 @@ var secretKeys = map[string]bool{
 	"secret.collector.douban.cookie": true,
 	// setup 阶段留空表示“沿用已存值”，因此 cookie_raw 也必须纳入 secretKeys
 	"secret.collector.douban.cookie_raw": true,
-	"secret.collector.weibo.cookie":  true,
-	"secret.collector.weibo.cookie_raw": true,
-	"secret.notifier.pushplus.token": true,
-	"secret.notifier.feishu.webhook": true,
-	"admin.token":                    true,
+	"secret.collector.weibo.cookie":      true,
+	"secret.collector.weibo.cookie_raw":  true,
+	"secret.notifier.pushplus.token":     true,
+	"secret.notifier.feishu.webhook":     true,
+	"admin.token":                        true,
 }
 
 func isCheckbox(key string) bool {
@@ -582,14 +583,14 @@ func MergeDefaultsInto(updates map[string]string, kv map[string]string) {
 	}
 }
 
-func (s *Server) saveUpdates(updates map[string]string) (bool, error) {
+func (h *Handler) saveUpdates(updates map[string]string) (bool, error) {
 	if len(updates) == 0 {
 		return false, fmt.Errorf("没有有效的配置项")
 	}
 	for k, v := range updates {
 		updates[k] = config.NormalizeValue(v)
 	}
-	current := CurrentConfigKV(s.db)
+	current := CurrentConfigKV(h.opts.DB)
 	needRestart := len(ChangedRestartKeys(current, updates)) > 0
 	merged := config.MergeKV(current, updates)
 	app := config.KVToApp(merged)
@@ -600,10 +601,10 @@ func (s *Server) saveUpdates(updates map[string]string) (bool, error) {
 	if errs := config.ValidateSecrets(env); len(errs) > 0 {
 		return false, fmt.Errorf("校验失败: %s", strings.Join(errs, "; "))
 	}
-	if err := store.SetConfigBatch(s.db, updates); err != nil {
+	if err := store.SetConfigBatch(h.opts.DB, updates); err != nil {
 		return false, err
 	}
-	if err := s.rt.ReloadOnce(); err != nil {
+	if err := h.opts.RT.ReloadOnce(); err != nil {
 		return needRestart, err
 	}
 	return needRestart, nil

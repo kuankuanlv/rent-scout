@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"rent-scout/internal/admin/rules"
 	"rent-scout/internal/config"
 	"rent-scout/internal/models"
 )
@@ -375,7 +376,7 @@ func TestRuleNeedsReplay(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := ruleNeedsReplay(tc.before, tc.after); got != tc.want {
+			if got := rules.RuleNeedsReplay(tc.before, tc.after); got != tc.want {
 				t.Fatalf("ruleNeedsReplay = %v, want %v", got, tc.want)
 			}
 		})

@@ -1,4 +1,4 @@
-package admin
+package rules
 
 import (
 	"errors"
@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"rent-scout/internal/admin/ports"
 	"rent-scout/internal/models"
 	"rent-scout/internal/pkglog"
 	"rent-scout/internal/store"
@@ -42,19 +43,19 @@ var ruleTypes = map[string]bool{
 }
 
 // handleRules 规则管理（/admin/rules）：GET → 302 到配置 tab=rules；POST 新增（PRG）
-func (s *Server) handleRules(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) handleRules(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		s.redirectRules(w, r)
+		h.redirectRules(w, r)
 	case http.MethodPost:
-		s.createRule(w, r)
+		h.createRule(w, r)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
 // loadRuleRows 先 ensure 默认规则，再 ListRules(false) 全量 + RuleHitStats 合并；统计失败不阻塞
-func loadRuleRows(db *store.Store) ([]Row, error) {
+func LoadRuleRows(db *store.Store) ([]Row, error) {
 	log := pkglog.Component(pkglog.Admin)
 	if err := db.EnsureDefaultRule(); err != nil {
 		log.Error("默认规则播种失败", "err", err)
@@ -87,7 +88,7 @@ func loadRuleRows(db *store.Store) ([]Row, error) {
 
 // createRule 新增规则（POST /admin/rules）：name/type/value/priority 表单 → CreateRule
 // 校验：type ∈ 三枚举、value/name 非空、priority 可解析；mode 废弃可忽略；非法 → 400
-func (s *Server) createRule(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) createRule(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "bad form", http.StatusBadRequest)
 		return
@@ -110,19 +111,19 @@ func (s *Server) createRule(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "参数无效", http.StatusBadRequest)
 		return
 	}
-	if _, err := s.db.CreateRule(models.Rule{Name: name, Type: rtype, Mode: mode, Value: value, Enabled: true, Priority: priority}); err != nil {
+	if _, err := h.opts.DB.CreateRule(models.Rule{Name: name, Type: rtype, Mode: mode, Value: value, Enabled: true, Priority: priority}); err != nil {
 		pkglog.Component(pkglog.Admin).Error("规则创建失败", "name", name, "err", err)
 		http.Error(w, "写入失败", http.StatusInternalServerError)
 		return
 	}
 	pkglog.Component(pkglog.Admin).Info("规则已创建", "name", name, "type", rtype, "priority", priority)
-	s.notifyRulesChanged()
-	s.redirectRules(w, r)
+	h.notifyRulesChanged()
+	h.redirectRules(w, r)
 }
 
 // handleRulesID 规则更新/删除（POST /admin/rules/{id} 与 /admin/rules/{id}/delete）
 // 仅接受 POST：GET 等请求一律 405，防止 <a>/<img> 链接触发写库。
-func (s *Server) handleRulesID(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) handleRulesID(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -138,88 +139,88 @@ func (s *Server) handleRulesID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if isDelete {
-		s.deleteRule(w, r, id)
+		h.deleteRule(w, r, id)
 		return
 	}
-	s.updateRule(w, r, id)
+	h.updateRule(w, r, id)
 }
 
 // updateRule 更新规则（POST /admin/rules/{id}）：value/priority/enabled 表单 → UpdateRule
 // name/type 随行内 hidden 回传（本页不支持改名/改型）；mode 废弃可忽略；enabled 由 checkbox 存在性决定
-func (s *Server) updateRule(w http.ResponseWriter, r *http.Request, id int64) {
+func (h *Handler) updateRule(w http.ResponseWriter, r *http.Request, id int64) {
 	if err := r.ParseForm(); err != nil {
-		s.replyRule(w, r, http.StatusBadRequest, "bad form")
+		h.replyRule(w, r, http.StatusBadRequest, "bad form")
 		return
 	}
-	existing, ok, err := s.db.GetRule(id)
+	existing, ok, err := h.opts.DB.GetRule(id)
 	if err != nil {
 		pkglog.Component(pkglog.Admin).Error("规则读取失败", "id", id, "err", err)
-		s.replyRule(w, r, http.StatusInternalServerError, "读取失败")
+		h.replyRule(w, r, http.StatusInternalServerError, "读取失败")
 		return
 	}
 	if !ok {
-		s.replyRule(w, r, http.StatusBadRequest, "参数无效")
+		h.replyRule(w, r, http.StatusBadRequest, "参数无效")
 		return
 	}
-	rtype := firstNonEmpty(r.PostFormValue("rule_type"), r.PostFormValue("type"), existing.Type)
+	rtype := ports.FirstNonEmpty(r.PostFormValue("rule_type"), r.PostFormValue("type"), existing.Type)
 	mode := r.PostFormValue("mode")
 	if mode == "" {
 		mode = existing.Mode
 	}
-	value := firstNonEmpty(r.PostFormValue("value"), existing.Value)
+	value := ports.FirstNonEmpty(r.PostFormValue("value"), existing.Value)
 	if rtype == models.RuleTypeAINatural {
 		value = models.BuiltInAIRuleValue
 	}
-	name := firstNonEmpty(r.PostFormValue("name"), existing.Name)
+	name := ports.FirstNonEmpty(r.PostFormValue("name"), existing.Name)
 	priority := existing.Priority
 	if raw := strings.TrimSpace(r.PostFormValue("priority")); raw != "" {
 		priority, err = strconv.Atoi(raw)
 		if err != nil {
-			s.replyRule(w, r, http.StatusBadRequest, "参数无效")
+			h.replyRule(w, r, http.StatusBadRequest, "参数无效")
 			return
 		}
 	}
 	enabled := r.PostFormValue("enabled") != ""
 	if name == "" || !ruleTypes[rtype] || (rtype != models.RuleTypeAINatural && value == "") {
-		s.replyRule(w, r, http.StatusBadRequest, "参数无效")
+		h.replyRule(w, r, http.StatusBadRequest, "参数无效")
 		return
 	}
 	updated := models.Rule{ID: id, Name: name, Type: rtype, Mode: mode, Value: value, Enabled: enabled, Priority: priority}
-	if err := s.db.UpdateRule(updated); err != nil {
+	if err := h.opts.DB.UpdateRule(updated); err != nil {
 		if errors.Is(err, store.ErrLastEnabledRule) {
-			s.replyRule(w, r, http.StatusBadRequest, err.Error())
+			h.replyRule(w, r, http.StatusBadRequest, err.Error())
 			return
 		}
 		pkglog.Component(pkglog.Admin).Error("规则更新失败", "id", id, "err", err)
-		s.replyRule(w, r, http.StatusInternalServerError, "写入失败")
+		h.replyRule(w, r, http.StatusInternalServerError, "写入失败")
 		return
 	}
 	pkglog.Component(pkglog.Admin).Info("规则已更新", "id", id, "value", value, "priority", priority, "enabled", enabled)
-	if ruleNeedsReplay(existing, updated) {
-		s.notifyRulesChanged()
+	if RuleNeedsReplay(existing, updated) {
+		h.notifyRulesChanged()
 	}
-	s.replyRuleOK(w, r)
+	h.replyRuleOK(w, r)
 }
 
-func (s *Server) replyRuleOK(w http.ResponseWriter, r *http.Request) {
-	if wantsJSON(r) {
-		writeJSON(w, map[string]any{"ok": true})
+func (h *Handler) replyRuleOK(w http.ResponseWriter, r *http.Request) {
+	if ports.WantsJSON(r) {
+		ports.WriteJSON(w, map[string]any{"ok": true})
 		return
 	}
-	s.redirectRules(w, r)
+	h.redirectRules(w, r)
 }
 
-func (s *Server) replyRule(w http.ResponseWriter, r *http.Request, code int, msg string) {
-	if wantsJSON(r) {
-		writeJSONStatus(w, code, map[string]any{"ok": false, "error": msg})
+func (h *Handler) replyRule(w http.ResponseWriter, r *http.Request, code int, msg string) {
+	if ports.WantsJSON(r) {
+		ports.WriteJSONStatus(w, code, map[string]any{"ok": false, "error": msg})
 		return
 	}
 	http.Error(w, msg, code)
 }
 
 // deleteRule 删除规则（POST /admin/rules/{id}/delete）
-func (s *Server) deleteRule(w http.ResponseWriter, r *http.Request, id int64) {
-	if err := s.db.DeleteRule(id); err != nil {
+func (h *Handler) deleteRule(w http.ResponseWriter, r *http.Request, id int64) {
+	if err := h.opts.DB.DeleteRule(id); err != nil {
 		if errors.Is(err, store.ErrLastEnabledRule) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -229,12 +230,12 @@ func (s *Server) deleteRule(w http.ResponseWriter, r *http.Request, id int64) {
 		return
 	}
 	pkglog.Component(pkglog.Admin).Info("规则已删除", "id", id)
-	s.redirectRules(w, r)
+	h.redirectRules(w, r)
 }
 
 // ruleNeedsReplay 更新后是否要重放：只在规则能力变强时（启用、加关键字、改类型）。
 // 纯删关键字、禁用、改名/优先级不触发；整条删除在 deleteRule 侧直接不通知。
-func ruleNeedsReplay(before, after models.Rule) bool {
+func RuleNeedsReplay(before, after models.Rule) bool {
 	if !after.Enabled {
 		return false
 	}
@@ -277,7 +278,7 @@ func ruleKeywordSet(value string) map[string]struct{} {
 }
 
 // redirectRules GET/PRG：回到配置页规则 Tab；鉴权开启时把 token 带回，避免跳回后 401
-func (s *Server) redirectRules(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) redirectRules(w http.ResponseWriter, r *http.Request) {
 	q := url.Values{"tab": {"rules"}}
 	if tok := r.URL.Query().Get("token"); tok != "" {
 		q.Set("token", tok)

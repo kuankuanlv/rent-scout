@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"rent-scout/internal/admin/posts"
 	"rent-scout/internal/config"
 	"rent-scout/internal/models"
 )
@@ -156,16 +157,16 @@ func TestAdminPostsHasBatchSelect(t *testing.T) {
 }
 
 func TestToggleFilterTags(t *testing.T) {
-	if got := toggleFilterTags("", "望京"); got != "望京" {
+	if got := posts.ToggleFilterTags("", "望京"); got != "望京" {
 		t.Errorf("空选加上望京 = %q", got)
 	}
-	if got := toggleFilterTags("望京", "中介"); got != "望京,中介" {
+	if got := posts.ToggleFilterTags("望京", "中介"); got != "望京,中介" {
 		t.Errorf("再选中介 = %q", got)
 	}
-	if got := toggleFilterTags("望京,中介", "望京"); got != "中介" {
+	if got := posts.ToggleFilterTags("望京,中介", "望京"); got != "中介" {
 		t.Errorf("取消望京 = %q", got)
 	}
-	if got := toggleFilterTags("中介", "中介"); got != "" {
+	if got := posts.ToggleFilterTags("中介", "中介"); got != "" {
 		t.Errorf("取消最后一个应清空 = %q", got)
 	}
 }
@@ -175,14 +176,14 @@ func TestSplitFilterTagPreview(t *testing.T) {
 	for i := 0; i < 12; i++ {
 		tags = append(tags, models.FilterTag{Text: string(rune('A' + i)), Count: 12 - i})
 	}
-	top, more := splitFilterTagPreview(tags, 10)
+	top, more := posts.SplitFilterTagPreview(tags, 10)
 	if len(top) != 10 || len(more) != 2 {
 		t.Fatalf("top=%d more=%d, want 10+2", len(top), len(more))
 	}
 	if top[0].Text != "A" || more[0].Text != "K" {
 		t.Errorf("顺序不对 top0=%s more0=%s", top[0].Text, more[0].Text)
 	}
-	if !filterTagsContain(more, "K") || filterTagsContain(top, "K") {
+	if !posts.FilterTagsContain(more, "K") || posts.FilterTagsContain(top, "K") {
 		t.Error("K 应在 more")
 	}
 }

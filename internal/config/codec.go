@@ -76,6 +76,7 @@ func AppToKV(cfg *AppConfig) map[string]string {
 		"filter.ai_enabled":           ai,
 		"filter.batch_size":           strconv.Itoa(cfg.Filter.BatchSize),
 		"filter.ai_batch_size":        strconv.Itoa(cfg.Filter.AIBatchSize),
+		"filter.ai_linger":            strconv.Itoa(cfg.Filter.AILinger),
 		"notifier.batch_size":         strconv.Itoa(cfg.Notifier.BatchSize),
 		"notifier.interval":           strconv.Itoa(cfg.Notifier.Interval),
 		"notifier.channels":           strings.Join(cfg.Notifier.Channels, ","),
@@ -149,7 +150,7 @@ var SectionKeys = map[string][]string{
 		"secret.collector.weibo.cookiecloud_password",
 	},
 	"filter": {
-		"filter.ai_enabled", "filter.batch_size", "filter.ai_batch_size",
+		"filter.ai_enabled", "filter.batch_size", "filter.ai_batch_size", "filter.ai_linger",
 		"secret.filter.llm.api_style",
 		"secret.filter.llm.api_key", "secret.filter.llm.base_url", "secret.filter.llm.model",
 	},
@@ -229,6 +230,9 @@ func KVToApp(kv map[string]string) *AppConfig {
 	}
 	if v := kv["filter.ai_batch_size"]; v != "" {
 		cfg.Filter.AIBatchSize = atoi(v, cfg.Filter.AIBatchSize)
+	}
+	if v := kv["filter.ai_linger"]; v != "" {
+		cfg.Filter.AILinger = atoi(v, cfg.Filter.AILinger)
 	}
 	if v := kv["notifier.batch_size"]; v != "" {
 		cfg.Notifier.BatchSize = atoi(v, cfg.Notifier.BatchSize)

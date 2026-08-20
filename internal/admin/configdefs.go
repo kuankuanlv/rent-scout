@@ -352,6 +352,7 @@ func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[stri
 				Items: []configField{
 					{Key: "filter.batch_size", Label: "组批大小", Value: get("filter.batch_size", strconv.Itoa(app.Filter.BatchSize)), Type: "number", Hint: "筛选一次抽干上限，有帖立刻处理不等凑批", Advanced: true},
 					{Key: "filter.ai_batch_size", Label: "AI 批大小", Value: get("filter.ai_batch_size", strconv.Itoa(app.Filter.AIBatchSize)), Type: "number", Hint: "AI 审核从库读 pending 凑满此数（或超时）再调模型", Advanced: true},
+					{Key: "filter.ai_linger", Label: "AI 兜底时间(秒)", Value: get("filter.ai_linger", strconv.Itoa(app.Filter.AILinger)), Type: "number", Hint: "AI 凑不满批时最多等多久再调模型，默认 600（10 分钟）", Advanced: true},
 				},
 			},
 		}),

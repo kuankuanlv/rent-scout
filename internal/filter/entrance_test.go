@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"rent-scout/internal/config"
-	"rent-scout/internal/pipeline"
+	"rent-scout/internal/batch"
 	"rent-scout/internal/store"
 )
 
@@ -46,8 +46,8 @@ func TestPipelineWaitFullFlags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = pipeline.DefaultLinger
+	_ = batch.DefaultLinger
 	if svc.hard == nil || svc.ai == nil {
-		t.Fatal("pipeline 应构造")
+		t.Fatal("batch 应构造")
 	}
 }

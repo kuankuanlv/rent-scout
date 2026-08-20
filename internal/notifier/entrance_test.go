@@ -21,7 +21,7 @@ func TestNewAlwaysHasPipe(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !svc.Enabled() {
-		t.Fatal("无渠道也应常驻 pipeline")
+		t.Fatal("无渠道也应常驻 batch")
 	}
 }
 

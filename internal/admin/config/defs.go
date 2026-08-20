@@ -21,15 +21,6 @@ const CookieTestPath = "/admin/config/cookie/test"
 // CookieCloudTestPath 只测 CookieCloud 连通和解密，不打豆瓣
 const CookieCloudTestPath = "/admin/config/cookiecloud/test"
 
-// LLMTestPath LLM 连通检测（草稿不写库）
-const LLMTestPath = "/admin/config/llm/test"
-
-// LLMModelsPath 拉取 OpenAI 兼容模型列表（草稿不写库）
-const LLMModelsPath = "/admin/config/llm/models"
-
-// NotifyTestPath 飞书/PushPlus 草稿试发（不写通知账本）
-const NotifyTestPath = "/admin/config/notify/test"
-
 const aiSectionDesc = `本配置当前版本仅用于审核帖子：大模型不参与采集，也不改帖子主状态（collected / passed / rejected）。硬规则（白名单地点、黑名单词）先筛一遍，通过的帖再交给 AI 打徽章，并尽量补全月租、联系方式、通勤描述。
 
 系统提示词固定为「租房信息筛选助手」，筛选标准内置（靠谱个人房源：非中介、非骗子、非不实；不确定宁可拒绝），规则页 AI 条目只作开关、文案只读。passed 不依赖月租或联系是否齐全；这两项与通勤一并尽力抽取，没有就空着。只依据帖文、不做无依据推测。理由限中文约 30 字。user 侧只放本批精简帖，不重复规则。

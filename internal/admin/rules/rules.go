@@ -2,15 +2,16 @@ package rules
 
 import (
 	"errors"
+	"html/template"
 	"net/http"
 	"net/url"
-	"strconv"
-	"strings"
-
 	"rent-scout/internal/admin/ports"
+	"rent-scout/internal/config"
 	"rent-scout/internal/models"
 	"rent-scout/internal/pkglog"
 	"rent-scout/internal/store"
+	"strconv"
+	"strings"
 )
 
 // Row 规则列表行：Rule + 命中统计（Hits/UselessCount，规格 5.5）+ 中文类型标签
@@ -289,3 +290,37 @@ func (h *Handler) redirectRules(w http.ResponseWriter, r *http.Request) {
 	}
 	http.Redirect(w, r, "/admin/config?"+q.Encode(), status)
 }
+
+// Options 规则管理 handler 依赖
+type Options struct {
+	DB             *store.Store
+	RT             *config.HotConfig
+	Tmpl           *template.Template
+	OnRulesChanged func()
+}
+
+// Handler 规则管理（/admin/rules）处理器
+type Handler struct {
+	opts Options
+}
+
+// New 创建规则管理 handler
+func New(opts Options) *Handler {
+	return &Handler{opts: opts}
+}
+
+// notifyRulesChanged 规则变更回调（根包注入，用于触发采集器重载）
+func (h *Handler) notifyRulesChanged() {
+	if h.opts.OnRulesChanged != nil {
+		h.opts.OnRulesChanged()
+	}
+}
+
+// Routes 注册规则管理路由
+func (h *Handler) Routes(mux *http.ServeMux) {
+	mux.HandleFunc("/admin/rules", h.handleRules)
+	mux.HandleFunc("/admin/rules/", h.handleRulesID)
+}
+
+// SetOnRulesChanged 注入规则变更回调（根包装配用）
+func (h *Handler) SetOnRulesChanged(fn func()) { h.opts.OnRulesChanged = fn }

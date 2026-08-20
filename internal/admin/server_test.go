@@ -2,20 +2,22 @@ package admin
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
-	"strings"
-	"testing"
-	"time"
-
 	"rent-scout/internal/admin/ports"
 	"rent-scout/internal/collector/cookie"
 	"rent-scout/internal/config"
 	"rent-scout/internal/filter/ai/llm"
 	"rent-scout/internal/models"
+	"rent-scout/internal/pkglog"
 	"rent-scout/internal/store"
+	"strings"
+	"testing"
+	"time"
 )
 
 // newAdminTestStore 管理面测试用 store 实例（admin 测试需要真实 db 播种数据）
@@ -276,4 +278,132 @@ func postID(t *testing.T, s *store.Store, externalID string) int64 {
 	}
 	t.Fatalf("帖子 %s 未找到", externalID)
 	return 0
+}
+
+func TestHTTPShutdownBudget(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	app := config.DefaultApp()
+	kv := config.MergeKV(config.AppToKV(app), config.SecretsToKV(config.DefaultSecrets()))
+	kv["setup.completed"] = "true"
+	if err := store.SetConfigBatch(s, kv); err != nil {
+		t.Fatal(err)
+	}
+	rt := config.NewHotConfig(s)
+	_ = rt.ReloadOnce()
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	_ = ln.Close()
+
+	svc, err := New(Options{Config: rt, Store: s, Addr: addr})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- svc.Run(ctx) }()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		resp, err := http.Get("http://" + addr + "/healthz")
+		if err == nil {
+			resp.Body.Close()
+			break
+		}
+		if time.Now().After(deadline) {
+			cancel()
+			t.Fatalf("HTTP 未起来: %v", err)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(6 * time.Second):
+		t.Fatal("Shutdown 超过 5s 预算")
+	}
+}
+
+func TestLoginPageForgotTokenHint(t *testing.T) {
+	app := config.DefaultApp()
+	app.Admin.AuthRequired = true
+	app.Admin.Token = "secret-tok"
+	srv := newTestServer(t, app, "secret-tok", nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/login", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"忘记令牌",
+		"管理台访问令牌",
+		"rent-scout-*.log",
+		"admin.token",
+		"kv_config",
+		"db/rent-scout.db",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("登录页缺 %q", want)
+		}
+	}
+}
+
+func TestLogsPage(t *testing.T) {
+	srv := newTestServer(t, &config.AppConfig{}, "", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/logs", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"系统日志", "/admin/logs/stream", "EventSource", "配置 → 常规"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("页面缺 %q", want)
+		}
+	}
+}
+
+func TestLogsRecentJSON(t *testing.T) {
+	pkglog.ResetHubForTest()
+	srv := newTestServer(t, &config.AppConfig{}, "", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/logs/recent?n=20", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d", rec.Code)
+	}
+	var out struct {
+		Logs []pkglog.Line `json:"logs"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Logs == nil {
+		t.Fatal("logs 应为数组")
+	}
+}
+
+func TestLogsPageTokenPassthrough(t *testing.T) {
+	srv := newTestServer(t, &config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}}, "secret", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/logs?token=secret", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "/admin/logs/stream?token=secret") {
+		t.Errorf("SSE 未透传 token")
+	}
 }

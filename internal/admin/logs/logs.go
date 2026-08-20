@@ -3,12 +3,13 @@ package logs
 import (
 	"encoding/json"
 	"fmt"
+	"html/template"
 	"net/http"
+	"rent-scout/internal/admin/ports"
+	"rent-scout/internal/config"
+	"rent-scout/internal/pkglog"
 	"strconv"
 	"time"
-
-	"rent-scout/internal/admin/ports"
-	"rent-scout/internal/pkglog"
 )
 
 // handleLogs 系统日志页（GET /admin/logs）：SSE 滚动，成熟方案是内存 ring + EventSource
@@ -103,4 +104,27 @@ func writeSSE(w http.ResponseWriter, line pkglog.Line) error {
 	}
 	_, err = fmt.Fprintf(w, "data: %s\n\n", b)
 	return err
+}
+
+// Options 日志页面 handler 依赖
+type Options struct {
+	RT   *config.HotConfig
+	Tmpl *template.Template
+}
+
+// Handler 日志页面（/admin/logs）处理器
+type Handler struct {
+	opts Options
+}
+
+// New 创建日志页面 handler
+func New(opts Options) *Handler {
+	return &Handler{opts: opts}
+}
+
+// Routes 注册日志页面路由
+func (h *Handler) Routes(mux *http.ServeMux) {
+	mux.HandleFunc("/admin/logs", h.handleLogs)
+	mux.HandleFunc("/admin/logs/stream", h.handleLogsStream)
+	mux.HandleFunc("/admin/logs/recent", h.handleLogsRecent)
 }

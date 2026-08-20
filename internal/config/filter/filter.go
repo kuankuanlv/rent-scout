@@ -6,6 +6,7 @@ type Config struct {
 	AIEnabled   *bool
 	BatchSize   int
 	AIBatchSize int
+	AILinger    int
 }
 
 type SecretsFilter struct {
@@ -51,6 +52,9 @@ func ApplyDefaults(c *Config) {
 	}
 	if c.AIBatchSize == 0 {
 		c.AIBatchSize = 10
+	}
+	if c.AILinger == 0 {
+		c.AILinger = 600
 	}
 	if c.AIEnabled == nil {
 		enabled := true

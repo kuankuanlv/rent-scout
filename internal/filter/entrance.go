@@ -108,6 +108,15 @@ func New(opts Options) (*FilterService, error) {
 				}
 				return 10
 			},
+			LiveLinger: func() time.Duration {
+				if rt == nil {
+					return batch.DefaultLinger
+				}
+				if n := rt.Get().Filter.AILinger; n > 0 {
+					return time.Duration(n) * time.Second
+				}
+				return batch.DefaultLinger
+			},
 		},
 	)
 	svc = &FilterService{

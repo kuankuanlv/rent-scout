@@ -51,6 +51,7 @@ func DefaultKV() map[string]string {
 		"filter.ai_enabled":    "true",
 		"filter.batch_size":    "20",
 		"filter.ai_batch_size": "10",
+		"filter.ai_linger":     "600",
 		// notifier（channels 留空，避免空 webhook 反复报错）
 		"notifier.batch_size": "10",
 		"notifier.interval":   "7200",

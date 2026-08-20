@@ -510,7 +510,10 @@ var secretKeys = map[string]bool{
 	"secret.filter.llm.api_key":      true,
 	"secret.filter.llm.base_url":     true,
 	"secret.collector.douban.cookie": true,
+	// setup 阶段留空表示“沿用已存值”，因此 cookie_raw 也必须纳入 secretKeys
+	"secret.collector.douban.cookie_raw": true,
 	"secret.collector.weibo.cookie":  true,
+	"secret.collector.weibo.cookie_raw": true,
 	"secret.notifier.pushplus.token": true,
 	"secret.notifier.feishu.webhook": true,
 	"admin.token":                    true,

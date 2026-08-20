@@ -38,8 +38,8 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"sources": items})
 }
 
-// handleSourceAction 源动作（POST /api/sources/{name}/trigger | /enable | /disable，规格 7.1）。
-// trigger → ctrl.Trigger；enable/disable → ctrl.SetEnabled；未知源 → 404；
+// handleSourceAction 源动作（POST /api/sources/{name}/enable | /disable | /reset）。
+// enable/disable → ctrl.SetEnabled；reset 清进度；未知源 → 404；
 // 仅接受 POST（GET 等一律 405，防止 <a>/<img> 链接触发写操作）
 func (s *Server) handleSourceAction(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -74,8 +74,6 @@ func (s *Server) handleSourceAction(w http.ResponseWriter, r *http.Request) {
 	}
 	var err error
 	switch action {
-	case "trigger":
-		err = s.ctrl.Trigger(name)
 	case "enable":
 		err = s.ctrl.SetEnabled(name, true)
 	case "disable":

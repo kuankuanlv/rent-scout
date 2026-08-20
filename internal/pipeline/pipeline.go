@@ -107,8 +107,10 @@ func (c *Consumer[T]) Run(ctx context.Context) {
 		case <-c.stop:
 			return
 		case <-c.trigger:
+			log.Info("信号触发采集")
 			c.step(ctx)
 		case <-ticker.C:
+			log.Info("定时轮询检查")
 			c.step(ctx)
 		}
 	}
@@ -142,6 +144,7 @@ func (c *Consumer[T]) step(ctx context.Context) {
 			log.Error("批处理失败", "err", err, "count", len(batch))
 			return
 		}
+		log.Info("批处理完成", "count", len(batch), "wait_full", c.opts.WaitFull)
 		c.pendingSince = time.Time{}
 		if c.opts.WaitFull || len(batch) < batchSize {
 			return

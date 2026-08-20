@@ -24,12 +24,8 @@ import (
 	"rent-scout/internal/models"
 )
 
-// 编译断言：Source 满足接口。注意 since_id 在内存维持，不跨重启
+// 编译断言：Source 满足接口。
 var _ collector.Source = (*Source)(nil)
-var _ collector.SourcePolicy = (*Source)(nil)
-var _ collector.GroupSkipper = (*Source)(nil)
-var _ collector.TimeWindowLister = (*Source)(nil)
-var _ collector.GroupWatermarker = (*Source)(nil)
 
 func (s *Source) Fingerprint(cfg *config.AppConfig) string {
 	if cfg == nil {

@@ -2,8 +2,6 @@ package douban
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -19,36 +17,6 @@ import (
 	"rent-scout/internal/models"
 )
 var _ collector.Source = (*Douban)(nil)
-var _ collector.SourcePolicy = (*Douban)(nil)
-var _ collector.GroupSkipper = (*Douban)(nil)
-var _ collector.GroupWatermarker = (*Douban)(nil)
-
-func (d *Douban) Fingerprint(cfg *config.AppConfig) string {
-	if cfg == nil {
-		return d.Name()
-	}
-	return d.Name() + "|" + cfg.Collector.Douban.RangeFrom + "|" + hashLines(config.HTTPURLs(cfg.Collector.Douban.Groups))
-}
-
-func (d *Douban) TimeWindow(cfg *config.AppConfig, now time.Time) (time.Time, time.Time, error) {
-	start, end, err := config.ResolveTimeRange(cfg.Collector.Douban.RangeFrom, "now", now)
-	if err != nil {
-		return time.Time{}, time.Time{}, fmt.Errorf("豆瓣拉取范围: %w", err)
-	}
-	return start, end, nil
-}
-
-func (d *Douban) RequestGap(cfg *config.AppConfig) time.Duration {
-	return time.Duration(cfg.Collector.Douban.Interval) * time.Second
-}
-
-func hashLines(lines []string) string {
-	// 简单的哈希，保持包级别兼容
-	var h [8]byte
-	sum := sha256.Sum256([]byte(strings.Join(lines, "\n")))
-	copy(h[:], sum[:8])
-	return hex.EncodeToString(h[:])
-}
 
 const listPageSize = 25 // 豆瓣小组讨论列表每页条数
 

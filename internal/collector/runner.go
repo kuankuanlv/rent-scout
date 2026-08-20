@@ -131,12 +131,6 @@ func (r *Runner) runSourceOnceWithCooldown(ctx context.Context, src Source, trig
 	}
 }
 
-// RunOnce 跑一轮采集。
-func (r *Runner) RunOnce(ctx context.Context, src Source, trigger chan<- struct{}) error {
-	_, err := r.runSourceOnce(ctx, src, trigger)
-	return err
-}
-
 // runSourceOnce 读进度 → 迭代 → 落库；返回本轮有没有写进新帖。
 func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- struct{}) (bool, error) {
 	log.Info(src.Name(), "=== 新一轮采集开始 ===")
@@ -153,68 +147,13 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 	}
 
 	start, end := r.timeWindowForSource(src.Name(), now)
-	// 有水位就从列表头重跑，旧帖靠水位挡
-	itStateCursor := r.startCursorForIterator(prog)
-	it := src.NewIterator(itStateCursor, start, end)
+	it := src.NewIterator(strings.TrimSpace(prog.Page), start, end)
 
-	// SeenNewest：JSON 多目标水位，或单条时间戳
-	watermarks := r.decodeSeenNewest(prog.SeenNewest)
-	catchingUp := prog.CatchingUp()
+	var wroteAny bool
+	lastCheckpoint := strings.TrimSpace(prog.Page)
 
-	// 没声明 TimeOrdered 的源当有序（降序流）
-	timeOrdered := true
-	if to, ok := src.(interface{ TimeOrdered(string) bool }); ok {
-		timeOrdered = to.TimeOrdered(itStateCursor)
-	}
-	wmKeyer, _ := src.(interface{ WatermarkKey(string) string })
-
-	// 回填可翻多页；追新只打首页
-	maxPages := 1
-	if !catchingUp {
-		maxPages = 64
-	}
-
-	var (
-		wroteAny          bool
-		seenNonEmptyValue bool
-		lastCheckpoint    string
-		currentCursor     = itStateCursor
-	)
-
-	for pages := 0; pages < maxPages && it.Next(ctx); pages++ {
-		ck := strings.TrimSpace(it.Checkpoint())
-		if pages > 0 && ck == lastCheckpoint {
-			// checkpoint 没动，当翻完了，防死循环
-			break
-		}
-
-		items := it.Value()
-
-		// 追新：只要严格新于水位的帖
-		if catchingUp && timeOrdered && len(watermarks) > 0 {
-			key := "default"
-			if wmKeyer != nil {
-				if k := strings.TrimSpace(wmKeyer.WatermarkKey(currentCursor)); k != "" {
-					key = k
-				}
-			}
-			if wmTime := store.LookupWatermark(watermarks, key); !wmTime.IsZero() {
-				filtered := items[:0]
-				for _, itv := range items {
-					if itv.PublishedAt.After(wmTime) {
-						filtered = append(filtered, itv)
-					}
-				}
-				items = filtered
-			}
-		}
-
-		// 有序回填：见过内容后又空页，当撞线停
-		if !catchingUp && timeOrdered && seenNonEmptyValue && len(items) == 0 {
-			break
-		}
-
-		for _, item := range items {
+	for it.Next(ctx) {
+		for _, item := range it.Value() {
 			m, err := r.store.ExistsByExternalIDs(src.Name(), []string{item.ExternalID})
 			if err != nil || m[item.ExternalID] {
 				continue
@@ -237,58 +176,24 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 					}
 				}
 			}
-
-			// 回填时抬高水位，下一轮当停止线
-			if !catchingUp && timeOrdered {
-				key := "default"
-				if wmKeyer != nil {
-					if k := strings.TrimSpace(wmKeyer.WatermarkKey(currentCursor)); k != "" {
-						key = k
-					}
-				}
-				oldWM := store.LookupWatermark(watermarks, key)
-				if oldWM.IsZero() || item.PublishedAt.After(oldWM) {
-					watermarks[key] = item.PublishedAt.Format(time.RFC3339Nano)
-				}
-			}
 		}
 
-		if len(items) > 0 {
-			seenNonEmptyValue = true
-		}
-
-		// 每页落完立刻存进度；追新阶段 Page 保持空
-		prog.Fingerprint = wantFP
-		if catchingUp {
-			prog.Page = ""
-		} else {
-			prog.Page = ck
-		}
-		_ = r.store.SetProgress(src.Name(), prog)
-
-		// 下一页游标空了就停
-		if !catchingUp && ck == "" {
-			lastCheckpoint = ck
-			currentCursor = ck
+		ck := strings.TrimSpace(it.Checkpoint())
+		if ck != "" && ck == lastCheckpoint {
 			break
 		}
-
 		lastCheckpoint = ck
-		currentCursor = ck
+		prog.Fingerprint = wantFP
+		prog.Page = ck
+		_ = r.store.SetProgress(src.Name(), prog)
 	}
 
 	if err := it.Err(); err != nil {
-		// Cookie 失效当致命错，外层会冷却
 		if errors.Is(err, cookie.ErrCookieInvalid) {
 			return wroteAny, fmt.Errorf("%w: %v", ErrUnrecoverable, err)
 		}
 		return wroteAny, err
 	}
-
-	// 本轮结束：Page 清空 + 写入水位 → 下一轮进追新
-	prog.Page = ""
-	prog.SeenNewest = store.EncodeWatermarks(watermarks)
-	_ = r.store.SetProgress(src.Name(), prog)
 
 	return wroteAny, nil
 }
@@ -342,29 +247,6 @@ func (r *Runner) timeWindowForSource(sourceName string, now time.Time) (time.Tim
 		days = 7
 	}
 	return now.Add(-time.Duration(days) * 24 * time.Hour), now
-}
-
-// decodeSeenNewest JSON 多目标水位；否则当单条时间戳塞进 default。
-func (r *Runner) decodeSeenNewest(seen string) map[string]string {
-	seen = strings.TrimSpace(seen)
-	if seen == "" {
-		return map[string]string{}
-	}
-	if strings.HasPrefix(seen, "{") {
-		return store.DecodeWatermarks(seen)
-	}
-	return map[string]string{"default": seen}
-}
-
-// startCursorForIterator 有水位从列表头；没有才续 Page。
-func (r *Runner) startCursorForIterator(prog store.SourceProgress) string {
-	if strings.TrimSpace(prog.SeenNewest) != "" {
-		return ""
-	}
-	if strings.TrimSpace(prog.Page) != "" {
-		return strings.TrimSpace(prog.Page)
-	}
-	return ""
 }
 
 func (r *Runner) Sources() []string {

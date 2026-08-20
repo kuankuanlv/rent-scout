@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
@@ -17,8 +15,6 @@ import (
 	"rent-scout/internal/models"
 )
 var _ collector.Source = (*Douban)(nil)
-
-const listPageSize = 25 // 豆瓣小组讨论列表每页条数
 
 // DoubanOptions douban 适配器参数
 type DoubanOptions struct {
@@ -113,103 +109,6 @@ func (d *Douban) Detail(ctx context.Context, item collector.ListItem) (models.Re
 		Status:      models.PostStatusCollected,
 		Raw:         raw,
 	}, nil
-}
-
-// List 抓取一页讨论列表。cursor 格式 "组下标:偏移"（如 "0:25"；"" = 从第一组第一页）。
-// 当前组该页有条目 → 同组下一页 "gi:offset+25"；空页 → 推进到下一组 "gi+1:0"；
-// 最后一组结束或下标越界 → ""（无更多页）。多小组按配置 groups 轮转
-func (d *Douban) List(ctx context.Context, cursor string) ([]collector.ListItem, string, error) {
-	groups := d.groups()
-	if len(groups) == 0 {
-		log.Info(d.Name(), "当前配置豆瓣小组 URL 为空，无需执行")
-		return nil, "", nil
-	}
-	gi, offset := parseListCursor(cursor)
-	if gi >= len(groups) {
-		return nil, "", nil // 已遍历全部小组：结束
-	}
-	// 组 URL 拼接 start 参数（豆瓣分页 start=0, pageSize, 2*pageSize...）
-	u, err := url.Parse(groups[gi])
-	if err != nil {
-		return nil, "", fmt.Errorf("小组 URL 非法: %w", err)
-	}
-	q := u.Query()
-	q.Set("start", strconv.Itoa(offset))
-	u.RawQuery = q.Encode()
-
-	body, err := d.get(ctx, u.String())
-	if err != nil {
-		return nil, "", err
-	}
-	items, err := ParseList(body)
-	if err != nil {
-		return nil, "", err
-	}
-	// 下一页游标：有条目 → 同组下一页；空页 → 下一组
-	next := ""
-	if len(items) > 0 {
-		next = strconv.Itoa(gi) + ":" + strconv.Itoa(offset+listPageSize)
-	} else if gi+1 < len(groups) {
-		next = strconv.Itoa(gi+1) + ":0"
-	}
-	return items, next, nil
-}
-
-// SkipGroup 本组不用再翻了（撞水位/时间窗），直接下一组开头；没有下一组返回空
-func (d *Douban) SkipGroup(cursor string) string {
-	gi, _ := parseListCursor(cursor)
-	if gi+1 >= len(d.groups()) {
-		return ""
-	}
-	return strconv.Itoa(gi+1) + ":0"
-}
-
-func (d *Douban) DescribeCursor(cursor string) string {
-	gi, off := parseListCursor(cursor)
-	if off < 0 {
-		off = 0
-	}
-	return fmt.Sprintf("组%d第%d页", gi+1, off/listPageSize+1)
-}
-
-func (d *Douban) WatermarkKey(cursor string) string {
-	gi, _ := parseListCursor(cursor)
-	groups := d.groups()
-	if gi < 0 || gi >= len(groups) {
-		return ""
-	}
-	return "group:" + doubanGroupID(groups[gi])
-}
-
-func (d *Douban) TimeOrdered(cursor string) bool {
-	return true
-}
-
-func doubanGroupID(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return raw
-	}
-	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
-	for i, p := range parts {
-		if p == "group" && i+1 < len(parts) {
-			return parts[i+1]
-		}
-	}
-	return topicIDFromURL(raw)
-}
-
-// parseListCursor 解析 "组下标:偏移" 游标；非法/空 → 0:0
-func parseListCursor(cursor string) (groupIdx, offset int) {
-	if cursor == "" {
-		return 0, 0
-	}
-	parts := strings.SplitN(cursor, ":", 2)
-	groupIdx, _ = strconv.Atoi(parts[0])
-	if len(parts) == 2 {
-		offset, _ = strconv.Atoi(parts[1])
-	}
-	return groupIdx, offset
 }
 
 // get GET 请求带 cookie；风控响应转错误

@@ -9,12 +9,10 @@ import (
 )
 
 // SourceProgress 每个 source 一份采集进度（JSON 存在 source_state.cursor）。
-// Fingerprint：source 配置身份（相对起点 + 小组等），不含 now。
-// Page：还在往旧帖翻时的页游标；空且 SeenNewest 非空 = 已翻完历史、从首页追新。
+// Fingerprint：source 配置身份；Page：Iterator 黑盒 checkpoint。
 type SourceProgress struct {
 	Fingerprint string `json:"fp"`
 	Page        string `json:"page"`
-	SeenNewest  string `json:"seen_newest"`
 }
 
 // ParseSourceProgress 解析 JSON 进度；非 JSON 或空串视为无进度
@@ -30,59 +28,11 @@ func ParseSourceProgress(raw string) SourceProgress {
 	return p
 }
 
-// DecodeWatermarks 把 seen_newest 解成 目标键→时间（JSON 对象）
-func DecodeWatermarks(seen string) map[string]string {
-	seen = strings.TrimSpace(seen)
-	if seen == "" || !strings.HasPrefix(seen, "{") {
-		return map[string]string{}
-	}
-	var m map[string]string
-	if err := json.Unmarshal([]byte(seen), &m); err != nil || m == nil {
-		return map[string]string{}
-	}
-	return m
-}
-
-func EncodeWatermarks(m map[string]string) string {
-	if len(m) == 0 {
-		return ""
-	}
-	b, err := json.Marshal(m)
-	if err != nil {
-		return ""
-	}
-	return string(b)
-}
-
-func LookupWatermark(m map[string]string, key string) time.Time {
-	if key == "" || len(m) == 0 {
-		return time.Time{}
-	}
-	if v, ok := m[key]; ok {
-		return parseStoredWatermark(v)
-	}
-	return time.Time{}
-}
-
-func parseStoredWatermark(s string) time.Time {
-	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
-		return t
-	}
-	t, _ := time.Parse(time.RFC3339, s)
-	return t
-}
-
-// CatchingUp 历史已翻完，本轮从列表头追新
-func (p SourceProgress) CatchingUp() bool {
-	return strings.TrimSpace(p.Page) == "" && strings.TrimSpace(p.SeenNewest) != ""
-}
-
 func (p SourceProgress) Encode() string {
 	b, err := json.Marshal(struct {
 		Fingerprint string `json:"fp"`
 		Page        string `json:"page"`
-		SeenNewest  string `json:"seen_newest"`
-	}{p.Fingerprint, p.Page, p.SeenNewest})
+	}{p.Fingerprint, p.Page})
 	if err != nil {
 		return ""
 	}

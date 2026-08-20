@@ -28,8 +28,8 @@ type Options struct {
 const DefaultTick = time.Minute
 
 // DefaultLinger 公开配置已移除 linger 字段；代码侧固定兜底间隔
-// AI 等模块的不足批兜底；通知走 notifier.interval
-const DefaultLinger = 120 * time.Second
+// AI 等模块的不足批兜底：默认 10 分钟凑不满批也发；通知走 notifier.interval
+const DefaultLinger = 10 * time.Minute
 
 // Consumer 通用组批触发协议：trigger 主动触发（加速器，丢信号不致命）
 // + tick 定时扫库（热读配置、捞漏）+ WaitFull 时 linger 才把不足批发掉。

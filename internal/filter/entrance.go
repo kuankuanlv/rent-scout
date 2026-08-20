@@ -8,7 +8,7 @@ import (
 	"rent-scout/internal/config/window"
 	"rent-scout/internal/filter/rule"
 	"rent-scout/internal/models"
-	"rent-scout/internal/pipeline"
+	"rent-scout/internal/batch"
 	"rent-scout/internal/pkglog"
 	"rent-scout/internal/store"
 )
@@ -30,8 +30,8 @@ type FilterService struct {
 	rt            *config.HotConfig                  // 热配置：批大小、AI 开关等运行中读取
 	db            *store.Store                       // SQLite：拉帖、回写 AI 结果
 	consumer      *Consumer                          // 硬筛/AI 筛执行器
-	hard          *pipeline.Consumer[models.RentPost] // 硬筛管道（新帖 → 硬规则）
-	ai            *pipeline.Consumer[models.RentPost] // AI 筛管道（pending → LLM 审核）
+	hard          *batch.Consumer[models.RentPost] // 硬筛管道（新帖 → 硬规则）
+	ai            *batch.Consumer[models.RentPost] // AI 筛管道（pending → LLM 审核）
 	collected     chan struct{}                      // 采集入库信号（容量 collectedCap，满则丢）
 	replay        chan struct{}                      // 规则变更 replay 信号（容量 1，满则丢）
 	onNotifyReady func()                             // 筛选落库完成回调（通知消费器立即拉批）
@@ -65,7 +65,7 @@ func New(opts Options) (*FilterService, error) {
 		return nil
 	}
 
-	hardPipe := pipeline.New(
+	hardPipe := batch.New(
 		func(ctx context.Context, limit int) ([]models.RentPost, error) {
 			if rt != nil {
 				if n := rt.Get().Filter.BatchSize; n > 0 {
@@ -75,9 +75,9 @@ func New(opts Options) (*FilterService, error) {
 			return fc.FetchCollected(ctx, limit)
 		},
 		notifyHard,
-		pipeline.Options{
+		batch.Options{
 			BatchSize: 20,
-			Tick:      pipeline.DefaultTick,
+			Tick:      batch.DefaultTick,
 			Component: pkglog.Filter,
 			LiveBatchSize: func() int {
 				if rt == nil {
@@ -90,13 +90,13 @@ func New(opts Options) (*FilterService, error) {
 			},
 		},
 	)
-	aiPipe := pipeline.New(
+	aiPipe := batch.New(
 		fc.FetchAwaitingAI,
 		notifyAI,
-		pipeline.Options{
+		batch.Options{
 			BatchSize: 10,
-			Tick:      pipeline.DefaultTick,
-			Linger:    pipeline.DefaultLinger,
+			Tick:      batch.DefaultTick,
+			Linger:    batch.DefaultLinger,
 			Component: pkglog.AIReview,
 			WaitFull:  true,
 			LiveBatchSize: func() int {

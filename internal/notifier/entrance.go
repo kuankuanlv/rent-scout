@@ -10,7 +10,7 @@ import (
 	"rent-scout/internal/config"
 	"rent-scout/internal/models"
 	"rent-scout/internal/notifier/channels"
-	"rent-scout/internal/pipeline"
+	"rent-scout/internal/batch"
 	"rent-scout/internal/pkglog"
 	"rent-scout/internal/store"
 )
@@ -21,12 +21,12 @@ type Options struct {
 	Store  *store.Store
 }
 
-// NotifierService 通知 pipeline；协程常驻，每轮自己读热配置
+// NotifierService 通知 batch；协程常驻，每轮自己读热配置
 type NotifierService struct {
 	rt   *config.HotConfig                  // 热配置：渠道开关、批大小、发送间隔
 	db   *store.Store                       // SQLite：拉取待通知帖、写通知账本
 	n    *Notifier                          // 通知核心：组批、渠道分发、账本
-	pipe *pipeline.Consumer[models.RentPost] // 拉批管道（fetch → ProcessBatch）
+	pipe *batch.Consumer[models.RentPost] // 拉批管道（fetch → ProcessBatch）
 }
 
 // --- 构造 ---
@@ -42,12 +42,12 @@ func New(opts Options) (*NotifierService, error) {
 	n := NewNotifier(db, NotifierOptions{HotConfig: rt, LiveChannels: live})
 	s := &NotifierService{rt: rt, db: db, n: n}
 
-	s.pipe = pipeline.New(
+	s.pipe = batch.New(
 		s.fetch,
 		n.ProcessBatch,
-		pipeline.Options{
+		batch.Options{
 			BatchSize: config.DefaultNotifierBatch,
-			Tick:      pipeline.DefaultTick,
+			Tick:      batch.DefaultTick,
 			WaitFull:  true,
 			Component: pkglog.Notifier,
 			LiveBatchSize: func() int {
@@ -73,7 +73,7 @@ func New(opts Options) (*NotifierService, error) {
 	return s, nil
 }
 
-// --- pipeline 信号接口 ---
+// --- batch 信号接口 ---
 
 // Signal 上游落库后的非阻塞信号（满批立刻发；不足批继续等 interval）
 func (s *NotifierService) Signal() {
@@ -123,7 +123,7 @@ func (s *NotifierService) Run(ctx context.Context) error {
 	return nil
 }
 
-// --- 内部：pipeline 拉批回调 ---
+// --- 内部：batch 拉批回调 ---
 
 func (s *NotifierService) fetch(ctx context.Context, limit int) ([]models.RentPost, error) {
 	log := pkglog.Component(pkglog.Notifier)

@@ -65,7 +65,7 @@ func (n *Notifier) maxAttempts() int {
 	return n.opts.MaxAttempts
 }
 
-// ProcessBatch 处理一批 passed 帖子（pipeline.BatchFunc）：
+// ProcessBatch 处理一批 passed 帖子（batch.BatchFunc）：
 // 拉批内渠道状态 → 按渠道过滤 → 地址分组 → 每组 Send → 写状态（sent/failed/dead）
 func (n *Notifier) ProcessBatch(ctx context.Context, batch []models.RentPost) error {
 	chs := n.liveChannels()

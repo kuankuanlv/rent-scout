@@ -41,18 +41,6 @@ func (s *Source) Fingerprint(cfg *config.AppConfig) string {
 	return s.Name() + "|" + cfg.Collector.Weibo.RangeFrom + "|" + hashLines(keys)
 }
 
-func (s *Source) TimeWindow(cfg *config.AppConfig, now time.Time) (time.Time, time.Time, error) {
-	start, end, err := config.ResolveTimeRange(cfg.Collector.Weibo.RangeFrom, "now", now)
-	if err != nil {
-		return time.Time{}, time.Time{}, fmt.Errorf("微博拉取范围: %w", err)
-	}
-	return start, end, nil
-}
-
-func (s *Source) RequestGap(cfg *config.AppConfig) time.Duration {
-	return time.Duration(cfg.Collector.Weibo.Interval) * time.Second
-}
-
 func hashLines(lines []string) string {
 	var h [8]byte
 	sum := sha256.Sum256([]byte(strings.Join(lines, "\n")))
@@ -255,42 +243,6 @@ type noopCookie struct{}
 
 func (noopCookie) Get(context.Context, string) (string, error) { return "", nil }
 
-func (s *Source) List(ctx context.Context, cursor string) ([]collector.ListItem, string, error) {
-	start, end := s.defaultWindow()
-	return s.ListInWindow(ctx, cursor, start, end)
-}
-
-func (s *Source) ListInWindow(ctx context.Context, cursor string, start, end time.Time) ([]collector.ListItem, string, error) {
-	ts := s.targets()
-	if len(ts) == 0 {
-		log.Info(s.Name(), "当前配置微博超话、博主均为空，无需执行")
-		return nil, "", nil
-	}
-	gi, offset := parseListCursor(cursor)
-	if gi >= len(ts) {
-		return nil, "", nil
-	}
-	t := ts[gi]
-	var items []collector.ListItem
-	var err error
-	switch t.kind {
-	case "super":
-		items, err = s.listSuper(ctx, t, offset, start, end)
-	default:
-		items, err = s.listUser(ctx, t, offset, start, end)
-	}
-	if err != nil {
-		return nil, "", err
-	}
-	next := ""
-	if len(items) > 0 {
-		next = strconv.Itoa(gi) + ":" + nextPageOffset(offset)
-	} else if gi+1 < len(ts) {
-		next = strconv.Itoa(gi+1) + ":0"
-	}
-	return items, next, nil
-}
-
 func nextPageOffset(offset string) string {
 	return strconv.Itoa(pageFromOffset(offset) + 1)
 }
@@ -304,49 +256,6 @@ func pageFromOffset(offset string) int {
 		}
 	}
 	return page
-}
-
-func (s *Source) SkipGroup(cursor string) string {
-	gi, _ := parseListCursor(cursor)
-	if gi+1 >= len(s.targets()) {
-		return ""
-	}
-	return strconv.Itoa(gi+1) + ":0"
-}
-
-func (s *Source) DescribeCursor(cursor string) string {
-	gi, off := parseListCursor(cursor)
-	ts := s.targets()
-	name := fmt.Sprintf("目标%d", gi+1)
-	if gi >= 0 && gi < len(ts) {
-		t := ts[gi]
-		switch t.kind {
-		case "super":
-			name = "超话「" + t.label + "」"
-		default:
-			name = "博主「" + t.label + "」"
-		}
-	}
-	page := pageFromOffset(off)
-	return fmt.Sprintf("%s第%d页", name, page)
-}
-
-func (s *Source) WatermarkKey(cursor string) string {
-	gi, _ := parseListCursor(cursor)
-	ts := s.targets()
-	if gi < 0 || gi >= len(ts) {
-		return ""
-	}
-	return ts[gi].wmKey
-}
-
-func (s *Source) TimeOrdered(cursor string) bool {
-	gi, _ := parseListCursor(cursor)
-	ts := s.targets()
-	if gi < 0 || gi >= len(ts) {
-		return true
-	}
-	return ts[gi].ordered
 }
 
 func (s *Source) sinceFor(id string) string {
@@ -383,19 +292,6 @@ func (s *Source) mBase() string {
 		return s.mobileBase
 	}
 	return "https://m.weibo.cn"
-}
-
-func (s *Source) defaultWindow() (time.Time, time.Time) {
-	now := time.Now()
-	if s.rt != nil {
-		if app := s.rt.Get(); app != nil {
-			start, end, err := config.ResolveTimeRange(app.Collector.Weibo.RangeFrom, "now", now)
-			if err == nil {
-				return start, end
-			}
-		}
-	}
-	return now.Add(-10 * 24 * time.Hour), now
 }
 
 // Detail 短帖用列表正文；长微博再补全文。正文抠不到联系方式和价格时，只捞博主自己的评论。
@@ -439,21 +335,6 @@ func (s *Source) Detail(ctx context.Context, item collector.ListItem) (models.Re
 		Status:      models.PostStatusCollected,
 		Raw:         content,
 	}, nil
-}
-
-func parseListCursor(cursor string) (groupIdx int, offset string) {
-	if cursor == "" {
-		return 0, "0"
-	}
-	parts := strings.SplitN(cursor, ":", 2)
-	groupIdx, _ = strconv.Atoi(parts[0])
-	if len(parts) == 2 {
-		offset = parts[1]
-	}
-	if offset == "" {
-		offset = "0"
-	}
-	return groupIdx, offset
 }
 
 func (s *Source) cookieSourceFor(rawURL string) string {

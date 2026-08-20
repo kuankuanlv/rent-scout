@@ -21,15 +21,17 @@ type Options struct {
 	Store  *store.Store
 }
 
-// Service 通知 pipeline；协程常驻，每轮自己读热配置
-type Service struct {
-	rt   *config.HotConfig
-	db   *store.Store
-	n    *Notifier
-	pipe *pipeline.Consumer[models.RentPost]
+// NotifierService 通知 pipeline；协程常驻，每轮自己读热配置
+type NotifierService struct {
+	rt   *config.HotConfig                  // 热配置：渠道开关、批大小、发送间隔
+	db   *store.Store                       // SQLite：拉取待通知帖、写通知账本
+	n    *Notifier                          // 通知核心：组批、渠道分发、账本
+	pipe *pipeline.Consumer[models.RentPost] // 拉批管道（fetch → ProcessBatch）
 }
 
-func New(opts Options) (*Service, error) {
+// --- 构造 ---
+
+func New(opts Options) (*NotifierService, error) {
 	rt, db := opts.Config, opts.Store
 	live := func() []Channel {
 		if rt == nil {
@@ -38,7 +40,7 @@ func New(opts Options) (*Service, error) {
 		return channels.Live(rt.Get(), rt.Secrets())
 	}
 	n := NewNotifier(db, NotifierOptions{HotConfig: rt, LiveChannels: live})
-	s := &Service{rt: rt, db: db, n: n}
+	s := &NotifierService{rt: rt, db: db, n: n}
 
 	s.pipe = pipeline.New(
 		s.fetch,
@@ -71,7 +73,59 @@ func New(opts Options) (*Service, error) {
 	return s, nil
 }
 
-func (s *Service) fetch(ctx context.Context, limit int) ([]models.RentPost, error) {
+// --- pipeline 信号接口 ---
+
+// Signal 上游落库后的非阻塞信号（满批立刻发；不足批继续等 interval）
+func (s *NotifierService) Signal() {
+	if s == nil || s.pipe == nil {
+		return
+	}
+	s.pipe.Signal()
+}
+
+func (s *NotifierService) Enabled() bool {
+	return s != nil && s.pipe != nil
+}
+
+// --- 控制台手动发送 ---
+
+const manualNotifyMax = 50
+
+// SendSelected 控制台勾选直发；group 空则用「手动触发-MMddHH:mm:ss」
+func (s *NotifierService) SendSelected(ctx context.Context, ids []int64, groupName string) error {
+	if s == nil || s.n == nil {
+		return fmt.Errorf("通知未配置")
+	}
+	if len(ids) > manualNotifyMax {
+		ids = ids[:manualNotifyMax]
+	}
+	posts, err := s.db.ListPostsByIDs(ids)
+	if err != nil {
+		return err
+	}
+	if len(posts) == 0 {
+		return fmt.Errorf("没有可发送的帖子")
+	}
+	if strings.TrimSpace(groupName) == "" {
+		groupName = group.ManualGroupName(time.Now())
+	}
+	return s.n.ProcessManual(ctx, posts, groupName)
+}
+
+// --- 生命周期 ---
+
+func (s *NotifierService) Run(ctx context.Context) error {
+	if s == nil || s.pipe == nil {
+		<-ctx.Done()
+		return nil
+	}
+	s.pipe.Run(ctx)
+	return nil
+}
+
+// --- 内部：pipeline 拉批回调 ---
+
+func (s *NotifierService) fetch(ctx context.Context, limit int) ([]models.RentPost, error) {
 	log := pkglog.Component(pkglog.Notifier)
 	if s.rt == nil {
 		log.Info("当前配置通知未启用，无需执行")
@@ -111,48 +165,4 @@ func channelSwitchSummary(app *config.AppConfig, env *config.Secrets) string {
 		parts = append(parts, fmt.Sprintf("%s=%t", name, channels.Enabled(app, env, name)))
 	}
 	return strings.Join(parts, "、")
-}
-
-// Signal 上游落库后的非阻塞信号（满批立刻发；不足批继续等 interval）
-func (s *Service) Signal() {
-	if s == nil || s.pipe == nil {
-		return
-	}
-	s.pipe.Signal()
-}
-
-func (s *Service) Enabled() bool {
-	return s != nil && s.pipe != nil
-}
-
-const manualNotifyMax = 50
-
-// SendSelected 控制台勾选直发；group 空则用「手动触发-MMddHH:mm:ss」
-func (s *Service) SendSelected(ctx context.Context, ids []int64, groupName string) error {
-	if s == nil || s.n == nil {
-		return fmt.Errorf("通知未配置")
-	}
-	if len(ids) > manualNotifyMax {
-		ids = ids[:manualNotifyMax]
-	}
-	posts, err := s.db.ListPostsByIDs(ids)
-	if err != nil {
-		return err
-	}
-	if len(posts) == 0 {
-		return fmt.Errorf("没有可发送的帖子")
-	}
-	if strings.TrimSpace(groupName) == "" {
-		groupName = group.ManualGroupName(time.Now())
-	}
-	return s.n.ProcessManual(ctx, posts, groupName)
-}
-
-func (s *Service) Run(ctx context.Context) error {
-	if s == nil || s.pipe == nil {
-		<-ctx.Done()
-		return nil
-	}
-	s.pipe.Run(ctx)
-	return nil
 }

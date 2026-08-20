@@ -25,25 +25,27 @@ type Options struct {
 	Store  *store.Store
 }
 
-// Service 硬筛、AI 筛和规则 replay
-type Service struct {
-	rt            *config.HotConfig
-	db            *store.Store
-	consumer      *Consumer
-	hard          *pipeline.Consumer[models.RentPost]
-	ai            *pipeline.Consumer[models.RentPost]
-	collected     chan struct{}
-	replay        chan struct{}
-	onNotifyReady func() // 筛选落库完成回调（通知消费器用来立即拉批）
+// FilterService 硬筛、AI 筛和规则 replay
+type FilterService struct {
+	rt            *config.HotConfig                  // 热配置：批大小、AI 开关等运行中读取
+	db            *store.Store                       // SQLite：拉帖、回写 AI 结果
+	consumer      *Consumer                          // 硬筛/AI 筛执行器
+	hard          *pipeline.Consumer[models.RentPost] // 硬筛管道（新帖 → 硬规则）
+	ai            *pipeline.Consumer[models.RentPost] // AI 筛管道（pending → LLM 审核）
+	collected     chan struct{}                      // 采集入库信号（容量 collectedCap，满则丢）
+	replay        chan struct{}                      // 规则变更 replay 信号（容量 1，满则丢）
+	onNotifyReady func()                             // 筛选落库完成回调（通知消费器立即拉批）
 }
 
-func New(opts Options) (*Service, error) {
+// --- 构造 ---
+
+func New(opts Options) (*FilterService, error) {
 	rt, db := opts.Config, opts.Store
 	chain := rule.NewRuleChain(nil)
 	fc := NewConsumerWithOptions(chain, db, ConsumerOptions{HotConfig: rt})
 
-	// late bind：pipe 构造在前，Service 赋值在后；筛选成功落库后才触发通知拉批信号
-	var svc *Service
+	// late bind：pipe 构造在前，FilterService 赋值在后；筛选成功落库后才触发通知拉批信号
+	var svc *FilterService
 	notifyHard := func(ctx context.Context, batch []models.RentPost) error {
 		if err := fc.ProcessHard(ctx, batch); err != nil {
 			return err
@@ -108,7 +110,7 @@ func New(opts Options) (*Service, error) {
 			},
 		},
 	)
-	svc = &Service{
+	svc = &FilterService{
 		rt:        rt,
 		db:        db,
 		consumer:  fc,
@@ -120,8 +122,10 @@ func New(opts Options) (*Service, error) {
 	return svc, nil
 }
 
+// --- 回调与信号接口 ---
+
 // SetOnNotifyReady 注册「筛选落库完成」回调（通知消费器用来立即拉批）
-func (s *Service) SetOnNotifyReady(fn func()) {
+func (s *FilterService) SetOnNotifyReady(fn func()) {
 	if s == nil {
 		return
 	}
@@ -129,7 +133,7 @@ func (s *Service) SetOnNotifyReady(fn func()) {
 }
 
 // SignalCollected 采集入库后的非阻塞信号；满则丢
-func (s *Service) SignalCollected() {
+func (s *FilterService) SignalCollected() {
 	if s == nil {
 		return
 	}
@@ -140,7 +144,7 @@ func (s *Service) SignalCollected() {
 }
 
 // SignalRulesChanged 规则变更非阻塞信号；容量 1，满则丢
-func (s *Service) SignalRulesChanged() {
+func (s *FilterService) SignalRulesChanged() {
 	if s == nil {
 		return
 	}
@@ -150,7 +154,9 @@ func (s *Service) SignalRulesChanged() {
 	}
 }
 
-func (s *Service) Run(ctx context.Context) error {
+// --- 生命周期 ---
+
+func (s *FilterService) Run(ctx context.Context) error {
 	if s == nil {
 		<-ctx.Done()
 		return nil
@@ -166,7 +172,9 @@ func (s *Service) Run(ctx context.Context) error {
 	return nil
 }
 
-func (s *Service) bridgeCollected(ctx context.Context) {
+// --- 内部协程 ---
+
+func (s *FilterService) bridgeCollected(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -179,7 +187,7 @@ func (s *Service) bridgeCollected(ctx context.Context) {
 	}
 }
 
-func (s *Service) runReplay(ctx context.Context) {
+func (s *FilterService) runReplay(ctx context.Context) {
 	log := pkglog.Component(pkglog.Filter)
 	for {
 		select {

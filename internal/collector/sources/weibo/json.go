@@ -16,7 +16,11 @@ import (
 	"rent-scout/internal/pkglog"
 )
 
-func (s *Source) listUser(ctx context.Context, t crawlTarget, offset string, start, end time.Time) ([]collector.ListItem, error) {
+// =============================================================================
+// 私有：列表拉取 / 详情补全（供 Iterator / Detail 调用）
+// =============================================================================
+
+func (s *Weibo) listUser(ctx context.Context, t crawlTarget, offset string, start, end time.Time) ([]collector.ListItem, error) {
 	page := pageFromOffset(offset)
 	u, err := url.Parse(s.pcBase() + "/ajax/statuses/searchProfile")
 	if err != nil {
@@ -76,7 +80,7 @@ func parseProfileList(body, uid string) ([]collector.ListItem, error) {
 	return items, nil
 }
 
-func (s *Source) listSuper(ctx context.Context, t crawlTarget, offset string, start, end time.Time) ([]collector.ListItem, error) {
+func (s *Weibo) listSuper(ctx context.Context, t crawlTarget, offset string, start, end time.Time) ([]collector.ListItem, error) {
 	ck, err := s.cookie.Get(ctx, models.SourceWeibo.String())
 	if err != nil && !errors.Is(err, cookie.ErrCookieMissing) {
 		return nil, err
@@ -254,7 +258,7 @@ func filterWindow(items []collector.ListItem, start, end time.Time) []collector.
 	return out
 }
 
-func (s *Source) fetchLongText(ctx context.Context, mblogID string) string {
+func (s *Weibo) fetchLongText(ctx context.Context, mblogID string) string {
 	u := s.pcBase() + "/ajax/statuses/longtext?id=" + url.QueryEscape(mblogID)
 	body, err := s.getSoft(ctx, u)
 	if err != nil {
@@ -271,7 +275,7 @@ func (s *Source) fetchLongText(ctx context.Context, mblogID string) string {
 	return strings.TrimSpace(htmlToPlain(resp.Data.LongTextContent))
 }
 
-func (s *Source) fetchOwnerComments(ctx context.Context, item collector.ListItem) string {
+func (s *Weibo) fetchOwnerComments(ctx context.Context, item collector.ListItem) string {
 	rawURL := s.pcBase() + "/ajax/statuses/buildComments?is_reload=1&id=" + url.QueryEscape(item.ExternalID) + "&is_show_bulletin=2&count=20"
 	if item.Kind == "super" {
 		rawURL = s.mBase() + "/comments/hotflow?id=" + url.QueryEscape(item.ExternalID) + "&mid=" + url.QueryEscape(item.ExternalID) + "&max_id_type=0"

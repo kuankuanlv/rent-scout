@@ -12,8 +12,10 @@ import (
 	"time"
 
 	"rent-scout/internal/config"
+	"rent-scout/internal/config/urls"
+	"rent-scout/internal/config/window"
 	"rent-scout/internal/collector/cookie"
-	"rent-scout/internal/log"
+	"rent-scout/internal/pkglog"
 	"rent-scout/internal/models"
 	"rent-scout/internal/store"
 )
@@ -78,6 +80,8 @@ func (r *Runner) Run(ctx context.Context) {
 	<-ctx.Done()
 }
 
+// runSourceLoop 每个源一条常驻协程：按间隔 tick；未启用只空转；真正抓取走 runSourceOnce。
+// 冷却是旁路：熔断期内跳过本轮，致命错再进冷却，不掺进 run 命名。
 func (r *Runner) runSourceLoop(ctx context.Context, src Source) {
 	name := src.Name()
 	interval := r.roundInterval()
@@ -92,7 +96,13 @@ func (r *Runner) runSourceLoop(ctx context.Context, src Source) {
 			if !r.SourceEnabled(name) {
 				continue
 			}
-			r.runSourceOnceWithCooldown(ctx, src, r.trigger)
+			if r.inCoolDown(name) {
+				continue
+			}
+			_, err := r.runSourceOnce(ctx, src, r.trigger)
+			if err != nil && errors.Is(err, ErrUnrecoverable) {
+				r.enterCoolDown(name, err)
+			}
 		}
 	}
 }
@@ -119,48 +129,66 @@ func (r *Runner) roundInterval() time.Duration {
 	return time.Duration(float64(d) * f)
 }
 
-func (r *Runner) runSourceOnceWithCooldown(ctx context.Context, src Source, trigger chan<- struct{}) {
-	name := src.Name()
-	if until, ok := r.coolDownUntil[name]; ok && time.Now().Before(until) {
-		return
-	}
-	_, err := r.runSourceOnce(ctx, src, trigger)
-	if err != nil && errors.Is(err, ErrUnrecoverable) {
-		log.Warn(name, "致命异常，冷却 1 小时", "err", err)
-		r.coolDownUntil[name] = time.Now().Add(1 * time.Hour)
-	}
+// inCoolDown 还在熔断歇着就不打网
+func (r *Runner) inCoolDown(name string) bool {
+	until, ok := r.coolDownUntil[name]
+	return ok && time.Now().Before(until)
 }
 
-// runSourceOnce 读进度 → 迭代 → 落库；返回本轮有没有写进新帖。
+// enterCoolDown Cookie 挂了这类致命错：歇 1 小时再试
+func (r *Runner) enterCoolDown(name string, err error) {
+	pkglog.SourceWarn(name, "致命异常，冷却 1 小时", "err", err)
+	r.coolDownUntil[name] = time.Now().Add(1 * time.Hour)
+}
+
+// runSourceOnce 读进度 → 开迭代器翻页 → 去重落库；返回本轮有没有写进新帖。
+// 概念：fingerprint=配置身份；page/checkpoint=Iterator 黑盒进度（含水位/offset，Runner 不拆）；时间窗=本轮允许的绝对区间。
 func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- struct{}) (bool, error) {
-	log.Info(src.Name(), "=== 新一轮采集开始 ===")
-	prog, ok, err := r.store.GetProgress(src.Name())
+	name := src.Name()
+	prog, ok, err := r.store.GetProgress(name)
 	if err != nil {
 		return false, err
 	}
 
 	now := time.Now()
 	wantFP := r.fingerprintForSource(src)
+	oldFP := strings.TrimSpace(prog.Fingerprint)
+	checkpoint := strings.TrimSpace(prog.Page)
 	// 配置指纹变了（改时间窗/目标清单）就丢旧进度，从头采
-	if !ok || strings.TrimSpace(prog.Fingerprint) == "" || prog.Fingerprint != wantFP {
+	fpReset := !ok || oldFP == "" || oldFP != wantFP
+	if fpReset {
 		prog = store.SourceProgress{Fingerprint: wantFP}
+		checkpoint = ""
 	}
 
-	start, end := r.timeWindowForSource(src.Name(), now)
-	it := src.NewIterator(strings.TrimSpace(prog.Page), start, end)
+	start, end := r.timeWindowForSource(name, now)
+	pkglog.SourceInfo(name, "=== 新一轮采集开始 ===",
+		"fingerprint", wantFP,
+		"fp_reset", fpReset,
+		"checkpoint", checkpoint,
+		"window_from", start.Format(time.RFC3339),
+		"window_to", end.Format(time.RFC3339),
+	)
+	it := src.NewIterator(checkpoint, start, end)
 
 	var wroteAny bool
-	lastCheckpoint := strings.TrimSpace(prog.Page)
+	lastCheckpoint := checkpoint
+	pageNo := 0
 
 	for it.Next(ctx) {
-		for _, item := range it.Value() {
-			m, err := r.store.ExistsByExternalIDs(src.Name(), []string{item.ExternalID})
+		pageNo++
+		items := it.Value()
+		var newCount, skipExist, detailFail int
+		for _, item := range items {
+			m, err := r.store.ExistsByExternalIDs(name, []string{item.ExternalID})
 			if err != nil || m[item.ExternalID] {
+				skipExist++
 				continue
 			}
 
 			post, err := src.Detail(ctx, item)
 			if err != nil {
+				detailFail++
 				continue
 			}
 			added, err := r.store.InsertPost(post)
@@ -168,6 +196,7 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 				continue
 			}
 			if added {
+				newCount++
 				wroteAny = true
 				if trigger != nil {
 					select {
@@ -179,22 +208,33 @@ func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- s
 		}
 
 		ck := strings.TrimSpace(it.Checkpoint())
+		pkglog.SourceInfo(name, "翻页落库",
+			"page_no", pageNo,
+			"list_items", len(items),
+			"new", newCount,
+			"skip_exist", skipExist,
+			"detail_fail", detailFail,
+			"checkpoint", ck,
+		)
 		if ck != "" && ck == lastCheckpoint {
+			pkglog.SourceInfo(name, "checkpoint 未推进，结束本轮翻页", "checkpoint", ck)
 			break
 		}
 		lastCheckpoint = ck
 		prog.Fingerprint = wantFP
 		prog.Page = ck
-		_ = r.store.SetProgress(src.Name(), prog)
+		_ = r.store.SetProgress(name, prog)
 	}
 
 	if err := it.Err(); err != nil {
+		pkglog.SourceWarn(name, "本轮迭代失败", "pages", pageNo, "err", err)
 		if errors.Is(err, cookie.ErrCookieInvalid) {
 			return wroteAny, fmt.Errorf("%w: %v", ErrUnrecoverable, err)
 		}
 		return wroteAny, err
 	}
 
+	pkglog.SourceInfo(name, "=== 本轮采集结束 ===", "pages", pageNo, "wrote_new", wroteAny, "checkpoint", lastCheckpoint)
 	return wroteAny, nil
 }
 
@@ -210,10 +250,10 @@ func (r *Runner) fingerprintForSource(src Source) string {
 	// 微博包装源没实现 Fingerprint 时，按超话/博主清单自己算
 	if src.Name() == models.SourceWeibo.String() {
 		var keys []string
-		for _, id := range config.WeiboContainerIDs(app.Collector.Weibo.SuperTopics) {
+		for _, id := range urls.WeiboContainerIDs(app.Collector.Weibo.SuperTopics) {
 			keys = append(keys, "super:"+id)
 		}
-		for _, id := range config.WeiboUIDs(app.Collector.Weibo.Users) {
+		for _, id := range urls.WeiboUIDs(app.Collector.Weibo.Users) {
 			keys = append(keys, "user:"+id)
 		}
 		sum := sha256.Sum256([]byte(strings.Join(keys, "\n")))
@@ -232,12 +272,12 @@ func (r *Runner) timeWindowForSource(sourceName string, now time.Time) (time.Tim
 	app := r.rt.Get()
 	switch sourceName {
 	case models.SourceDouban.String():
-		start, end, err := config.ResolveTimeRange(app.Collector.Douban.RangeFrom, app.Collector.Douban.RangeTo, now)
+		start, end, err := window.ResolveTimeRange(app.Collector.Douban.RangeFrom, app.Collector.Douban.RangeTo, now)
 		if err == nil {
 			return start, end
 		}
 	case models.SourceWeibo.String():
-		start, end, err := config.ResolveTimeRange(app.Collector.Weibo.RangeFrom, "now", now)
+		start, end, err := window.ResolveTimeRange(app.Collector.Weibo.RangeFrom, "now", now)
 		if err == nil {
 			return start, end
 		}

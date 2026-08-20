@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"rent-scout/internal/config/urls"
 	"rent-scout/internal/models"
 	"rent-scout/internal/store"
 )
@@ -52,7 +53,7 @@ func TestDefaultValues(t *testing.T) {
 	if len(cfg.Collector.Sources) != 0 {
 		t.Errorf("默认采集源应关闭, got %v", cfg.Collector.Sources)
 	}
-	if n := len(HTTPURLs(cfg.Collector.Douban.Groups)); n != 7 {
+	if n := len(urls.HTTPURLs(cfg.Collector.Douban.Groups)); n != 7 {
 		t.Errorf("内置豆瓣小组 URL = %d, want 7", n)
 	}
 }

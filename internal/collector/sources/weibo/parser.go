@@ -8,7 +8,7 @@ import (
 	"unicode/utf8"
 
 	"rent-scout/internal/collector"
-	"rent-scout/internal/log"
+	"rent-scout/internal/pkglog"
 	"rent-scout/internal/models"
 )
 
@@ -49,7 +49,7 @@ func ParseProfileList(body, uid string) ([]collector.ListItem, error) {
 		}
 		pub, err := time.Parse(WeiboStatusTime, st.CreatedAt)
 		if err != nil {
-			log.Warn(models.SourceWeibo.String(), "博主帖时间解析失败", "mid", mid, "raw", st.CreatedAt)
+			pkglog.SourceWarn(models.SourceWeibo.String(), "博主帖时间解析失败", "mid", mid, "raw", st.CreatedAt)
 			continue
 		}
 		txt := strings.TrimSpace(st.TextRaw)

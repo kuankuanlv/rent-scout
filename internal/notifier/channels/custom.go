@@ -5,16 +5,16 @@ import (
 	"fmt"
 	"strings"
 
-	"rent-scout/internal/notifier"
+	"rent-scout/internal/notifier/port"
 )
 
 // NewWebhookChannel 自定义 webhook：URL + 可选 JSON 模板（缺省发送全字段）
 // 模板为 Go template 字符串，占位符：{{.Title}} {{.Text}} {{.Count}}（v1 简化：只支持占位替换）
-func NewWebhookChannel(rawURL, template string) notifier.Channel {
+func NewWebhookChannel(rawURL, template string) port.Channel {
 	return &webhookChannel{
-		name: notifier.ChannelWebhook,
+		name: port.ChannelWebhook,
 		url:  rawURL,
-		build: func(items []notifier.NotifyItem) ([]byte, error) {
+		build: func(items []port.NotifyItem) ([]byte, error) {
 			text := textPayload(items)
 			if strings.TrimSpace(template) == "" {
 				return json.Marshal(map[string]string{"text": text})

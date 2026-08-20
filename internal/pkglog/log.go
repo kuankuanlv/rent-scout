@@ -54,6 +54,19 @@ func SourceCookieCloud(source string) string {
 	return source + "_cookie_cloud"
 }
 
+// SourceInfo / SourceWarn / SourceError 打到 [xxx_collector]（原 internal/log 薄封装，已并入本包）
+func SourceInfo(source, msg string, args ...any) {
+	Component(SourceCollector(source)).Info(msg, args...)
+}
+
+func SourceWarn(source, msg string, args ...any) {
+	Component(SourceCollector(source)).Warn(msg, args...)
+}
+
+func SourceError(source, msg string, args ...any) {
+	Component(SourceCollector(source)).Error(msg, args...)
+}
+
 // Component 绑定职责名；文本日志由 handler 写成 [duty] 前缀
 func Component(name string) *slog.Logger {
 	return slog.Default().With(dutyKey, name)

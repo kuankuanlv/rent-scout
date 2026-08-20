@@ -4,6 +4,9 @@ import (
 	"context"
 
 	"rent-scout/internal/config"
+	"rent-scout/internal/filter/ai"
+	"rent-scout/internal/filter/rule"
+	"rent-scout/internal/filter/tag"
 	"rent-scout/internal/models"
 	"rent-scout/internal/pkglog"
 	"rent-scout/internal/store"
@@ -11,7 +14,7 @@ import (
 
 // Consumer 硬规则与 AI 审核共用存储与规则链，互不 signal。
 type Consumer struct {
-	chain       *RuleChain
+	chain       *rule.RuleChain
 	store       *store.Store
 	rt          *config.HotConfig
 	aiBatchSize int
@@ -22,7 +25,7 @@ type ConsumerOptions struct {
 	HotConfig   *config.HotConfig
 }
 
-func NewConsumerWithOptions(chain *RuleChain, st *store.Store, opts ConsumerOptions) *Consumer {
+func NewConsumerWithOptions(chain *rule.RuleChain, st *store.Store, opts ConsumerOptions) *Consumer {
 	return &Consumer{chain: chain, store: st, rt: opts.HotConfig, aiBatchSize: opts.AIBatchSize}
 }
 
@@ -34,7 +37,7 @@ func (c *Consumer) FetchCollected(ctx context.Context, limit int) ([]models.Rent
 func (c *Consumer) FetchAwaitingAI(ctx context.Context, limit int) ([]models.RentPost, error) {
 	log := pkglog.Component(pkglog.AIReview)
 	if c.rt != nil {
-		if ev, reason := LiveAIEvaluator(c.rt); ev == nil {
+		if ev, reason := ai.LiveAIEvaluator(c.rt); ev == nil {
 			log.Info(reason)
 			return nil, nil
 		}
@@ -46,7 +49,7 @@ func (c *Consumer) FetchAwaitingAI(ctx context.Context, limit int) ([]models.Ren
 		log.Error("规则读取失败", "err", err)
 		return nil, nil
 	}
-	if len(enabledAIRules(rules)) == 0 {
+	if len(rule.EnabledAIRules(rules)) == 0 {
 		log.Info("当前配置没有启用的 AI 规则，无需执行")
 		return nil, nil
 	}
@@ -125,18 +128,18 @@ func (c *Consumer) processAI(ctx context.Context, batch []models.RentPost) error
 		log.Error("规则读取失败", "err", err)
 		return nil
 	}
-	enabled := enabledAIRules(rules)
+	enabled := rule.EnabledAIRules(rules)
 	log.Info("当前 AI 审核状态", "active_rules", len(enabled), "pending_posts", len(batch))
 
 	if len(batch) == 0 {
 		return nil
 	}
 	if c.rt != nil {
-		if ev, reason := LiveAIEvaluator(c.rt); ev == nil {
+		if ev, reason := ai.LiveAIEvaluator(c.rt); ev == nil {
 			log.Info(reason)
 			return nil
 		} else {
-			c.chain.ai = ev
+			c.chain.SetAI(ev)
 		}
 	} else if !c.chain.HasAI() {
 		return nil
@@ -191,7 +194,7 @@ func (c *Consumer) commitHard(res models.FilterResult, locations []string) error
 			pkglog.Component(pkglog.Filter).Error("筛选结果写库失败", "post_id", res.PostID, "err", err)
 		}
 	}
-	if err := c.store.ReplaceSystemTags(res.PostID, SystemTagsFromHard(res, locations)); err != nil {
+	if err := c.store.ReplaceSystemTags(res.PostID, tag.SystemTagsFromHard(res, locations)); err != nil {
 		pkglog.Component(pkglog.Filter).Error("系统标签写库失败", "post_id", res.PostID, "err", err)
 	}
 	if err := c.store.MarkStatus([]int64{res.PostID}, res.Status); err != nil {

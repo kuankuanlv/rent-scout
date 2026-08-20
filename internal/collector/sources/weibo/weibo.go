@@ -20,68 +20,49 @@ import (
 	"rent-scout/internal/collector"
 	"rent-scout/internal/collector/cookie"
 	"rent-scout/internal/config"
-	"rent-scout/internal/log"
+	"rent-scout/internal/config/urls"
 	"rent-scout/internal/models"
+	"rent-scout/internal/pkglog"
 )
 
-// 编译断言：Source 满足接口。
-var _ collector.Source = (*Source)(nil)
-
-func (s *Source) Fingerprint(cfg *config.AppConfig) string {
-	if cfg == nil {
-		return s.Name()
-	}
-	var keys []string
-	for _, id := range config.WeiboContainerIDs(cfg.Collector.Weibo.SuperTopics) {
-		keys = append(keys, "super:"+id)
-	}
-	for _, id := range config.WeiboUIDs(cfg.Collector.Weibo.Users) {
-		keys = append(keys, "user:"+id)
-	}
-	return s.Name() + "|" + cfg.Collector.Weibo.RangeFrom + "|" + hashLines(keys)
-}
-
-func hashLines(lines []string) string {
-	var h [8]byte
-	sum := sha256.Sum256([]byte(strings.Join(lines, "\n")))
-	copy(h[:], sum[:8])
-	return hex.EncodeToString(h[:])
-}
+var _ collector.Source = (*Weibo)(nil)
 
 const weiboStatusTime = "Mon Jan 02 15:04:05 -0700 2006"
 
+// Options 构造参数
 type Options struct {
-	Config      *config.HotConfig
-	Users       []string
-	SuperTopics []string
-	AjaxBase    string // 测试用 PC ajax 前缀；空则 https://weibo.com
-	MobileBase  string // 测试用手机域前缀；空则 https://m.weibo.cn
-	Cookie      cookie.Provider
-	Client      *http.Client
-	DetailBase  string // 测试用详情前缀；空则 https://m.weibo.cn/detail
+	Config      *config.HotConfig // 热配置；生产读超话/博主；测试可空
+	Users       []string          // 仅测试钉死博主 UID；生产留空走 Config
+	SuperTopics []string          // 仅测试钉死超话 container；生产留空走 Config
+	AjaxBase    string            // 测试用 PC ajax 前缀；空则 https://weibo.com
+	MobileBase  string            // 测试用手机域前缀；空则 https://m.weibo.cn
+	Cookie      cookie.Provider   // cookie 提供器；空则 noop
+	Client      *http.Client      // HTTP 客户端；空则 30s 超时默认
+	DetailBase  string            // 测试用详情前缀；空则 https://m.weibo.cn/detail
 }
 
-type Source struct {
-	rt         *config.HotConfig
-	fixedUsers []string
-	fixedSuper []string
-	ajaxBase   string
-	mobileBase string
-	cookie     cookie.Provider
-	client     *http.Client
-	detailBase string
-	mu         sync.Mutex
-	superSince map[string]string // 超话 id → 下一页 since_id JSON
+// Weibo 微博超话+博主采集源
+type Weibo struct {
+	rt         *config.HotConfig // 热配置，每轮读超话/博主清单
+	fixedUsers []string          // 测试钉死的博主；非空时优先生效
+	fixedSuper []string          // 测试钉死的超话；非空时优先生效
+	ajaxBase   string            // PC ajax 基址覆盖（测试）
+	mobileBase string            // 手机域基址覆盖（测试）
+	cookie     cookie.Provider   // 取 weibo / weibo.cn cookie
+	client     *http.Client      // 发列表/详情请求
+	detailBase string            // 详情页基址覆盖（测试）
+	mu         sync.Mutex        // 保护 superSince
+	superSince map[string]string // 超话 id → 下一页 since_id JSON（列表翻页用）
 }
 
-func New(opts Options) *Source {
+func New(opts Options) *Weibo {
 	if opts.Cookie == nil {
 		opts.Cookie = noopCookie{}
 	}
 	if opts.Client == nil {
 		opts.Client = &http.Client{Timeout: 30 * time.Second}
 	}
-	return &Source{
+	return &Weibo{
 		rt:         opts.Config,
 		fixedUsers: append([]string(nil), opts.Users...),
 		fixedSuper: append([]string(nil), opts.SuperTopics...),
@@ -94,9 +75,94 @@ func New(opts Options) *Source {
 	}
 }
 
-func (s *Source) Name() string { return models.SourceWeibo.String() }
+// =============================================================================
+// collector.Source 实现（NewIterator 在 iterator.go）
+// =============================================================================
 
-func (s *Source) users() []string {
+func (s *Weibo) Name() string { return models.SourceWeibo.String() }
+
+// Fingerprint 配置身份；超话/博主清单或时间窗变了就换指纹，Runner 会重置进度。
+func (s *Weibo) Fingerprint(cfg *config.AppConfig) string {
+	if cfg == nil {
+		return s.Name()
+	}
+	var keys []string
+	for _, id := range urls.WeiboContainerIDs(cfg.Collector.Weibo.SuperTopics) {
+		keys = append(keys, "super:"+id)
+	}
+	for _, id := range urls.WeiboUIDs(cfg.Collector.Weibo.Users) {
+		keys = append(keys, "user:"+id)
+	}
+	return s.Name() + "|" + cfg.Collector.Weibo.RangeFrom + "|" + hashLines(keys)
+}
+
+// Detail 短帖用列表正文；长微博再补全文。正文抠不到联系方式和价格时，只捞博主自己的评论。
+func (s *Weibo) Detail(ctx context.Context, item collector.ListItem) (models.RentPost, error) {
+	content := stripUnfoldChrome(item.Content)
+	if item.Kind == "user" && item.NeedDetail && strings.TrimSpace(item.MblogID) != "" {
+		if full := s.fetchLongText(ctx, item.MblogID); full != "" {
+			content = full
+		}
+	} else if item.NeedDetail && strings.TrimSpace(item.ExternalID) != "" && item.Kind != "user" {
+		base := s.detailBase
+		if base == "" {
+			base = s.mBase() + "/detail"
+		}
+		body, err := s.get(ctx, base+"/"+item.ExternalID)
+		if err != nil {
+			if content == "" {
+				return models.RentPost{}, err
+			}
+		} else if full := parseMobileStatus(body); full != "" {
+			content = full
+		}
+	}
+	if item.AuthorID != "" && !models.HasContact(models.ExtractContact("", content)) && models.ExtractRentPrice("", content) == models.PriceUnknown {
+		if extra := s.fetchOwnerComments(ctx, item); extra != "" {
+			content = strings.TrimSpace(content + "\n" + extra)
+		}
+	}
+	title := strings.TrimSpace(item.Title)
+	if title == "" {
+		title = clipTitle(content)
+	}
+	return models.RentPost{
+		Source:      s.Name(),
+		ExternalID:  item.ExternalID,
+		URL:         item.URL,
+		Title:       title,
+		Content:     content,
+		Author:      item.Author,
+		PublishedAt: item.PublishedAt,
+		Status:      models.PostStatusCollected,
+		Raw:         content,
+	}, nil
+}
+
+// =============================================================================
+// 私有：目标 / 配置
+// =============================================================================
+
+type crawlTarget struct {
+	kind    string // super | user
+	id      string
+	label   string
+	ordered bool
+	wmKey   string // 水位键：super:id / user:id
+}
+
+func (s *Weibo) targets() []crawlTarget {
+	var out []crawlTarget
+	for _, id := range s.supers() {
+		out = append(out, crawlTarget{kind: "super", id: id, label: id, ordered: true, wmKey: "super:" + id})
+	}
+	for _, id := range s.users() {
+		out = append(out, crawlTarget{kind: "user", id: id, label: id, ordered: true, wmKey: "user:" + id})
+	}
+	return out
+}
+
+func (s *Weibo) users() []string {
 	if len(s.fixedUsers) > 0 {
 		return parseWeiboUIDs(s.fixedUsers)
 	}
@@ -108,7 +174,7 @@ func (s *Source) users() []string {
 	return nil
 }
 
-func (s *Source) supers() []string {
+func (s *Weibo) supers() []string {
 	if len(s.fixedSuper) > 0 {
 		return parseWeiboContainerIDs(s.fixedSuper)
 	}
@@ -118,6 +184,142 @@ func (s *Source) supers() []string {
 		}
 	}
 	return nil
+}
+
+func (s *Weibo) sinceFor(id string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.superSince == nil {
+		return ""
+	}
+	return s.superSince[id]
+}
+
+func (s *Weibo) setSince(id, since string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.superSince == nil {
+		s.superSince = map[string]string{}
+	}
+	if strings.TrimSpace(since) == "" {
+		delete(s.superSince, id)
+		return
+	}
+	s.superSince[id] = since
+}
+
+func (s *Weibo) pcBase() string {
+	if s.ajaxBase != "" {
+		return s.ajaxBase
+	}
+	return "https://weibo.com"
+}
+
+func (s *Weibo) mBase() string {
+	if s.mobileBase != "" {
+		return s.mobileBase
+	}
+	return "https://m.weibo.cn"
+}
+
+// =============================================================================
+// 私有：HTTP
+// =============================================================================
+
+func (s *Weibo) cookieSourceFor(rawURL string) string {
+	if u, err := url.Parse(rawURL); err == nil && strings.Contains(u.Host, "weibo.cn") {
+		return "weibo.cn"
+	}
+	return models.SourceWeibo.String()
+}
+
+func (s *Weibo) get(ctx context.Context, rawURL string) (string, error) {
+	return s.doGet(ctx, rawURL, true)
+}
+
+func (s *Weibo) getSoft(ctx context.Context, rawURL string) (string, error) {
+	return s.doGet(ctx, rawURL, false)
+}
+
+func (s *Weibo) doGet(ctx context.Context, rawURL string, strict bool) (string, error) {
+	pkglog.SourceInfo(s.Name(), "请求 "+rawURL)
+	ck, err := s.cookie.Get(ctx, s.cookieSourceFor(rawURL))
+	if err != nil {
+		return "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	req.Header.Set("Referer", "https://weibo.com/")
+	if u, err := url.Parse(rawURL); err == nil {
+		if strings.Contains(u.Host, "m.weibo.cn") || strings.Contains(u.Host, "weibo.cn") {
+			req.Header.Set("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1")
+			req.Header.Set("Referer", "https://m.weibo.cn/")
+			req.Header.Set("X-Requested-With", "XMLHttpRequest")
+			req.Header.Set("Accept", "application/json, text/plain, */*")
+		} else if strings.Contains(u.Path, "/ajax") {
+			req.Header.Set("X-Requested-With", "XMLHttpRequest")
+			req.Header.Set("Accept", "application/json, text/plain, */*")
+			req.Header.Set("Referer", "https://weibo.com/")
+		}
+	}
+	if ck != "" {
+		req.Header.Set("Cookie", ck)
+	}
+	resp, err := s.client.Do(req)
+	if err != nil {
+		if strict {
+			pkglog.SourceError(s.Name(), "请求失败", "url", rawURL, "err", err)
+		}
+		return "", fmt.Errorf("请求失败 %s: %w", rawURL, err)
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		return "", err
+	}
+	body := string(b)
+	if err := weiboResponseErr(resp.StatusCode, body); err != nil {
+		if !strict {
+			return body, err
+		}
+		pkglog.SourceError(s.Name(), "微博请求异常", "url", rawURL, "http", resp.StatusCode, "err", err)
+		return "", err
+	}
+	return body, nil
+}
+
+// =============================================================================
+// 包级工具：解析配置行 / 翻页 / 响应判错 / 正文清洗
+// =============================================================================
+
+type noopCookie struct{}
+
+func (noopCookie) Get(context.Context, string) (string, error) { return "", nil }
+
+func hashLines(lines []string) string {
+	var h [8]byte
+	sum := sha256.Sum256([]byte(strings.Join(lines, "\n")))
+	copy(h[:], sum[:8])
+	return hex.EncodeToString(h[:])
+}
+
+func nextPageOffset(offset string) string {
+	return strconv.Itoa(pageFromOffset(offset) + 1)
+}
+
+func pageFromOffset(offset string) int {
+	page := 1
+	if offset != "" && offset != "0" {
+		page, _ = strconv.Atoi(offset)
+		if page < 1 {
+			page = 1
+		}
+	}
+	return page
 }
 
 func parseWeiboUIDLine(line string) (string, bool) {
@@ -220,189 +422,6 @@ func indexInlineHash(s string) int {
 	return -1
 }
 
-type crawlTarget struct {
-	kind    string
-	id      string
-	label   string
-	ordered bool
-	wmKey   string
-}
-
-func (s *Source) targets() []crawlTarget {
-	var out []crawlTarget
-	for _, id := range s.supers() {
-		out = append(out, crawlTarget{kind: "super", id: id, label: id, ordered: true, wmKey: "super:" + id})
-	}
-	for _, id := range s.users() {
-		out = append(out, crawlTarget{kind: "user", id: id, label: id, ordered: true, wmKey: "user:" + id})
-	}
-	return out
-}
-
-type noopCookie struct{}
-
-func (noopCookie) Get(context.Context, string) (string, error) { return "", nil }
-
-func nextPageOffset(offset string) string {
-	return strconv.Itoa(pageFromOffset(offset) + 1)
-}
-
-func pageFromOffset(offset string) int {
-	page := 1
-	if offset != "" && offset != "0" {
-		page, _ = strconv.Atoi(offset)
-		if page < 1 {
-			page = 1
-		}
-	}
-	return page
-}
-
-func (s *Source) sinceFor(id string) string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.superSince == nil {
-		return ""
-	}
-	return s.superSince[id]
-}
-
-func (s *Source) setSince(id, since string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.superSince == nil {
-		s.superSince = map[string]string{}
-	}
-	if strings.TrimSpace(since) == "" {
-		delete(s.superSince, id)
-		return
-	}
-	s.superSince[id] = since
-}
-
-func (s *Source) pcBase() string {
-	if s.ajaxBase != "" {
-		return s.ajaxBase
-	}
-	return "https://weibo.com"
-}
-
-func (s *Source) mBase() string {
-	if s.mobileBase != "" {
-		return s.mobileBase
-	}
-	return "https://m.weibo.cn"
-}
-
-// Detail 短帖用列表正文；长微博再补全文。正文抠不到联系方式和价格时，只捞博主自己的评论。
-func (s *Source) Detail(ctx context.Context, item collector.ListItem) (models.RentPost, error) {
-	content := stripUnfoldChrome(item.Content)
-	if item.Kind == "user" && item.NeedDetail && strings.TrimSpace(item.MblogID) != "" {
-		if full := s.fetchLongText(ctx, item.MblogID); full != "" {
-			content = full
-		}
-	} else if item.NeedDetail && strings.TrimSpace(item.ExternalID) != "" && item.Kind != "user" {
-		base := s.detailBase
-		if base == "" {
-			base = s.mBase() + "/detail"
-		}
-		body, err := s.get(ctx, base+"/"+item.ExternalID)
-		if err != nil {
-			if content == "" {
-				return models.RentPost{}, err
-			}
-		} else if full := parseMobileStatus(body); full != "" {
-			content = full
-		}
-	}
-	if item.AuthorID != "" && !models.HasContact(models.ExtractContact("", content)) && models.ExtractRentPrice("", content) == models.PriceUnknown {
-		if extra := s.fetchOwnerComments(ctx, item); extra != "" {
-			content = strings.TrimSpace(content + "\n" + extra)
-		}
-	}
-	title := strings.TrimSpace(item.Title)
-	if title == "" {
-		title = clipTitle(content)
-	}
-	return models.RentPost{
-		Source:      s.Name(),
-		ExternalID:  item.ExternalID,
-		URL:         item.URL,
-		Title:       title,
-		Content:     content,
-		Author:      item.Author,
-		PublishedAt: item.PublishedAt,
-		Status:      models.PostStatusCollected,
-		Raw:         content,
-	}, nil
-}
-
-func (s *Source) cookieSourceFor(rawURL string) string {
-	if u, err := url.Parse(rawURL); err == nil && strings.Contains(u.Host, "weibo.cn") {
-		return "weibo.cn"
-	}
-	return models.SourceWeibo.String()
-}
-
-func (s *Source) get(ctx context.Context, rawURL string) (string, error) {
-	return s.doGet(ctx, rawURL, true)
-}
-
-func (s *Source) getSoft(ctx context.Context, rawURL string) (string, error) {
-	return s.doGet(ctx, rawURL, false)
-}
-
-func (s *Source) doGet(ctx context.Context, rawURL string, strict bool) (string, error) {
-	log.Info(s.Name(), "请求 "+rawURL)
-	ck, err := s.cookie.Get(ctx, s.cookieSourceFor(rawURL))
-	if err != nil {
-		return "", err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36")
-	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-	req.Header.Set("Referer", "https://weibo.com/")
-	if u, err := url.Parse(rawURL); err == nil {
-		if strings.Contains(u.Host, "m.weibo.cn") || strings.Contains(u.Host, "weibo.cn") {
-			req.Header.Set("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1")
-			req.Header.Set("Referer", "https://m.weibo.cn/")
-			req.Header.Set("X-Requested-With", "XMLHttpRequest")
-			req.Header.Set("Accept", "application/json, text/plain, */*")
-		} else if strings.Contains(u.Path, "/ajax") {
-			req.Header.Set("X-Requested-With", "XMLHttpRequest")
-			req.Header.Set("Accept", "application/json, text/plain, */*")
-			req.Header.Set("Referer", "https://weibo.com/")
-		}
-	}
-	if ck != "" {
-		req.Header.Set("Cookie", ck)
-	}
-	resp, err := s.client.Do(req)
-	if err != nil {
-		if strict {
-			log.Error(s.Name(), "请求失败", "url", rawURL, "err", err)
-		}
-		return "", fmt.Errorf("请求失败 %s: %w", rawURL, err)
-	}
-	defer resp.Body.Close()
-	b, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-	if err != nil {
-		return "", err
-	}
-	body := string(b)
-	if err := weiboResponseErr(resp.StatusCode, body); err != nil {
-		if !strict {
-			return body, err
-		}
-		log.Error(s.Name(), "微博请求异常", "url", rawURL, "http", resp.StatusCode, "err", err)
-		return "", err
-	}
-	return body, nil
-}
-
 func weiboResponseErr(status int, body string) error {
 	if status == 403 || status == 418 || status == 432 {
 		return fmt.Errorf("%w: http %d", cookie.ErrCookieInvalid, status)
@@ -494,4 +513,3 @@ func htmlToPlain(raw string) string {
 	doc.Find("img").Remove()
 	return stripUnfoldChrome(doc.Text())
 }
-

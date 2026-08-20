@@ -1,6 +1,9 @@
 package config
 
-import "strings"
+import (
+	"strings"
+	"rent-scout/internal/config/collector"
+)
 
 // DefaultKV 一键导入的完整基线配置（参考现网 sqlite 脱敏整理）。
 // 规则：敏感项（cookie/cookiecloud/LLM key/webhook）一律空；鉴权键不包含；
@@ -19,7 +22,7 @@ func DefaultKV() map[string]string {
 		"collector.interval":          "300",
 		"collector.jitter_ratio":      "0.2",
 		"collector.max_age_days":      "7",
-		"collector.douban.groups":     strings.Join(defaultDoubanGroups, "\n"),
+		"collector.douban.groups":     strings.Join(collector.DefaultDoubanGroups, "\n"),
 		"collector.douban.interval":   "3",
 		"collector.douban.range_from": "-10",
 		"collector.douban.range_to":   "now",

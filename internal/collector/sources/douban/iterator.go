@@ -27,6 +27,10 @@ type DoubanIterator struct {
 	err     error
 }
 
+// =============================================================================
+// collector.Source：NewIterator
+// =============================================================================
+
 func (d *Douban) NewIterator(state string, start, end time.Time) collector.Iterator {
 	var s doubanState
 	s.StopLine = start

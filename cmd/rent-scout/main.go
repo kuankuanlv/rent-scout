@@ -6,12 +6,15 @@ import (
 	"os/signal"
 	"syscall"
 
-	adminservice "rent-scout/internal/admin/service"
+	"rent-scout/internal/admin"
 	"rent-scout/internal/app"
-	collectorservice "rent-scout/internal/collector/service"
-	configservice "rent-scout/internal/config/service"
-	filterservice "rent-scout/internal/filter/service"
-	notifierservice "rent-scout/internal/notifier/service"
+	"rent-scout/internal/collector"
+	"rent-scout/internal/collector/cookie"
+	"rent-scout/internal/collector/sources/douban"
+	"rent-scout/internal/collector/sources/weibo"
+	"rent-scout/internal/config"
+	"rent-scout/internal/filter"
+	"rent-scout/internal/notifier"
 	"rent-scout/internal/pkglog"
 )
 
@@ -26,7 +29,7 @@ func main() {
 	}
 	defer cleanup()
 
-	filterSvc, err := filterservice.New(filterservice.Options{
+	filterSvc, err := filter.New(filter.Options{
 		Config: resources.Config,
 		Store:  resources.Store,
 	})
@@ -35,9 +38,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	collectorSvc, err := collectorservice.New(collectorservice.Options{
+	collectorSvc, err := collector.New(collector.Options{
 		Config:        resources.Config,
 		Store:         resources.Store,
+		Sources:       collectorSources(resources.Config),
 		OnPostCreated: filterSvc.SignalCollected,
 	})
 	if err != nil {
@@ -45,7 +49,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	notifierSvc, err := notifierservice.New(notifierservice.Options{
+	notifierSvc, err := notifier.New(notifier.Options{
 		Config: resources.Config,
 		Store:  resources.Store,
 	})
@@ -56,13 +60,13 @@ func main() {
 	// 筛选落库完成 → 立即拉批通知（不再等 linger 兜底）
 	filterSvc.SetOnNotifyReady(notifierSvc.Signal)
 
-	cfgSvc, err := configservice.New(configservice.Options{Hot: resources.Config})
+	cfgSvc, err := config.New(config.Options{Hot: resources.Config})
 	if err != nil {
 		pkglog.Component(pkglog.Main).Error("配置模块初始化失败", "err", err)
 		os.Exit(1)
 	}
 
-	adminSvc, err := adminservice.New(adminservice.Options{
+	adminSvc, err := admin.New(admin.Options{
 		Config:         resources.Config,
 		Store:          resources.Store,
 		Sources:        collectorSvc.Controller(),
@@ -77,4 +81,15 @@ func main() {
 	if err := app.Run(ctx, cfgSvc, collectorSvc, filterSvc, notifierSvc, adminSvc); err != nil {
 		os.Exit(1)
 	}
+}
+
+func collectorSources(rt *config.HotConfig) []collector.Source {
+	cp := cookie.NewHotConfigProvider(rt)
+	d, err := douban.NewDouban(douban.DoubanOptions{Config: rt, Cookie: cp})
+	if err != nil {
+		pkglog.Component(pkglog.Main).Error("豆瓣源初始化失败", "err", err)
+		os.Exit(1)
+	}
+	w := weibo.New(weibo.Options{Config: rt, Cookie: cp})
+	return []collector.Source{d, w}
 }

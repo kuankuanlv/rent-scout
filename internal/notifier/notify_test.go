@@ -1,6 +1,7 @@
 package notifier
 
 import (
+	"rent-scout/internal/notifier/group"
 	"context"
 	"testing"
 )
@@ -16,8 +17,8 @@ func TestChannelConstants(t *testing.T) {
 			t.Error("渠道名为空")
 		}
 	}
-	if GroupUnknown != "未分组" {
-		t.Errorf("未分组标签: %q", GroupUnknown)
+	if group.GroupUnknown != "未分组" {
+		t.Errorf("未分组标签: %q", group.GroupUnknown)
 	}
 }
 

@@ -17,7 +17,7 @@ type weiboState struct {
 
 // WeiboIterator 超话+博主混合流；降序翻到停止线就换目标
 type WeiboIterator struct {
-	s       *Source
+	s       *Weibo
 	start   time.Time
 	end     time.Time
 	state   weiboState
@@ -25,7 +25,11 @@ type WeiboIterator struct {
 	err     error
 }
 
-func (s *Source) NewIterator(state string, start, end time.Time) collector.Iterator {
+// =============================================================================
+// collector.Source：NewIterator
+// =============================================================================
+
+func (s *Weibo) NewIterator(state string, start, end time.Time) collector.Iterator {
 	st := weiboState{
 		Watermarks: make(map[string]string),
 	}

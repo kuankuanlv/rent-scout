@@ -1,6 +1,7 @@
 package config
 
 import (
+	"rent-scout/internal/config/window"
 	"fmt"
 	"strconv"
 	"strings"
@@ -33,11 +34,11 @@ func AppToKV(cfg *AppConfig) map[string]string {
 	if cfg.Admin.AuthRequired {
 		auth = "true"
 	}
-	rangeFrom := CanonicalDayOffset(cfg.Collector.Douban.RangeFrom)
+	rangeFrom := window.CanonicalDayOffset(cfg.Collector.Douban.RangeFrom)
 	if rangeFrom == "" {
 		rangeFrom = "-10"
 	}
-	rangeTo := CanonicalDayOffset(cfg.Collector.Douban.RangeTo)
+	rangeTo := window.CanonicalDayOffset(cfg.Collector.Douban.RangeTo)
 	if rangeTo == "" {
 		rangeTo = "now"
 	}
@@ -49,7 +50,7 @@ func AppToKV(cfg *AppConfig) map[string]string {
 	if weiboInterval <= 0 {
 		weiboInterval = 5
 	}
-	weiboFrom := CanonicalDayOffset(cfg.Collector.Weibo.RangeFrom)
+	weiboFrom := window.CanonicalDayOffset(cfg.Collector.Weibo.RangeFrom)
 	if weiboFrom == "" {
 		weiboFrom = "-10"
 	}
@@ -208,16 +209,16 @@ func KVToApp(kv map[string]string) *AppConfig {
 		cfg.Collector.Weibo.Interval = atoi(v, 0)
 	}
 	if v, ok := kv["collector.weibo.range_from"]; ok {
-		cfg.Collector.Weibo.RangeFrom = CanonicalDayOffset(v)
+		cfg.Collector.Weibo.RangeFrom = window.CanonicalDayOffset(v)
 	}
 	if v := kv["collector.douban.interval"]; v != "" {
 		cfg.Collector.Douban.Interval = atoi(v, 0)
 	}
 	if v, ok := kv["collector.douban.range_from"]; ok {
-		cfg.Collector.Douban.RangeFrom = CanonicalDayOffset(v)
+		cfg.Collector.Douban.RangeFrom = window.CanonicalDayOffset(v)
 	}
 	if v, ok := kv["collector.douban.range_to"]; ok {
-		cfg.Collector.Douban.RangeTo = CanonicalDayOffset(v)
+		cfg.Collector.Douban.RangeTo = window.CanonicalDayOffset(v)
 	}
 	if v, ok := kv["filter.ai_enabled"]; ok && v != "" {
 		b := strings.EqualFold(v, "true") || v == "1" || v == "on"

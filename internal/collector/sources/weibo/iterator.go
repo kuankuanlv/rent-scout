@@ -8,11 +8,14 @@ import (
 	"rent-scout/internal/collector"
 )
 
-// weiboState 多目标混合进度：当前目标、翻页偏移、各目标停止线
+// weiboState 多目标混合进度：各目标停止线（水位）。
+// 注意：ActiveIdx/Offset 是「本轮内」的遍历游标，不跨轮持久化——
+// 若持久化，一旦卡在某个目标段（如博主 0 条），前面的目标（超话）会被永久跳过。
+// 每轮从第一个目标、第一页开始，靠 Watermarks 水位撞线判断停止，保证所有目标都被检查。
 type weiboState struct {
-	ActiveIdx  int               `json:"idx"`    // 目标下标
-	Offset     string            `json:"offset"` // since_id 或页码
-	Watermarks map[string]string `json:"wms"`    // 目标 → 停止线
+	ActiveIdx  int               `json:"idx"`    // 本轮内目标下标（不持久化，NewIterator 归零）
+	Offset     string            `json:"offset"` // 本轮内翻页偏移（不持久化，NewIterator 归零）
+	Watermarks map[string]string `json:"wms"`    // 目标 → 已采到的最新帖时间（持久化，撞线判断）
 }
 
 // WeiboIterator 超话+博主混合流；降序翻到停止线就换目标
@@ -36,6 +39,10 @@ func (s *Weibo) NewIterator(state string, start, end time.Time) collector.Iterat
 	if state != "" {
 		_ = json.Unmarshal([]byte(state), &st)
 	}
+	// 每轮从第一个目标、第一页开始；只保留 Watermarks 水位。
+	// 若沿用上次的 ActiveIdx/Offset，博主 0 条时游标卡住，超话等前面的目标会被永久跳过。
+	st.ActiveIdx = 0
+	st.Offset = ""
 	return &WeiboIterator{
 		s:     s,
 		start: start,

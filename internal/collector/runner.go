@@ -6,811 +6,395 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"log/slog"
 	"math/rand"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"rent-scout/internal/collector/cookie"
 	"rent-scout/internal/config"
+	"rent-scout/internal/collector/cookie"
+	"rent-scout/internal/log"
 	"rent-scout/internal/models"
-	"rent-scout/internal/pkglog"
 	"rent-scout/internal/store"
 )
 
-// Runner 采集调度：每源独立 goroutine（规格 4.5，源间并发）。
-// 单轮流程（调整规格 E）：List → 时间窗过滤（超窗停页）→ 批量查重
-// → 仅新帖 Detail → 入库 → 游标 → 触发信号；轮间间隔 ±jitter 抖动，
-// 失败指数退避（防检测，规格 4.5）。
-// 控制面（规格 7.1）：enabled 启停 + manual 手动触发（容量 1 非阻塞），
-// 由 /api/sources 经 SourceController 接口驱动
+// Runner 只管调度：开循环、落库去重、冷却；翻页细节交给 Iterator。
 type Runner struct {
-	rt      *config.HotConfig
-	store   *store.Store
-	sources []Source
-	trigger chan<- struct{}
-	mu      sync.Mutex
-	enabled map[string]bool
-	manual  map[string]chan struct{}
-	roundNo map[string]int // 进程内按源累加，重启从 1
+	rt            *config.HotConfig
+	store         *store.Store
+	sources       []Source
+	trigger       chan<- struct{}
+	mu            sync.Mutex
+	enabled       map[string]bool
+	// coolDownUntil Cookie 挂了之类的致命错，先歇 1 小时别狂打
+	coolDownUntil map[string]time.Time
 }
 
-// NewRunner 创建调度器
+// NewRunner trigger 有新帖时通知下游（比如通知拉批）；可传 nil。
 func NewRunner(rt *config.HotConfig, st *store.Store, sources []Source, trigger chan<- struct{}) *Runner {
-	enabled := make(map[string]bool, len(sources))
-	manual := make(map[string]chan struct{}, len(sources))
-	for _, src := range sources {
-		enabled[src.Name()] = true
-		manual[src.Name()] = make(chan struct{}, 1)
+	r := &Runner{
+		rt:            rt,
+		store:         st,
+		sources:       append([]Source(nil), sources...),
+		trigger:       trigger,
+		enabled:       map[string]bool{},
+		coolDownUntil: map[string]time.Time{},
 	}
-	return &Runner{rt: rt, store: st, sources: sources, trigger: trigger,
-		enabled: enabled, manual: manual, roundNo: make(map[string]int, len(sources))}
-}
-
-// Run 启动全部源的独立 goroutine（源间并发，互不阻塞）；ctx 取消即全部停止
-func (r *Runner) Run(ctx context.Context) {
-	for _, src := range r.sources {
-		go r.runSource(ctx, src)
-	}
-}
-
-// Sources 源名列表（SourceController 接口实现）
-func (r *Runner) Sources() []string {
-	names := make([]string, 0, len(r.sources))
-	for _, src := range r.sources {
-		names = append(names, src.Name())
-	}
-	return names
-}
-
-// SetEnabled 启停源（SourceController 接口实现）：enabled[name]=on；
-// 启用时无需额外信号——runSource 停用态周期轮询，循环自然恢复；未知源返回错误
-func (r *Runner) SetEnabled(name string, on bool) error {
-	if !r.hasSource(name) {
-		return fmt.Errorf("未知源 %s", name)
-	}
-	r.mu.Lock()
-	r.enabled[name] = on
-	r.mu.Unlock()
-	pkglog.Component(pkglog.SourceCollector(name)).Info("源启停切换", "source", name, "enabled", on)
-	return nil
-}
-
-// Trigger 手动触发一轮（SourceController 接口实现）：非阻塞发信号
-// （满则丢——已有轮次在跑或信号在途）；未知源返回错误
-func (r *Runner) Trigger(name string) error {
-	if !r.hasSource(name) {
-		return fmt.Errorf("未知源 %s", name)
-	}
-	select {
-	case r.manual[name] <- struct{}{}:
-	default: // 满则丢：已有轮次在跑
-	}
-	return nil
-}
-
-func (r *Runner) configEnabled(name string) bool {
-	if r.rt == nil {
-		return true
-	}
-	app := r.rt.Get()
-	if app == nil {
-		return false
-	}
-	for _, s := range app.Collector.Sources {
-		if s == name {
-			return true
-		}
-	}
-	return false
-}
-
-// SourceEnabled 源当前启用态：热配置勾选 ∩ 管理台内存开关（默认开）
-func (r *Runner) SourceEnabled(name string) bool {
-	if !r.configEnabled(name) {
-		return false
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	on, ok := r.enabled[name]
-	if !ok {
-		return true
-	}
-	return on
-}
-
-// hasSource 源名是否在调度清单内
-func (r *Runner) hasSource(name string) bool {
-	for _, src := range r.sources {
-		if src.Name() == name {
-			return true
-		}
-	}
-	return false
-}
-
-// runSource 单源循环：编排「启用检查 → 采集轮次 → 等待下一轮」，细节见各 helper
-func (r *Runner) runSource(ctx context.Context, src Source) {
-	log := pkglog.Component(pkglog.SourceCollector(src.Name()))
-	log.Info("采集协程已启动", "source", src.Name())
-	failStreak := 0
-	for {
-		cfg := r.rt.Get()
-		if !r.SourceEnabled(src.Name()) {
-			if !r.waitWhileDisabled(ctx, src, cfg, log) {
-				return
+	enabledSet := map[string]bool{}
+	if rt != nil {
+		if app := rt.Get(); app != nil {
+			for _, n := range app.Collector.Sources {
+				enabledSet[n] = true
 			}
+		}
+	}
+	for _, src := range sources {
+		if src == nil {
 			continue
 		}
-		t0 := time.Now()
-		_, err := r.runSourceOnce(ctx, src, r.trigger)
-		var ok bool
-		failStreak, ok = r.waitAfterRound(ctx, src, err, t0, cfg, failStreak, log)
-		if !ok {
-			return
+		name := src.Name()
+		// 协程常驻；没勾选时周期轮询跳过
+		r.enabled[name] = enabledSet[name]
+	}
+	// 配置勾了但没挂进 sources 的，也记进 enabled，方便查状态
+	for name, on := range enabledSet {
+		if _, ok := r.enabled[name]; !ok {
+			r.enabled[name] = on
 		}
 	}
+	// 间隔抖动用；JitterRatio=0 时完全固定
+	rand.Seed(time.Now().UnixNano())
+	return r
 }
 
-// waitWhileDisabled 源未启用时的待机：周期轮询恢复判定，仅响应手动触发与 ctx 取消
-func (r *Runner) waitWhileDisabled(ctx context.Context, src Source, cfg *config.AppConfig, log *slog.Logger) bool {
-	prevEnabled := true
+// Run 每个源起一个常驻循环，直到 ctx 取消。
+func (r *Runner) Run(ctx context.Context) {
+	for _, src := range r.sources {
+		if src == nil {
+			continue
+		}
+		go r.runSourceLoop(ctx, src)
+	}
+	<-ctx.Done()
+}
+
+func (r *Runner) runSourceLoop(ctx context.Context, src Source) {
+	name := src.Name()
+	interval := r.roundInterval()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
 	for {
-		if r.SourceEnabled(src.Name()) {
-			return true
-		}
-		if r.configEnabled(src.Name()) {
-			if prevEnabled {
-				log.Info("源已暂停", "source", src.Name())
-			}
-		} else {
-			log.Info("当前配置采集源未启用，无需执行", "source", src.Name())
-		}
-		prevEnabled = false
-		wait := time.Duration(cfg.Collector.SourceInterval(src.Name())) * time.Second
-		if wait > 30*time.Second {
-			wait = 30 * time.Second
-		}
-		if wait <= 0 {
-			wait = time.Second
-		}
 		select {
 		case <-ctx.Done():
-			return false
-		case <-r.manual[src.Name()]:
-			if _, err := r.runSourceOnce(ctx, src, r.trigger); err != nil {
-				log.Warn("手动触发失败", "err", err)
+			return
+		case <-ticker.C:
+			if !r.SourceEnabled(name) {
+				continue
 			}
-		case <-time.After(wait):
+			r.runSourceOnceWithCooldown(ctx, src, r.trigger)
 		}
 	}
 }
 
-// waitAfterRound 一轮采集后的等待：失败指数退避，成功按配置间隔+抖动；返回下一轮 failStreak 与是否继续
-func (r *Runner) waitAfterRound(ctx context.Context, src Source, err error, t0 time.Time, cfg *config.AppConfig, failStreak int, log *slog.Logger) (int, bool) {
-	if err != nil {
-		failStreak++
-		wait := time.Duration(1<<min(failStreak-1, 5)) * time.Minute
-		log.Warn("本轮失败，等待下一轮", "err", err, "耗时", time.Since(t0).Round(time.Millisecond).String(),
-			"wait_s", int(wait.Seconds()), "attempt", failStreak)
-		return failStreak, waitRound(ctx, r.manual[src.Name()], wait)
+func (r *Runner) roundInterval() time.Duration {
+	if r.rt == nil || r.rt.Get() == nil {
+		return 300 * time.Second
 	}
-	interval := time.Duration(cfg.Collector.SourceInterval(src.Name())) * time.Second
-	wait := jittered(interval, cfg.Collector.JitterRatio)
-	log.Info("等待下一轮", "wait_s", int(wait.Seconds()))
-	return 0, waitRound(ctx, r.manual[src.Name()], wait)
+	sec := r.rt.Get().Collector.Interval
+	if sec <= 0 {
+		sec = 300
+	}
+	d := time.Duration(sec) * time.Second
+	// 随机抖一点间隔，比例 0 就不抖
+	j := r.rt.Get().Collector.JitterRatio
+	if j <= 0 {
+		return d
+	}
+	// 落在 [1-j, 1+j] 倍
+	f := 1 + (rand.Float64()*2-1)*j
+	if f < 0.01 {
+		f = 0.01
+	}
+	return time.Duration(float64(d) * f)
 }
 
-func waitRound(ctx context.Context, manual <-chan struct{}, wait time.Duration) bool {
-	select {
-	case <-ctx.Done():
-		return false
-	case <-manual:
-		return true
-	case <-time.After(wait):
-		return true
+func (r *Runner) runSourceOnceWithCooldown(ctx context.Context, src Source, trigger chan<- struct{}) {
+	name := src.Name()
+	if until, ok := r.coolDownUntil[name]; ok && time.Now().Before(until) {
+		return
+	}
+	_, err := r.runSourceOnce(ctx, src, trigger)
+	if err != nil && errors.Is(err, ErrUnrecoverable) {
+		log.Warn(name, "致命异常，冷却 1 小时", "err", err)
+		r.coolDownUntil[name] = time.Now().Add(1 * time.Hour)
 	}
 }
 
-type roundResult struct {
-	Round      int
-	NewPosts   int
-	ListCount  int
-	Fetched    []string
-	NextPos    string
-	SeenNewest string
-	WindowFrom string
-	WindowTo   string
-}
-
-// RunOnce 跑一轮采集（测试与手动触发共用）
+// RunOnce 跑一轮采集。
 func (r *Runner) RunOnce(ctx context.Context, src Source, trigger chan<- struct{}) error {
 	_, err := r.runSourceOnce(ctx, src, trigger)
 	return err
 }
 
-const maxPagesPerGroup = 10  // 单个搜索/小组本轮最多翻这么多页，后面页更旧就该换组
-const maxPagesPerRound = 200 // 整轮总页数上限，防止死循环；13 个搜索各 1 页也够
-const listPageSize = 25      // 和豆瓣小组讨论列表每页条数一致
+// runSourceOnce 读进度 → 迭代 → 落库；返回本轮有没有写进新帖。
+func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- struct{}) (bool, error) {
+	log.Info(src.Name(), "=== 新一轮采集开始 ===")
+	prog, ok, err := r.store.GetProgress(src.Name())
+	if err != nil {
+		return false, err
+	}
 
-// runSourceOnce 单轮采集：每个搜索都从第1页看起，水位只决定本组要不要继续翻页
-func (r *Runner) runSourceOnce(ctx context.Context, src Source, trigger chan<- struct{}) (roundResult, error) {
-	log := pkglog.Component(pkglog.SourceCollector(src.Name()))
-	cfg := r.rt.Get()
 	now := time.Now()
-
-	// 1. 初始化参数与状态
-	start, end, err := sourceTimeWindow(src.Name(), cfg, now)
-	if err != nil {
-		return roundResult{}, err
-	}
-	prog, _, err := r.store.GetProgress(src.Name())
-	if err != nil {
-		return roundResult{}, err
-	}
-	fp := sourceFingerprint(src.Name(), cfg)
-	if prog.Fingerprint != "" && fingerprintIdentity(prog.Fingerprint) != fingerprintIdentity(fp) {
-		log.Info("时间窗或目标清单变了，重置采集进度", "source", src.Name(), "old", prog.Fingerprint, "new", fp)
-		prog = store.SourceProgress{}
-	}
-	prog.Fingerprint = fp
-	catchUp := prog.CatchingUp()
-	listCursor := ""
-	winFrom := start.Format("01-02 15:04")
-	winTo := end.Format("01-02 15:04")
-	round := r.nextRound(src.Name())
-	log.Info(fmt.Sprintf("============ %s 第%d轮开始 %s ============", src.Name(), round, roundMode(catchUp)))
-	log.Info(fmt.Sprintf("【%s 第%d轮 时间窗=%s~%s 水位=%s %s】",
-		src.Name(), round, winFrom, winTo, formatWatermark(prog.SeenNewest), formatRoundScope(src)))
-
-	// 2. 状态上下文
-	wms := store.DecodeWatermarks(prog.SeenNewest)
-	var wm time.Time
-	wmKey := ""
-	wmOrdered := false
-	loadGroupWM := func(cursor string) {
-		wmKey, wmOrdered = watermarkMeta(src, cursor)
-		if !wmOrdered || wmKey == "" {
-			wm = time.Time{}
-			return
-		}
-		wm = store.LookupWatermark(wms, wmKey)
-	}
-	loadGroupWM(listCursor)
-
-	newPosts, listCount, pages := 0, 0, 0
-	fetched := make([]string, 0, maxPagesPerRound)
-	firstHTTP := true
-	mode := roundMode(catchUp)
-
-	// 3. 闭包 Helper：写进度、组切换/封口（next 空串=整轮结束）、请求节流
-	persist := func() error {
-		prog.Fingerprint = fp
-		prog.SeenNewest = store.EncodeWatermarks(wms)
-		return r.store.SetProgress(src.Name(), prog)
-	}
-	// advanceCursor 把游标推进到 next：空串表示无更多页 → 封口收尾；
-	// 否则更新进度游标继续翻。返回 finished=true 时调用方应结束本轮
-	advanceCursor := func(next, reason string, idle bool) (bool, error) {
-		g1, _ := parsePageCursor(listCursor)
-		g2, _ := parsePageCursor(next)
-		if idle && (next == "" || g1 != g2) {
-			log.Info(fmt.Sprintf("【%s 第%d轮 %s %s，未收集到任何新帖】", src.Name(), round, describeCursor(src, listCursor), reason))
-		}
-		if m := nextGroupMsg(src.Name(), round, listCursor, next, func(c string) string { return describeCursor(src, c) }); m != "" {
-			log.Info(m)
-		}
-		if next == "" {
-			prog = sealProgress(prog, wms)
-			return true, persist()
-		}
-		if !catchUp {
-			prog.Page = next
-		}
-		listCursor = next
-		return false, persist()
-	}
-	pace := func() {
-		if firstHTTP {
-			firstHTTP = false
-			return
-		}
-		var gap time.Duration
-		if p, ok := src.(SourcePolicy); ok {
-			gap = p.RequestGap(cfg)
-		}
-		if gap > 0 {
-			select {
-			case <-ctx.Done():
-			case <-time.After(gap):
-			}
-		}
-	}
-	out := func() roundResult {
-		return roundResult{
-			Round: round, NewPosts: newPosts, ListCount: listCount,
-			Fetched: append([]string(nil), fetched...),
-			NextPos: formatNextPos(prog), SeenNewest: prog.SeenNewest,
-			WindowFrom: winFrom, WindowTo: winTo,
-		}
-	}
-	endRound := func() {
-		log.Info(fmt.Sprintf("============ %s 第%d轮结束 共%d页 列表%d条 新帖%d条 下次=%s ============",
-			src.Name(), round, len(fetched), listCount, newPosts, formatNextPos(prog)))
-	}
-	activeG, groupNew, pagesInGroup := 0, 0, 0
-	type numbered struct {
-		idx int
-		it  ListItem
+	wantFP := r.fingerprintForSource(src)
+	// 配置指纹变了（改时间窗/目标清单）就丢旧进度，从头采
+	if !ok || strings.TrimSpace(prog.Fingerprint) == "" || prog.Fingerprint != wantFP {
+		prog = store.SourceProgress{Fingerprint: wantFP}
 	}
 
-	for pages < maxPagesPerRound {
-		// 组切换：新组重置组内计数与水位
-		g, _ := parsePageCursor(listCursor)
-		if pages == 0 || g != activeG {
-			activeG = g
-			groupNew = 0
-			pagesInGroup = 0
-			loadGroupWM(listCursor)
-			log.Info(fmt.Sprintf("【%s 第%d轮 开始%s】", src.Name(), round, describeCursor(src, listCursor)))
+	start, end := r.timeWindowForSource(src.Name(), now)
+	// 有水位就从列表头重跑，旧帖靠水位挡
+	itStateCursor := r.startCursorForIterator(prog)
+	it := src.NewIterator(itStateCursor, start, end)
+
+	// SeenNewest：JSON 多目标水位，或单条时间戳
+	watermarks := r.decodeSeenNewest(prog.SeenNewest)
+	catchingUp := prog.CatchingUp()
+
+	// 没声明 TimeOrdered 的源当有序（降序流）
+	timeOrdered := true
+	if to, ok := src.(interface{ TimeOrdered(string) bool }); ok {
+		timeOrdered = to.TimeOrdered(itStateCursor)
+	}
+	wmKeyer, _ := src.(interface{ WatermarkKey(string) string })
+
+	// 回填可翻多页；追新只打首页
+	maxPages := 1
+	if !catchingUp {
+		maxPages = 64
+	}
+
+	var (
+		wroteAny          bool
+		seenNonEmptyValue bool
+		lastCheckpoint    string
+		currentCursor     = itStateCursor
+	)
+
+	for pages := 0; pages < maxPages && it.Next(ctx); pages++ {
+		ck := strings.TrimSpace(it.Checkpoint())
+		if pages > 0 && ck == lastCheckpoint {
+			// checkpoint 没动，当翻完了，防死循环
+			break
 		}
-		// 本组页数用尽：换下一组，或收尾结束
-		if pagesInGroup >= maxPagesPerGroup {
-			ng := skipGroup(src, listCursor)
-			if ng == "" {
-				finished, err := advanceCursor("", "本组页数用尽", groupNew == 0)
-				if err != nil {
-					return roundResult{}, err
-				}
-				if finished {
-					break
+
+		items := it.Value()
+
+		// 追新：只要严格新于水位的帖
+		if catchingUp && timeOrdered && len(watermarks) > 0 {
+			key := "default"
+			if wmKeyer != nil {
+				if k := strings.TrimSpace(wmKeyer.WatermarkKey(currentCursor)); k != "" {
+					key = k
 				}
 			}
-			finished, err := advanceCursor(ng, "本组页数用尽", groupNew == 0)
+			if wmTime := store.LookupWatermark(watermarks, key); !wmTime.IsZero() {
+				filtered := items[:0]
+				for _, itv := range items {
+					if itv.PublishedAt.After(wmTime) {
+						filtered = append(filtered, itv)
+					}
+				}
+				items = filtered
+			}
+		}
+
+		// 有序回填：见过内容后又空页，当撞线停
+		if !catchingUp && timeOrdered && seenNonEmptyValue && len(items) == 0 {
+			break
+		}
+
+		for _, item := range items {
+			m, err := r.store.ExistsByExternalIDs(src.Name(), []string{item.ExternalID})
+			if err != nil || m[item.ExternalID] {
+				continue
+			}
+
+			post, err := src.Detail(ctx, item)
 			if err != nil {
-				return roundResult{}, err
-			}
-			if finished {
-				break
-			}
-			continue
-		}
-		pace()
-		pageLabel := describeCursor(src, listCursor)
-		items, next, err := listItems(ctx, src, listCursor, start, end)
-		if err != nil {
-			if cookieDead(err) {
-				log.Error("cookie 失效，本轮结束", "err", err)
-				endRound()
-				return out(), nil
-			}
-			return roundResult{}, fmt.Errorf("列表页: %w", err)
-		}
-		pages++
-		pagesInGroup++
-		listCount += len(items)
-		fetched = append(fetched, pageLabel)
-		log.Info(fmt.Sprintf("【%s 第%d轮 %s %s 本页%d条】",
-			src.Name(), round, mode, pageLabel, len(items)))
-		var fresh []numbered
-		stop := false
-		hitWm, hitOld := false, false
-		tooNew := 0
-		for i, it := range items {
-			if wmOrdered && catchUp && !wm.IsZero() && !it.PublishedAt.After(wm) {
-				stop = true
-				hitWm = true
-				break
-			}
-			if it.PublishedAt.Before(start) {
-				stop = true
-				hitOld = true
-				break
-			}
-			if it.PublishedAt.After(end) {
-				tooNew++
 				continue
-			}
-			fresh = append(fresh, numbered{idx: i + 1, it: it})
-			if wmOrdered && wmKey != "" && it.PublishedAt.After(wm) {
-				wm = it.PublishedAt
-				wms[wmKey] = wm.Format(time.RFC3339Nano)
-			}
-		}
-		if len(fresh) == 0 {
-			if skip := formatSkipSummary(0, tooNew, hitWm, hitOld); skip != "" {
-				log.Info(fmt.Sprintf("【%s 第%d轮 %s 跳过 %s】", src.Name(), round, pageLabel, skip))
-			}
-			idleReason := "本页无帖"
-			if hitWm {
-				idleReason = "到水位线"
-			} else if hitOld {
-				idleReason = "超出时间窗"
-			}
-			if stop {
-				if hitOld {
-					log.Info(fmt.Sprintf("【%s 第%d轮 %s 已超出时间窗，本搜索后续页更旧，不再翻页】", src.Name(), round, pageLabel))
-				}
-				// 无更多页则收尾结束，否则换下一组
-				finished, err := advanceCursor(skipGroup(src, listCursor), idleReason, groupNew == 0)
-				if err != nil {
-					return roundResult{}, err
-				}
-				if finished {
-					break
-				}
-				continue
-			}
-			// 空页：游标有下一页则继续翻，否则本轮收尾
-			finished, err := advanceCursor(next, idleReason, groupNew == 0)
-			if err != nil {
-				return roundResult{}, err
-			}
-			if finished {
-				break
-			}
-			continue
-		}
-		ids := make([]string, 0, len(fresh))
-		for _, n := range fresh {
-			ids = append(ids, n.it.ExternalID)
-		}
-		existing, err := r.store.ExistsByExternalIDs(src.Name(), ids)
-		if err != nil {
-			return roundResult{}, err
-		}
-		existN := 0
-		for _, n := range fresh {
-			it := n.it
-			if existing[it.ExternalID] {
-				existN++
-				continue
-			}
-			pace()
-			post, err := src.Detail(ctx, it)
-			if err != nil {
-				if cookieDead(err) {
-					log.Error("cookie 失效，本轮结束", "id", it.ExternalID, "err", err)
-					_ = persist()
-					endRound()
-					return out(), nil
-				}
-				log.Warn("详情拉取失败已跳过", "id", it.ExternalID, "err", err)
-				continue
-			}
-			log.Info(fmt.Sprintf("【%s 第%d轮 %s 第%d条 新帖 %s】",
-				src.Name(), round, pageLabel, n.idx, strings.TrimSpace(it.Title)))
-			if post.CollectedAt.IsZero() {
-				post.CollectedAt = time.Now()
 			}
 			added, err := r.store.InsertPost(post)
 			if err != nil {
-				return roundResult{}, fmt.Errorf("入库: %w", err)
+				continue
 			}
 			if added {
-				newPosts++
-				groupNew++
+				wroteAny = true
+				if trigger != nil {
+					select {
+					case trigger <- struct{}{}:
+					default:
+					}
+				}
 			}
-		}
-		if skip := formatSkipSummary(existN, tooNew, hitWm, hitOld); skip != "" {
-			log.Info(fmt.Sprintf("【%s 第%d轮 %s 跳过 %s】", src.Name(), round, pageLabel, skip))
+
+			// 回填时抬高水位，下一轮当停止线
+			if !catchingUp && timeOrdered {
+				key := "default"
+				if wmKeyer != nil {
+					if k := strings.TrimSpace(wmKeyer.WatermarkKey(currentCursor)); k != "" {
+						key = k
+					}
+				}
+				oldWM := store.LookupWatermark(watermarks, key)
+				if oldWM.IsZero() || item.PublishedAt.After(oldWM) {
+					watermarks[key] = item.PublishedAt.Format(time.RFC3339Nano)
+				}
+			}
 		}
 
-		if stop {
-			idleReason := "到水位线"
-			if hitOld {
-				idleReason = "超出时间窗"
-				log.Info(fmt.Sprintf("【%s 第%d轮 %s 已超出时间窗，本搜索后续页更旧，不再翻页】", src.Name(), round, pageLabel))
-			}
-			finished, err := advanceCursor(skipGroup(src, listCursor), idleReason, groupNew == 0)
-			if err != nil {
-				return roundResult{}, err
-			}
-			if finished {
-				break
-			}
-			continue
+		if len(items) > 0 {
+			seenNonEmptyValue = true
 		}
-		finished, err := advanceCursor(next, "", groupNew == 0)
-		if err != nil {
-			return roundResult{}, err
+
+		// 每页落完立刻存进度；追新阶段 Page 保持空
+		prog.Fingerprint = wantFP
+		if catchingUp {
+			prog.Page = ""
+		} else {
+			prog.Page = ck
 		}
-		if finished {
+		_ = r.store.SetProgress(src.Name(), prog)
+
+		// 下一页游标空了就停
+		if !catchingUp && ck == "" {
+			lastCheckpoint = ck
+			currentCursor = ck
 			break
 		}
+
+		lastCheckpoint = ck
+		currentCursor = ck
 	}
-	if newPosts > 0 && trigger != nil {
-		select {
-		case trigger <- struct{}{}:
-		default:
+
+	if err := it.Err(); err != nil {
+		// Cookie 失效当致命错，外层会冷却
+		if errors.Is(err, cookie.ErrCookieInvalid) {
+			return wroteAny, fmt.Errorf("%w: %v", ErrUnrecoverable, err)
 		}
+		return wroteAny, err
 	}
-	endRound()
-	return out(), nil
+
+	// 本轮结束：Page 清空 + 写入水位 → 下一轮进追新
+	prog.Page = ""
+	prog.SeenNewest = store.EncodeWatermarks(watermarks)
+	_ = r.store.SetProgress(src.Name(), prog)
+
+	return wroteAny, nil
 }
 
-func sealProgress(p store.SourceProgress, wms map[string]string) store.SourceProgress {
-	p.Page = ""
-	if len(wms) > 0 {
-		p.SeenNewest = store.EncodeWatermarks(wms)
+// fingerprintForSource 配置身份；变了就重置进度。源自己能算就用源的。
+func (r *Runner) fingerprintForSource(src Source) string {
+	if r.rt == nil || r.rt.Get() == nil {
+		return src.Name()
 	}
-	return p
-}
-
-func parseWatermark(s string) time.Time {
-	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
-		return t
+	app := r.rt.Get()
+	if fp, ok := src.(interface{ Fingerprint(*config.AppConfig) string }); ok {
+		return fp.Fingerprint(app)
 	}
-	t, _ := time.Parse(time.RFC3339, s)
-	return t
-}
-
-func sourceFingerprint(name string, cfg *config.AppConfig) string {
-	if cfg == nil {
-		return name
-	}
-	if name == models.SourceDouban.String() {
-		return name + "|" + cfg.Collector.Douban.RangeFrom + "|" + hashLines(config.HTTPURLs(cfg.Collector.Douban.Groups))
-	}
-	if name == models.SourceWeibo.String() {
-		return name + "|" + cfg.Collector.Weibo.RangeFrom + "|" + hashLines(weiboTargetKeys(cfg))
-	}
-	return name + "|from=" + strconv.Itoa(cfg.Collector.MaxAgeDays)
-}
-
-func weiboTargetKeys(cfg *config.AppConfig) []string {
-	var keys []string
-	for _, id := range config.WeiboContainerIDs(cfg.Collector.Weibo.SuperTopics) {
-		keys = append(keys, "super:"+id)
-	}
-	for _, id := range config.WeiboUIDs(cfg.Collector.Weibo.Users) {
-		keys = append(keys, "user:"+id)
-	}
-	return keys
-}
-
-func hashLines(lines []string) string {
-	sum := sha256.Sum256([]byte(strings.Join(lines, "\n")))
-	return hex.EncodeToString(sum[:8])
-}
-
-// fingerprintIdentity 比时间窗和目标清单；旧指纹第三段若是 URL 则忽略
-func fingerprintIdentity(fp string) string {
-	fp = strings.TrimSpace(fp)
-	parts := strings.Split(fp, "|")
-	if len(parts) < 2 {
-		return fp
-	}
-	id := parts[0] + "|" + parts[1]
-	if len(parts) >= 3 {
-		third := parts[2]
-		if strings.Contains(third, "://") || strings.HasPrefix(third, "http") {
-			return id
+	// 微博包装源没实现 Fingerprint 时，按超话/博主清单自己算
+	if src.Name() == models.SourceWeibo.String() {
+		var keys []string
+		for _, id := range config.WeiboContainerIDs(app.Collector.Weibo.SuperTopics) {
+			keys = append(keys, "super:"+id)
 		}
-		id += "|" + third
-	}
-	return id
-}
-
-// sourceTimeWindow 起点用相对天数（如 -10）；终点永远是 now，不进指纹
-func sourceTimeWindow(name string, cfg *config.AppConfig, now time.Time) (time.Time, time.Time, error) {
-	if name == models.SourceDouban.String() {
-		start, end, err := config.ResolveTimeRange(cfg.Collector.Douban.RangeFrom, "now", now)
-		if err != nil {
-			return time.Time{}, time.Time{}, fmt.Errorf("豆瓣拉取范围: %w", err)
+		for _, id := range config.WeiboUIDs(app.Collector.Weibo.Users) {
+			keys = append(keys, "user:"+id)
 		}
-		return start, end, nil
+		sum := sha256.Sum256([]byte(strings.Join(keys, "\n")))
+		var h [8]byte
+		copy(h[:], sum[:8])
+		return models.SourceWeibo.String() + "|" + app.Collector.Weibo.RangeFrom + "|" + hex.EncodeToString(h[:])
 	}
-	if name == models.SourceWeibo.String() {
-		start, end, err := config.ResolveTimeRange(cfg.Collector.Weibo.RangeFrom, "now", now)
-		if err != nil {
-			return time.Time{}, time.Time{}, fmt.Errorf("微博拉取范围: %w", err)
-		}
-		return start, end, nil
-	}
-	maxAge := cfg.Collector.MaxAgeDays
-	if maxAge <= 0 {
-		maxAge = 7
-	}
-	return now.Add(-time.Duration(maxAge) * 24 * time.Hour), now, nil
+	return src.Name()
 }
 
-// jittered 间隔随机抖动：interval * (1 ± jitter)
-func jittered(interval time.Duration, jitter float64) time.Duration {
-	if jitter <= 0 {
-		return interval
+// timeWindowForSource 绝对时间窗；豆瓣/微博走各自 Range，其它用 MaxAgeDays。
+func (r *Runner) timeWindowForSource(sourceName string, now time.Time) (time.Time, time.Time) {
+	if r.rt == nil || r.rt.Get() == nil {
+		return now.Add(-7 * 24 * time.Hour), now
 	}
-	ratio := 1 + (rand.Float64()*2-1)*jitter
-	return time.Duration(float64(interval) * ratio)
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func cookieDead(err error) bool {
-	return errors.Is(err, cookie.ErrCookieInvalid) || errors.Is(err, cookie.ErrCookieMissing)
-}
-
-func (r *Runner) requestGap(src Source) time.Duration {
-	if r.rt == nil {
-		return 0
-	}
-	cfg := r.rt.Get()
-	if cfg == nil {
-		return 0
-	}
-	n := 0
-	switch src.Name() {
+	app := r.rt.Get()
+	switch sourceName {
 	case models.SourceDouban.String():
-		n = cfg.Collector.Douban.Interval
+		start, end, err := config.ResolveTimeRange(app.Collector.Douban.RangeFrom, app.Collector.Douban.RangeTo, now)
+		if err == nil {
+			return start, end
+		}
 	case models.SourceWeibo.String():
-		n = cfg.Collector.Weibo.Interval
-	}
-	if n <= 0 {
-		return 0
-	}
-	return time.Duration(n) * time.Second
-}
-
-func listItems(ctx context.Context, src Source, cursor string, start, end time.Time) ([]ListItem, string, error) {
-	if w, ok := src.(TimeWindowLister); ok {
-		return w.ListInWindow(ctx, cursor, start, end)
-	}
-	return src.List(ctx, cursor)
-}
-
-func formatWatermark(s string) string {
-	m := store.DecodeWatermarks(s)
-	if len(m) == 0 {
-		if strings.TrimSpace(s) == "" {
-			return "无"
-		}
-		return s
-	}
-	if len(m) == 1 {
-		for _, v := range m {
-			t := parseWatermark(v)
-			if t.IsZero() {
-				return v
-			}
-			return t.Format("01-02 15:04")
+		start, end, err := config.ResolveTimeRange(app.Collector.Weibo.RangeFrom, "now", now)
+		if err == nil {
+			return start, end
 		}
 	}
-	return fmt.Sprintf("%d个目标", len(m))
-}
-
-// formatPageCursor 豆瓣游标转成人话：组从 1 数，页=offset/25+1
-func formatPageCursor(cursor string) string {
-	g, p := parsePageCursor(cursor)
-	return fmt.Sprintf("组%d第%d页", g, p)
-}
-
-func parsePageCursor(cursor string) (group1, page int) {
-	gi, off := 0, 0
-	c := strings.TrimSpace(cursor)
-	if c != "" {
-		parts := strings.SplitN(c, ":", 2)
-		gi, _ = strconv.Atoi(parts[0])
-		if len(parts) == 2 {
-			off, _ = strconv.Atoi(parts[1])
-		}
+	days := app.Collector.MaxAgeDays
+	if days <= 0 {
+		days = 7
 	}
-	if off < 0 {
-		off = 0
-	}
-	return gi + 1, off/listPageSize + 1
+	return now.Add(-time.Duration(days) * 24 * time.Hour), now
 }
 
-func roundMode(catchUp bool) string {
-	if catchUp {
-		return "追新"
+// decodeSeenNewest JSON 多目标水位；否则当单条时间戳塞进 default。
+func (r *Runner) decodeSeenNewest(seen string) map[string]string {
+	seen = strings.TrimSpace(seen)
+	if seen == "" {
+		return map[string]string{}
 	}
-	return "翻历史"
+	if strings.HasPrefix(seen, "{") {
+		return store.DecodeWatermarks(seen)
+	}
+	return map[string]string{"default": seen}
 }
 
-func (r *Runner) nextRound(name string) int {
+// startCursorForIterator 有水位从列表头；没有才续 Page。
+func (r *Runner) startCursorForIterator(prog store.SourceProgress) string {
+	if strings.TrimSpace(prog.SeenNewest) != "" {
+		return ""
+	}
+	if strings.TrimSpace(prog.Page) != "" {
+		return strings.TrimSpace(prog.Page)
+	}
+	return ""
+}
+
+func (r *Runner) Sources() []string {
+	names := make([]string, 0, len(r.sources))
+	for _, src := range r.sources { names = append(names, src.Name()) }
+	return names
+}
+
+func (r *Runner) SetEnabled(name string, on bool) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.roundNo == nil {
-		r.roundNo = map[string]int{}
+	if _, ok := r.enabled[name]; !ok {
+		return fmt.Errorf("未知源 %s", name)
 	}
-	r.roundNo[name]++
-	return r.roundNo[name]
+	r.enabled[name] = on
+	return nil
 }
 
-func describeCursor(src Source, cursor string) string {
-	if d, ok := src.(CursorDescriber); ok {
-		if s := strings.TrimSpace(d.DescribeCursor(cursor)); s != "" {
-			return s
+func (r *Runner) SourceEnabled(name string) bool {
+	// 配置勾选 ∩ 运行时开关，两边都开才算启用
+	var cfgEnabled bool
+	if r.rt != nil && r.rt.Get() != nil {
+		for _, n := range r.rt.Get().Collector.Sources {
+			if n == name {
+				cfgEnabled = true
+				break
+			}
 		}
 	}
-	return formatPageCursor(cursor)
-}
-
-func stripPageSuffix(s string) string {
-	i := strings.LastIndex(s, "第")
-	if i >= 0 && strings.HasSuffix(s, "页") {
-		return strings.TrimSpace(s[:i])
-	}
-	return s
-}
-
-// formatRoundScope 本轮会扫的组/搜索清单
-func formatRoundScope(src Source) string {
-	if src == nil {
-		return "范围 无"
-	}
-	var parts []string
-	c := ""
-	seen := map[int]bool{}
-	for i := 0; i < 200; i++ {
-		g, _ := parsePageCursor(c)
-		if seen[g] {
-			break
-		}
-		seen[g] = true
-		parts = append(parts, stripPageSuffix(describeCursor(src, c)))
-		ng := skipGroup(src, c)
-		if ng == "" {
-			break
-		}
-		c = ng
-	}
-	if len(parts) == 0 {
-		return "范围 无"
-	}
-	return fmt.Sprintf("范围共%d个 %s", len(parts), strings.Join(parts, "、"))
-}
-
-func nextGroupMsg(src string, round int, from, to string, label func(string) string) string {
-	if strings.TrimSpace(to) == "" {
-		return ""
-	}
-	g1, _ := parsePageCursor(from)
-	g2, _ := parsePageCursor(to)
-	if g1 == g2 {
-		return ""
-	}
-	fl, tl := formatPageCursor(from), formatPageCursor(to)
-	if label != nil {
-		fl, tl = label(from), label(to)
-	}
-	return fmt.Sprintf("【%s 第%d轮 %s执行完成，开始%s】", src, round, fl, tl)
-}
-
-func formatSkipSummary(exist, tooNew int, hitWm, hitOld bool) string {
-	var parts []string
-	if exist > 0 {
-		parts = append(parts, fmt.Sprintf("已存在%d", exist))
-	}
-	if tooNew > 0 {
-		parts = append(parts, fmt.Sprintf("超窗新%d", tooNew))
-	}
-	if hitOld {
-		parts = append(parts, "超窗旧")
-	}
-	if hitWm {
-		parts = append(parts, "到水位线")
-	}
-	return strings.Join(parts, " ")
-}
-
-func formatStartPos(catchUp bool, cursor string) string {
-	if catchUp {
-		return "追新·" + formatPageCursor("")
-	}
-	return "翻历史·" + formatPageCursor(cursor)
-}
-
-func formatNextPos(p store.SourceProgress) string {
-	if p.CatchingUp() {
-		return "追新·" + formatPageCursor("")
-	}
-	return "翻历史·" + formatPageCursor(p.Page)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.enabled[name] && cfgEnabled
 }

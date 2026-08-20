@@ -69,10 +69,6 @@ func (s *Service) SetEnabled(name string, on bool) error {
 	return s.runner.SetEnabled(name, on)
 }
 
-func (s *Service) Trigger(name string) error {
-	return s.runner.Trigger(name)
-}
-
 func (s *Service) SourceEnabled(name string) bool {
 	return s.runner.SourceEnabled(name)
 }

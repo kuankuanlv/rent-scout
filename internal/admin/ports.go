@@ -9,7 +9,6 @@ import (
 // SourceController 采集源控制接口（admin 不依赖 collector 包）
 type SourceController interface {
 	SetEnabled(name string, on bool) error
-	Trigger(name string) error
 	Sources() []string
 	SourceEnabled(name string) bool
 }

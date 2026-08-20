@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"rent-scout/internal/admin/ports"
 	"rent-scout/internal/collector/cookie"
 	"rent-scout/internal/config"
 	"rent-scout/internal/store"
@@ -18,11 +19,11 @@ func TestCookieTestNoneProbesOnline(t *testing.T) {
 	s := newAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
-	srv.SetCookieProbe(stubPageProbe{fn: func(ctx context.Context, rawURL, c string) DoubanPageResult {
+	srv.SetCookieProbe(stubPageProbe{fn: func(ctx context.Context, rawURL, c string) ports.DoubanPageResult {
 		if c != "" {
 			t.Errorf("匿名探测不应带 cookie, got len=%d", len(c))
 		}
-		return DoubanPageResult{OK: false, HTTP: 200, Snippet: "有异常请求从你的 IP 发出，请 登录 使用豆瓣"}
+		return ports.DoubanPageResult{OK: false, HTTP: 200, Snippet: "有异常请求从你的 IP 发出，请 登录 使用豆瓣"}
 	}})
 
 	form := url.Values{"cookie_mode": {"none"}}
@@ -53,8 +54,8 @@ func TestCookieTestRawDraftNoWrite(t *testing.T) {
 	s := newAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
-	srv.SetCookieProbe(stubPageProbe{fn: func(ctx context.Context, rawURL, c string) DoubanPageResult {
-		return DoubanPageResult{OK: false, HTTP: 403, Snippet: "forbidden"}
+	srv.SetCookieProbe(stubPageProbe{fn: func(ctx context.Context, rawURL, c string) ports.DoubanPageResult {
+		return ports.DoubanPageResult{OK: false, HTTP: 403, Snippet: "forbidden"}
 	}})
 
 	before, _ := store.GetConfigMap(s)
@@ -89,19 +90,19 @@ func TestCookieTestWeiboProbesWeiboURL(t *testing.T) {
 	s := newAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
-	srv.SetCookieProbe(stubPageProbe{fn: func(ctx context.Context, rawURL, c string) DoubanPageResult {
+	srv.SetCookieProbe(stubPageProbe{fn: func(ctx context.Context, rawURL, c string) ports.DoubanPageResult {
 		if !strings.Contains(rawURL, "weibo.com") {
 			t.Errorf("微博探测 URL = %q", rawURL)
 		}
 		if c != "SUB=wb" {
 			t.Errorf("cookie = %q", c)
 		}
-		return DoubanPageResult{OK: true, HTTP: 200}
+		return ports.DoubanPageResult{OK: true, HTTP: 200}
 	}})
 	form := url.Values{
-		"source":      {"weibo"},
-		"cookie_mode": {"raw"},
-		"cookie_raw":  {"SUB=wb"},
+		"source":                {"weibo"},
+		"cookie_mode":           {"raw"},
+		"cookie_raw":            {"SUB=wb"},
 		"collector.weibo.users": {"6342026928"},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/admin/config/cookie/test", strings.NewReader(form.Encode()))
@@ -120,11 +121,11 @@ func TestCookieTestRawEmptyDoesNotUseStored(t *testing.T) {
 	s := newAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
-	srv.SetCookieProbe(stubPageProbe{fn: func(ctx context.Context, rawURL, c string) DoubanPageResult {
+	srv.SetCookieProbe(stubPageProbe{fn: func(ctx context.Context, rawURL, c string) ports.DoubanPageResult {
 		if c != "" {
 			t.Errorf("空草稿不应回落到库里的 cookie, got %q", c)
 		}
-		return DoubanPageResult{OK: true, HTTP: 200}
+		return ports.DoubanPageResult{OK: true, HTTP: 200}
 	}})
 	if err := store.SetConfigBatch(s, map[string]string{
 		"secret.collector.douban.cookie_mode": "raw",
@@ -307,24 +308,24 @@ type recCloudProbe struct {
 	url    string
 }
 
-func (p *recCloudProbe) InspectCookieCloud(ctx context.Context, draft config.DoubanCookieConfig, source string) (CookieCloudInspect, error) {
+func (p *recCloudProbe) InspectCookieCloud(ctx context.Context, draft config.DoubanCookieConfig, source string) (ports.CookieCloudInspect, error) {
 	p.source = source
 	p.url = draft.CookiecloudURL
-	return CookieCloudInspect{Cookie: "SUB=1", HTTPStatus: 200}, nil
+	return ports.CookieCloudInspect{Cookie: "SUB=1", HTTPStatus: 200}, nil
 }
 
-func (p *recCloudProbe) ProbePage(ctx context.Context, probeURL, rawCookie string) DoubanPageResult {
-	return DoubanPageResult{OK: true, HTTP: 200}
+func (p *recCloudProbe) ProbePage(ctx context.Context, probeURL, rawCookie string) ports.DoubanPageResult {
+	return ports.DoubanPageResult{OK: true, HTTP: 200}
 }
 
 type stubPageProbe struct {
-	fn func(ctx context.Context, probeURL, rawCookie string) DoubanPageResult
+	fn func(ctx context.Context, probeURL, rawCookie string) ports.DoubanPageResult
 }
 
-func (s stubPageProbe) InspectCookieCloud(ctx context.Context, draft config.DoubanCookieConfig, source string) (CookieCloudInspect, error) {
+func (s stubPageProbe) InspectCookieCloud(ctx context.Context, draft config.DoubanCookieConfig, source string) (ports.CookieCloudInspect, error) {
 	return testCookieProbe{}.InspectCookieCloud(ctx, draft, source)
 }
 
-func (s stubPageProbe) ProbePage(ctx context.Context, probeURL, rawCookie string) DoubanPageResult {
+func (s stubPageProbe) ProbePage(ctx context.Context, probeURL, rawCookie string) ports.DoubanPageResult {
 	return s.fn(ctx, probeURL, rawCookie)
 }

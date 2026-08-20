@@ -5,6 +5,13 @@ import (
 	"html/template"
 	"net/http"
 
+	cfgpage "rent-scout/internal/admin/config"
+	"rent-scout/internal/admin/logs"
+	"rent-scout/internal/admin/ports"
+	"rent-scout/internal/admin/posts"
+	"rent-scout/internal/admin/rules"
+	"rent-scout/internal/admin/setup"
+	"rent-scout/internal/admin/sources"
 	"rent-scout/internal/config"
 	"rent-scout/internal/store"
 )
@@ -13,29 +20,36 @@ import (
 var templatesFS embed.FS
 
 func changedRestartKeys(before, updates map[string]string) []string {
-	return ChangedRestartKeys(before, updates)
+	return cfgpage.ChangedRestartKeys(before, updates)
 }
 
 // Server 管理面 HTTP 服务
 type Server struct {
 	db             *store.Store
 	rt             *config.HotConfig
-	ctrl           SourceController
+	ctrl           ports.SourceController
 	tmpl           *template.Template
 	onRulesChanged func()
-	cookieProbe    CookieProbe
-	llmProbe       LLMProbe
-	notifyProbe    NotifyProbe
-	notifyManual   NotifyManual
+	cookieProbe    ports.CookieProbe
+	llmProbe       ports.LLMProbe
+	notifyProbe    ports.NotifyProbe
+	notifyManual   ports.NotifyManual
+
+	posts   *posts.Handler
+	config  *cfgpage.Handler
+	rules   *rules.Handler
+	setup   *setup.Handler
+	sources *sources.Handler
+	logs    *logs.Handler
 }
 
 // NewServer 创建管理面服务
-func NewServer(db *store.Store, rt *config.HotConfig, ctrl SourceController) *Server {
+func NewServer(db *store.Store, rt *config.HotConfig, ctrl ports.SourceController) *Server {
 	t := template.New("").Funcs(template.FuncMap{
 		"percent":        percent,
 		"statusLabel":    statusLabel,
 		"sourceLabel":    sourceLabel,
-		"setupStepTitle": setupStepTitle,
+		"setupStepTitle": setup.SetupStepTitle,
 		"csvHas":         csvHas,
 		"seq": func(n int) []int {
 			s := make([]int, n)
@@ -47,26 +61,44 @@ func NewServer(db *store.Store, rt *config.HotConfig, ctrl SourceController) *Se
 		"sub": func(a, b int) int { return a - b },
 	})
 	t = template.Must(t.ParseFS(templatesFS, "templates/*.html"))
-	return &Server{db: db, rt: rt, ctrl: ctrl, tmpl: t}
+	return &Server{
+		db:      db,
+		rt:      rt,
+		ctrl:    ctrl,
+		tmpl:    t,
+		posts:   posts.New(posts.Options{DB: db, RT: rt, Tmpl: t}),
+		config:  cfgpage.New(cfgpage.Options{DB: db, RT: rt, Tmpl: t, Ctrl: ctrl}),
+		rules:   rules.New(rules.Options{DB: db, RT: rt, Tmpl: t}),
+		setup:   setup.New(setup.Options{DB: db, RT: rt, Tmpl: t}),
+		sources: sources.New(sources.Options{Ctrl: ctrl, DB: db}),
+		logs:    logs.New(logs.Options{RT: rt, Tmpl: t}),
+	}
 }
 
 // SetOnRulesChanged 规则能力变强时回调（新建/启用/加关键字等触发 replay；纯删除/禁用不触发）
 func (s *Server) SetOnRulesChanged(fn func()) {
 	s.onRulesChanged = fn
+	s.rules.SetOnRulesChanged(fn)
 }
 
-func (s *Server) SetCookieProbe(p CookieProbe) { s.cookieProbe = p }
+func (s *Server) SetCookieProbe(p ports.CookieProbe) {
+	s.cookieProbe = p
+	s.config.SetCookieProbe(p)
+}
 
-func (s *Server) SetLLMProbe(p LLMProbe) { s.llmProbe = p }
+func (s *Server) SetLLMProbe(p ports.LLMProbe) {
+	s.llmProbe = p
+	s.config.SetLLMProbe(p)
+}
 
-func (s *Server) SetNotifyProbe(p NotifyProbe) { s.notifyProbe = p }
+func (s *Server) SetNotifyProbe(p ports.NotifyProbe) {
+	s.notifyProbe = p
+	s.config.SetNotifyProbe(p)
+}
 
-func (s *Server) SetNotifyManual(p NotifyManual) { s.notifyManual = p }
-
-func (s *Server) notifyRulesChanged() {
-	if s.onRulesChanged != nil {
-		s.onRulesChanged()
-	}
+func (s *Server) SetNotifyManual(p ports.NotifyManual) {
+	s.notifyManual = p
+	s.posts.SetNotifyManual(p)
 }
 
 // Handler 路由装配
@@ -74,38 +106,12 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.handleHealthz)
 	mux.HandleFunc("/metrics", s.handleMetrics)
-	mux.HandleFunc("/f", s.handleFeedback)
-	mux.HandleFunc("/h", s.handleHandledLink)
-	mux.HandleFunc("/api/post-tags", s.handlePostTags)
-	mux.HandleFunc("/api/posts", s.handlePosts)
-	mux.HandleFunc("/api/posts/", s.handlePost)
-	mux.HandleFunc("/api/feedbacks", s.handleFeedbacks)
-	mux.HandleFunc("/api/sources", s.handleSources)
-	mux.HandleFunc("/api/sources/", s.handleSourceAction)
-	mux.HandleFunc("/admin/setup", s.handleSetup)
-	mux.HandleFunc("/admin/setup/import-defaults", s.handleImportDefaults)
-	mux.HandleFunc("/admin/posts", s.handleAdmin)
-	mux.HandleFunc("/admin", s.handleHome)
-	mux.HandleFunc("/admin/mark", s.handleMark)
-	mux.HandleFunc("/admin/notify", s.handleNotifySelected)
-	mux.HandleFunc("/admin/handled", s.handleHandled)
-	mux.HandleFunc("/admin/rules", s.handleRules)
-	mux.HandleFunc("/admin/rules/", s.handleRulesID)
-	mux.HandleFunc("/admin/config", s.handleConfig)
-	mux.HandleFunc("/admin/config/save", s.handleConfig)
-	mux.HandleFunc("/admin/config/export", s.handleConfigExport)
-	mux.HandleFunc("/admin/config/import", s.handleConfigImport)
-	mux.HandleFunc("/admin/config/history", s.handleConfigHistory)
-	mux.HandleFunc("/admin/config/cookie/test", s.handleCookieTest)
-	mux.HandleFunc("/admin/config/cookiecloud/test", s.handleCookieCloudTest)
-	mux.HandleFunc("/admin/config/llm/test", s.handleLLMTest)
-	mux.HandleFunc("/admin/config/llm/models", s.handleLLMModels)
-	mux.HandleFunc("/admin/config/notify/test", s.handleNotifyTest)
-	mux.HandleFunc("/admin/stats", s.handleStats)
-	mux.HandleFunc("/admin/logs", s.handleLogs)
-	mux.HandleFunc("/admin/logs/stream", s.handleLogsStream)
-	mux.HandleFunc("/admin/logs/recent", s.handleLogsRecent)
-	mux.HandleFunc("/admin/dead/reset", s.handleDeadReset)
+	s.posts.Routes(mux)
+	s.config.Routes(mux)
+	s.rules.Routes(mux)
+	s.setup.Routes(mux)
+	s.sources.Routes(mux)
+	s.logs.Routes(mux)
 	mux.HandleFunc("/admin/login", s.handleLogin)
 	mux.HandleFunc("/admin/logout", s.handleLogout)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -115,5 +121,5 @@ func (s *Server) Handler() http.Handler {
 		}
 		http.Redirect(w, r, "/admin", http.StatusSeeOther)
 	})
-	return s.auth(s.setupGate(mux))
+	return s.auth(s.setup.Gate(mux))
 }

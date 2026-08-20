@@ -1,4 +1,4 @@
-package admin
+package setup
 
 import (
 	"fmt"
@@ -7,6 +7,9 @@ import (
 	"strconv"
 	"strings"
 
+	cfgpage "rent-scout/internal/admin/config"
+	"rent-scout/internal/admin/onboard"
+	"rent-scout/internal/admin/ports"
 	"rent-scout/internal/config"
 	"rent-scout/internal/store"
 )
@@ -17,9 +20,9 @@ const (
 )
 
 // handleSetup 首次引导：步骤1鉴权必填，后续可跳过
-func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) handleSetup(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
-		s.handleSetupPost(w, r)
+		h.handleSetupPost(w, r)
 		return
 	}
 	step, _ := strconv.Atoi(r.URL.Query().Get("step"))
@@ -29,10 +32,10 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 	if step > setupDoneStep {
 		step = setupDoneStep
 	}
-	kv := CurrentConfigKV(s.db)
+	kv := cfgpage.CurrentConfigKV(h.opts.DB)
 	env := config.KVToSecrets(kv)
-	cookieRawHint := cookiePasteHint(env.Collector.Douban.CookieRaw)
-	data := mergePageCtx(s.pageCtx(r, ""), map[string]any{
+	cookieRawHint := onboard.CookiePasteHint(env.Collector.Douban.CookieRaw)
+	data := ports.MergePageCtx(ports.PageCtx(h.opts.RT, r, ""), map[string]any{
 		"Step":          step,
 		"Total":         setupTotalSteps,
 		"App":           config.KVToApp(kv),
@@ -42,33 +45,33 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 		"CookieRawHint": cookieRawHint,
 		"SkipNav":       true,
 	})
-	if err := s.tmpl.ExecuteTemplate(w, "setup", data); err != nil {
+	if err := h.opts.Tmpl.ExecuteTemplate(w, "setup", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
 
-func (s *Server) handleSetupPost(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) handleSetupPost(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "解析表单失败", http.StatusBadRequest)
 		return
 	}
 	step, _ := strconv.Atoi(r.PostFormValue("step"))
 	action := r.PostFormValue("action")
-	kv := CurrentConfigKV(s.db)
+	kv := cfgpage.CurrentConfigKV(h.opts.DB)
 
 	// step 6：导入后的完成页——可选填访问令牌开启鉴权，随后完成引导
 	if step == setupDoneStep {
 		if tok := strings.TrimSpace(r.PostFormValue("admin.token")); tok != "" {
-			if err := store.SetConfigBatch(s.db, map[string]string{
+			if err := store.SetConfigBatch(h.opts.DB, map[string]string{
 				"admin.auth_required": "true",
 				"admin.token":         tok,
 			}); err != nil {
 				http.Error(w, "保存失败: "+err.Error(), http.StatusInternalServerError)
 				return
 			}
-			_ = s.rt.ReloadOnce()
+			_ = h.opts.RT.ReloadOnce()
 		}
-		s.finishSetup(w, r, kv)
+		h.finishSetup(w, r, kv)
 		return
 	}
 
@@ -79,10 +82,10 @@ func (s *Server) handleSetupPost(w http.ResponseWriter, r *http.Request) {
 		}
 		// 末步跳过 = 完成设置
 		if step >= setupTotalSteps {
-			s.finishSetup(w, r, kv)
+			h.finishSetup(w, r, kv)
 			return
 		}
-		s.redirectSetup(w, r, step+1)
+		h.redirectSetup(w, r, step+1)
 		return
 	}
 
@@ -103,7 +106,7 @@ func (s *Server) handleSetupPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	updates := ParseSectionForm(r.PostForm, section, kv)
+	updates := cfgpage.ParseSectionForm(r.PostForm, section, kv)
 	if step == 1 {
 		if updates["admin.auth_required"] == "true" && updates["admin.token"] == "" {
 			if old := kv["admin.token"]; old == "" {
@@ -112,7 +115,7 @@ func (s *Server) handleSetupPost(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	MergeDefaultsInto(updates, kv)
+	cfgpage.MergeDefaultsInto(updates, kv)
 	merged := config.MergeKV(kv, updates)
 	if step == 3 {
 		if errs := config.ValidateSecrets(config.KVToSecrets(merged)); len(errs) > 0 {
@@ -121,23 +124,23 @@ func (s *Server) handleSetupPost(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if len(updates) > 0 {
-		if err := store.SetConfigBatch(s.db, updates); err != nil {
+		if err := store.SetConfigBatch(h.opts.DB, updates); err != nil {
 			http.Error(w, "保存失败: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		_ = s.rt.ReloadOnce()
+		_ = h.opts.RT.ReloadOnce()
 	}
 
 	if action == "finish" || step >= setupTotalSteps {
-		s.finishSetup(w, r, merged)
+		h.finishSetup(w, r, merged)
 		return
 	}
 
-	s.redirectSetup(w, r, step+1)
+	h.redirectSetup(w, r, step+1)
 }
 
 // finishSetup 校验全量配置、种子默认规则、标记 setup 完成
-func (s *Server) finishSetup(w http.ResponseWriter, r *http.Request, kv map[string]string) {
+func (h *Handler) finishSetup(w http.ResponseWriter, r *http.Request, kv map[string]string) {
 	if errs := config.ValidateApp(config.KVToApp(kv)); len(errs) > 0 {
 		http.Error(w, "校验失败: "+strings.Join(errs, "; "), http.StatusBadRequest)
 		return
@@ -147,46 +150,46 @@ func (s *Server) finishSetup(w http.ResponseWriter, r *http.Request, kv map[stri
 		return
 	}
 	// 无启用规则时种子默认地点白名单（规格 §4）
-	if err := s.db.EnsureDefaultRule(); err != nil {
+	if err := h.opts.DB.EnsureDefaultRule(); err != nil {
 		http.Error(w, "种子默认规则失败: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if err := store.SetConfigBatch(s.db, map[string]string{config.KeySetupCompleted: "true"}); err != nil {
+	if err := store.SetConfigBatch(h.opts.DB, map[string]string{config.KeySetupCompleted: "true"}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	_ = s.rt.ReloadOnce()
+	_ = h.opts.RT.ReloadOnce()
 	q := url.Values{}
 	if tok := r.URL.Query().Get("token"); tok != "" {
 		q.Set("token", tok)
-	} else if t := s.rt.Get().Admin.Token; t != "" {
+	} else if t := h.opts.RT.Get().Admin.Token; t != "" {
 		q.Set("token", t)
 	}
 	http.Redirect(w, r, "/admin?"+q.Encode(), http.StatusSeeOther)
 }
 
-func (s *Server) redirectSetup(w http.ResponseWriter, r *http.Request, step int) {
+func (h *Handler) redirectSetup(w http.ResponseWriter, r *http.Request, step int) {
 	if step > setupTotalSteps {
 		step = setupTotalSteps
 	}
 	q := url.Values{"step": {strconv.Itoa(step)}}
 	if tok := r.URL.Query().Get("token"); tok != "" {
 		q.Set("token", tok)
-	} else if t := s.rt.Get().Admin.Token; t != "" {
+	} else if t := h.opts.RT.Get().Admin.Token; t != "" {
 		q.Set("token", t)
 	}
 	http.Redirect(w, r, "/admin/setup?"+q.Encode(), http.StatusSeeOther)
 }
 
 // setupGate setup 未完成时拦截管理页，强制进引导
-func (s *Server) setupGate(next http.Handler) http.Handler {
+func (h *Handler) Gate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if store.IsSetupComplete(s.db) {
+		if store.IsSetupComplete(h.opts.DB) {
 			next.ServeHTTP(w, r)
 			return
 		}
 		path := r.URL.Path
-		if path == "/admin/setup" || path == "/admin/setup/import-defaults" || path == "/admin/config/save" || path == CookieTestPath || path == CookieCloudTestPath || path == "/healthz" || path == "/metrics" || path == "/f" || path == "/h" {
+		if path == "/admin/setup" || path == "/admin/setup/import-defaults" || path == "/admin/config/save" || path == cfgpage.CookieTestPath || path == cfgpage.CookieCloudTestPath || path == "/healthz" || path == "/metrics" || path == "/f" || path == "/h" {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -199,16 +202,16 @@ func (s *Server) setupGate(next http.Handler) http.Handler {
 }
 
 // handleImportDefaults 一键导入内置默认配置（POST /admin/setup/import-defaults）
-func (s *Server) handleImportDefaults(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) handleImportDefaults(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "仅支持 POST", http.StatusMethodNotAllowed)
 		return
 	}
-	if err := store.SetConfigBatch(s.db, config.DefaultKV()); err != nil {
+	if err := store.SetConfigBatch(h.opts.DB, config.DefaultKV()); err != nil {
 		http.Error(w, "导入默认配置失败: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	_ = s.rt.ReloadOnce()
+	_ = h.opts.RT.ReloadOnce()
 	q := url.Values{}
 	q.Set("step", strconv.Itoa(setupDoneStep))
 	if tok := r.URL.Query().Get("token"); tok != "" {
@@ -221,8 +224,8 @@ func (s *Server) handleImportDefaults(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, target, http.StatusSeeOther)
 }
 
-// setupStepTitle 引导步骤标题（模板 func）
-func setupStepTitle(step int) string {
+// SetupStepTitle 引导步骤标题（模板 func）
+func SetupStepTitle(step int) string {
 	switch step {
 	case 0:
 		return "选择初始化方式"

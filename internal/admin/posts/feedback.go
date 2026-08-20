@@ -1,4 +1,4 @@
-package admin
+package posts
 
 import (
 	"crypto/hmac"
@@ -15,15 +15,15 @@ import (
 	"strings"
 	"time"
 
-	"rent-scout/internal/security/actionref"
 	"rent-scout/internal/models"
 	"rent-scout/internal/pkglog"
+	"rent-scout/internal/security/actionref"
 )
 
 // verifyFeedbackSig 校验反馈链接签名（规格 7.1）。
 // token 空（鉴权关闭）= 链接不签名，直接放行；有签名则 constant-time 校验 + exp 过期检查
-func (s *Server) verifyFeedbackSig(postID int64, action, exp, sig string) error {
-	token := s.rt.Get().Admin.Token
+func (h *Handler) verifyFeedbackSig(postID int64, action, exp, sig string) error {
+	token := h.opts.RT.Get().Admin.Token
 	if token == "" {
 		return nil // 全开放场景（BuildFeedbackURL 同样不签名）
 	}
@@ -44,70 +44,70 @@ func (s *Server) verifyFeedbackSig(postID int64, action, exp, sig string) error 
 	return nil
 }
 
-func (s *Server) postIDFromRefQuery(q url.Values) (int64, error) {
+func (h *Handler) postIDFromRefQuery(q url.Values) (int64, error) {
 	p := strings.TrimSpace(q.Get("p"))
 	if p == "" {
 		return 0, errors.New("缺少引用")
 	}
-	return actionref.Open(p, s.rt.Get().Admin.Token)
+	return actionref.Open(p, h.opts.RT.Get().Admin.Token)
 }
 
 // handleFeedback 反馈链接（/f?p=&action=&exp=&sig=）：校验 → 写反馈 → 结果页
-func (s *Server) handleFeedback(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) handleFeedback(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	postID, err := s.postIDFromRefQuery(q)
+	postID, err := h.postIDFromRefQuery(q)
 	action := q.Get("action")
 	if err != nil || postID <= 0 || (action != models.FeedbackUseful && action != models.FeedbackUseless) {
 		http.Error(w, "参数无效", http.StatusBadRequest)
 		return
 	}
 	// 开关为准：鉴权关闭时跳过签名校验
-	if !s.rt.Get().Admin.AuthRequired {
+	if !h.opts.RT.Get().Admin.AuthRequired {
 		// 放行：不验证签名，直接处理
-	} else if err := s.verifyFeedbackSig(postID, action, q.Get("exp"), q.Get("sig")); err != nil {
-		s.renderFeedbackResult(w, "反馈链接无效或已过期（有效期 7 天），请联系管理员", false)
+	} else if err := h.verifyFeedbackSig(postID, action, q.Get("exp"), q.Get("sig")); err != nil {
+		h.renderFeedbackResult(w, "反馈链接无效或已过期（有效期 7 天），请联系管理员", false)
 		return
 	}
-	if err := s.db.AddUserFeedback(postID, action, ""); err != nil {
+	if err := h.opts.DB.AddUserFeedback(postID, action, ""); err != nil {
 		pkglog.Component(pkglog.Admin).Error("反馈写入失败", "post_id", postID, "action", action, "err", err)
-		s.renderFeedbackResult(w, "写入失败，请稍后重试", false)
+		h.renderFeedbackResult(w, "写入失败，请稍后重试", false)
 		return
 	}
 	pkglog.Component(pkglog.Admin).Info("反馈已记录", "post_id", postID, "action", action)
-	s.renderFeedbackResult(w, "感谢反馈！已记录（该链接 7 天内有效）", true)
+	h.renderFeedbackResult(w, "感谢反馈！已记录（该链接 7 天内有效）", true)
 }
 
 // handleHandledLink 已处理签名入口（GET /h?post=&exp=&sig=）：验签 → MarkPostHandled → 结果页；不写 feedbacks（Spec 09 §3.4）
-func (s *Server) handleHandledLink(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) handleHandledLink(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	q := r.URL.Query()
-	postID, err := s.postIDFromRefQuery(q)
+	postID, err := h.postIDFromRefQuery(q)
 	if err != nil || postID <= 0 {
 		http.Error(w, "参数无效", http.StatusBadRequest)
 		return
 	}
 	const action = "handled"
-	if !s.rt.Get().Admin.AuthRequired {
+	if !h.opts.RT.Get().Admin.AuthRequired {
 		// 鉴权关：跳过签名，直接标记
-	} else if err := s.verifyFeedbackSig(postID, action, q.Get("exp"), q.Get("sig")); err != nil {
-		s.renderHandledResult(w, "已处理链接无效或已过期（有效期 7 天），请联系管理员", false)
+	} else if err := h.verifyFeedbackSig(postID, action, q.Get("exp"), q.Get("sig")); err != nil {
+		h.renderHandledResult(w, "已处理链接无效或已过期（有效期 7 天），请联系管理员", false)
 		return
 	}
-	if err := s.db.MarkPostHandled(postID); err != nil {
+	if err := h.opts.DB.MarkPostHandled(postID); err != nil {
 		pkglog.Component(pkglog.Admin).Error("已处理链接写入失败", "post_id", postID, "err", err)
-		s.renderHandledResult(w, "写入失败，请稍后重试", false)
+		h.renderHandledResult(w, "写入失败，请稍后重试", false)
 		return
 	}
 	pkglog.Component(pkglog.Admin).Info("已处理链接已生效", "post_id", postID)
-	s.renderHandledResult(w, "已标记为已处理（该链接 7 天内有效）", true)
+	h.renderHandledResult(w, "已标记为已处理（该链接 7 天内有效）", true)
 }
 
 // handleFeedbacks 反馈写入接口（POST /api/feedbacks，规格 7.1）。
 // 鉴权：带 query sig → HMAC 校验（卡片链接场景）；否则走管理 token（auth 中间件）
-func (s *Server) handleFeedbacks(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) handleFeedbacks(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -123,11 +123,11 @@ func (s *Server) handleFeedbacks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	if !s.rt.Get().Admin.AuthRequired {
+	if !h.opts.RT.Get().Admin.AuthRequired {
 		// 鉴权关闭：一律放行（开关为准，不验证）
 	} else if q.Get("sig") != "" {
 		// 带签名：HMAC 校验（卡片链接场景）
-		if err := s.verifyFeedbackSig(in.PostID, in.Action, q.Get("exp"), q.Get("sig")); err != nil {
+		if err := h.verifyFeedbackSig(in.PostID, in.Action, q.Get("exp"), q.Get("sig")); err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
 		}
@@ -137,7 +137,7 @@ func (s *Server) handleFeedbacks(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "post_id/action 无效", http.StatusBadRequest)
 		return
 	}
-	if err := s.db.AddUserFeedback(in.PostID, in.Action, in.Reason); err != nil {
+	if err := h.opts.DB.AddUserFeedback(in.PostID, in.Action, in.Reason); err != nil {
 		pkglog.Component(pkglog.Admin).Error("写反馈失败", "post_id", in.PostID, "err", err)
 		http.Error(w, "写入失败", http.StatusInternalServerError)
 		return
@@ -148,7 +148,7 @@ func (s *Server) handleFeedbacks(w http.ResponseWriter, r *http.Request) {
 }
 
 // renderHandledResult 已处理结果页（内联 HTML）
-func (s *Server) renderHandledResult(w http.ResponseWriter, msg string, ok bool) {
+func (h *Handler) renderHandledResult(w http.ResponseWriter, msg string, ok bool) {
 	title := "已处理失败"
 	if ok {
 		title = "已处理成功"
@@ -159,7 +159,7 @@ func (s *Server) renderHandledResult(w http.ResponseWriter, msg string, ok bool)
 }
 
 // renderFeedbackResult 简单结果页（内联 HTML，标题+文案）
-func (s *Server) renderFeedbackResult(w http.ResponseWriter, msg string, ok bool) {
+func (h *Handler) renderFeedbackResult(w http.ResponseWriter, msg string, ok bool) {
 	title := "反馈结果"
 	if ok {
 		title = "反馈成功"

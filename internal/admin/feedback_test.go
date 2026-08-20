@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"rent-scout/internal/security/actionref"
 	"rent-scout/internal/config"
 	"rent-scout/internal/models"
+	"rent-scout/internal/security/actionref"
 )
 
 func pref(id int64, secret string) string {

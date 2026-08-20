@@ -6,6 +6,8 @@ import (
 	"net/url"
 	"strings"
 
+	cfgpage "rent-scout/internal/admin/config"
+	"rent-scout/internal/admin/ports"
 	"rent-scout/internal/store"
 )
 
@@ -21,8 +23,8 @@ func (s *Server) auth(next http.Handler) http.Handler {
 			return
 		}
 		if s.rt.Get().Admin.AuthRequired && !s.validToken(r) {
-			if wantsJSON(r) || strings.HasPrefix(r.URL.Path, "/api/") {
-				writeJSONStatus(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+			if ports.WantsJSON(r) || strings.HasPrefix(r.URL.Path, "/api/") {
+				ports.WriteJSONStatus(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
 				return
 			}
 			// 对于管理页面，未授权时跳转到登录页
@@ -48,7 +50,7 @@ func loginExempt(path string) bool {
 }
 
 func setupExempt(path string) bool {
-	return path == "/admin/setup" || path == "/admin/setup/import-defaults" || path == CookieTestPath || path == CookieCloudTestPath
+	return path == "/admin/setup" || path == "/admin/setup/import-defaults" || path == cfgpage.CookieTestPath || path == cfgpage.CookieCloudTestPath
 }
 
 // validToken 校验 token：URL ?token=、Bearer 或 Cookie；与 HotConfig 中 admin.token 比较

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"rent-scout/internal/admin/ports"
 	"rent-scout/internal/collector/cookie"
 	"rent-scout/internal/config"
 	"rent-scout/internal/filter/ai/llm"
@@ -50,17 +51,17 @@ func newTestHotConfig(t *testing.T, s *store.Store, app *config.AppConfig, token
 
 type testCookieProbe struct{}
 
-func (testCookieProbe) InspectCookieCloud(ctx context.Context, draft config.DoubanCookieConfig, source string) (CookieCloudInspect, error) {
+func (testCookieProbe) InspectCookieCloud(ctx context.Context, draft config.DoubanCookieConfig, source string) (ports.CookieCloudInspect, error) {
 	ins, err := cookie.InspectCookieCloudFor(ctx, draft, source)
-	return CookieCloudInspect{
+	return ports.CookieCloudInspect{
 		Cookie: ins.Cookie, Names: ins.Names, Previews: ins.Previews,
 		Algo: ins.Algo, CipherField: ins.CipherField, HTTPStatus: ins.HTTPStatus, Domains: ins.Domains,
 	}, err
 }
 
-func (testCookieProbe) ProbePage(ctx context.Context, probeURL, rawCookie string) DoubanPageResult {
+func (testCookieProbe) ProbePage(ctx context.Context, probeURL, rawCookie string) ports.DoubanPageResult {
 	page := cookie.ProbePage(ctx, probeURL, rawCookie, nil)
-	return DoubanPageResult{OK: page.OK, HTTP: page.HTTP, Snippet: page.Snippet}
+	return ports.DoubanPageResult{OK: page.OK, HTTP: page.HTTP, Snippet: page.Snippet}
 }
 
 type testLLMProbe struct{}
@@ -74,7 +75,7 @@ func (testLLMProbe) Chat(ctx context.Context, baseURL, apiKey, model, system, us
 }
 
 // newTestServer 创建已完成 setup 的 admin Server（含新 store）
-func newTestServer(t *testing.T, app *config.AppConfig, token string, ctrl SourceController) *Server {
+func newTestServer(t *testing.T, app *config.AppConfig, token string, ctrl ports.SourceController) *Server {
 	t.Helper()
 	s := newAdminTestStore(t)
 	t.Cleanup(func() { s.Close() })
@@ -82,7 +83,7 @@ func newTestServer(t *testing.T, app *config.AppConfig, token string, ctrl Sourc
 }
 
 // newTestServerWithStore 在已有 store 上创建 admin Server
-func newTestServerWithStore(t *testing.T, s *store.Store, app *config.AppConfig, token string, ctrl SourceController) *Server {
+func newTestServerWithStore(t *testing.T, s *store.Store, app *config.AppConfig, token string, ctrl ports.SourceController) *Server {
 	t.Helper()
 	rt := newTestHotConfig(t, s, app, token)
 	srv := NewServer(s, rt, ctrl)
@@ -94,11 +95,11 @@ func newTestServerWithStore(t *testing.T, s *store.Store, app *config.AppConfig,
 
 type stubNotifyProbe struct {
 	channel string
-	items   []NotifyProbeItem
+	items   []ports.NotifyProbeItem
 	err     error
 }
 
-func (s *stubNotifyProbe) Send(ctx context.Context, channel, webhook, token, topic string, items []NotifyProbeItem) error {
+func (s *stubNotifyProbe) Send(ctx context.Context, channel, webhook, token, topic string, items []ports.NotifyProbeItem) error {
 	s.channel = channel
 	s.items = items
 	return s.err
@@ -165,7 +166,6 @@ func TestAuthRequired(t *testing.T) {
 	if rec.Code != http.StatusFound || !strings.Contains(rec.Header().Get("Location"), "/admin/login") {
 		t.Errorf("/metrics 属于管理数据，无凭证应重定向到登录页, status = %d, want 302", rec.Code)
 	}
-
 
 	req = httptest.NewRequest(http.MethodGet, "/admin", nil)
 	rec = httptest.NewRecorder()

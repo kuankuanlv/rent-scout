@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"rent-scout/internal/admin/ports"
 	"rent-scout/internal/config"
 	"rent-scout/internal/pkglog"
 	"rent-scout/internal/store"
@@ -15,9 +16,9 @@ import (
 type Options struct {
 	Config         *config.HotConfig
 	Store          *store.Store
-	Sources        SourceController
+	Sources        ports.SourceController
 	OnRulesChanged func()
-	NotifyManual   NotifyManual
+	NotifyManual   ports.NotifyManual
 	Addr           string
 }
 

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	cfgpage "rent-scout/internal/admin/config"
 	"rent-scout/internal/config"
 	"rent-scout/internal/store"
 )
@@ -97,7 +98,7 @@ func TestConfigTabs(t *testing.T) {
 	// 回归：导入下拉面板若嵌套在 overflow-x-auto 容器内会被裁剪不可见（overflow-y 被计算为 auto）。
 	// 横向滚动容器应只包裹 Tab 区（flex-1），不能是包住导出/导入按钮的整条顶栏。
 	if i := strings.Index(body, "overflow-x-auto"); i >= 0 {
-		open := body[strings.LastIndex(body[:i], "<div") : i]
+		open := body[strings.LastIndex(body[:i], "<div"):i]
 		if !strings.Contains(open, "flex-1") {
 			t.Errorf("overflow-x-auto 应只包裹 Tab 区（flex-1），否则导入下拉面板会被裁剪不可见")
 		}
@@ -199,8 +200,11 @@ func TestConfigTabs(t *testing.T) {
 	if !strings.Contains(body, "系统提示词") || !strings.Contains(body, "verdicts") || !strings.Contains(body, "500 字") {
 		t.Errorf("ai tab Desc 应说明 prompt、结构化输出和省 token")
 	}
-	if !strings.Contains(body, "filter.batch_size") || !strings.Contains(body, "filter.ai_batch_size") {
-		t.Errorf("ai 应含组批/AI 批（高级配置）")
+	if !strings.Contains(body, "filter.ai_batch_size") {
+		t.Errorf("ai 应含 AI 批大小（高级配置）")
+	}
+	if strings.Contains(body, "filter.batch_size") {
+		t.Errorf("ai 不应再含组批大小（hard 不等批，无需配置）")
 	}
 	if !strings.Contains(body, "高级配置") {
 		t.Errorf("组批/AI 批应折在高级配置里")
@@ -325,7 +329,7 @@ func TestConfigSectionSaveRestartBanner(t *testing.T) {
 		return rec.Header().Get("Location")
 	}
 
-	// server.addr 在 RestartKeys → 应提示重启
+	// server.addr 在 cfgpage.RestartKeys → 应提示重启
 	loc := post(url.Values{
 		"section":     {"general"},
 		"server.addr": {":9999"},
@@ -363,12 +367,12 @@ func TestConfigSectionSaveRestartBanner(t *testing.T) {
 
 // TestRestartKeysExcludesAdminToken admin.token / auth_required 不在需重启集合
 func TestRestartKeysExcludesAdminToken(t *testing.T) {
-	if RestartKeys["admin.token"] || RestartKeys["admin.auth_required"] {
-		t.Fatal("admin.token / auth_required 应热生效，不得列入 RestartKeys")
+	if cfgpage.RestartKeys["admin.token"] || cfgpage.RestartKeys["admin.auth_required"] {
+		t.Fatal("admin.token / auth_required 应热生效，不得列入 cfgpage.RestartKeys")
 	}
 	for _, k := range []string{"server.addr", "log.path", "log.level"} {
-		if !RestartKeys[k] {
-			t.Errorf("RestartKeys 缺 %q", k)
+		if !cfgpage.RestartKeys[k] {
+			t.Errorf("cfgpage.RestartKeys 缺 %q", k)
 		}
 	}
 	for _, k := range []string{
@@ -377,8 +381,8 @@ func TestRestartKeysExcludesAdminToken(t *testing.T) {
 		"filter.ai_enabled", "secret.filter.llm.api_key",
 		"notifier.channels", "secret.notifier.feishu.webhook",
 	} {
-		if RestartKeys[k] {
-			t.Errorf("%s 应热生效，不应列入 RestartKeys", k)
+		if cfgpage.RestartKeys[k] {
+			t.Errorf("%s 应热生效，不应列入 cfgpage.RestartKeys", k)
 		}
 	}
 }
@@ -528,7 +532,7 @@ func TestParseSectionFormGroupKeepsOtherSource(t *testing.T) {
 		"collector.interval":     {"300"},
 		"collector.jitter_ratio": {"0.2"},
 	}
-	got := ParseSectionForm(form, "collector", keep)
+	got := cfgpage.ParseSectionForm(form, "collector", keep)
 	if got["collector.weibo.users"] != "1111111111" {
 		t.Errorf("weibo users = %q", got["collector.weibo.users"])
 	}

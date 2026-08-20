@@ -1,10 +1,11 @@
-package admin
+package config
 
 import (
 	"fmt"
 	"net/http"
 	"strings"
 
+	"rent-scout/internal/admin/ports"
 	"rent-scout/internal/config"
 	"rent-scout/internal/models"
 	"rent-scout/internal/notifier/group"
@@ -13,7 +14,7 @@ import (
 )
 
 // handleNotifyTest POST /admin/config/notify/test：用草稿试发最近一批帖，不写通知账本
-func (s *Server) handleNotifyTest(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) handleNotifyTest(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel, ok := probeTimeout(r)
 	if !ok {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -23,31 +24,31 @@ func (s *Server) handleNotifyTest(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
 		_ = r.ParseForm()
 	}
-	if s.notifyProbe == nil {
-		writeJSON(w, map[string]any{"ok": false, "summary": "失败：探测未配置"})
+	if h.opts.NotifyProbe == nil {
+		ports.WriteJSON(w, map[string]any{"ok": false, "summary": "失败：探测未配置"})
 		return
 	}
 	ch := notifyProbeChannel(r)
 	if ch != "feishu" && ch != "pushplus" {
-		writeJSON(w, map[string]any{"ok": false, "summary": "失败：仅支持飞书或 PushPlus"})
+		ports.WriteJSON(w, map[string]any{"ok": false, "summary": "失败：仅支持飞书或 PushPlus"})
 		return
 	}
-	webhook, token, topic := s.draftNotifySecrets(r)
+	webhook, token, topic := h.draftNotifySecrets(r)
 	if ch == "feishu" && webhook == "" {
-		writeJSON(w, map[string]any{"ok": false, "summary": "失败：请填写飞书 Webhook"})
+		ports.WriteJSON(w, map[string]any{"ok": false, "summary": "失败：请填写飞书 Webhook"})
 		return
 	}
 	if ch == "pushplus" && token == "" {
-		writeJSON(w, map[string]any{"ok": false, "summary": "失败：请填写 PushPlus Token"})
+		ports.WriteJSON(w, map[string]any{"ok": false, "summary": "失败：请填写 PushPlus Token"})
 		return
 	}
 
 	limit := 2
 
-	posts, err := s.db.ListPosts(store.PostListFilter{}, limit, 0)
+	posts, err := h.opts.DB.ListPosts(store.PostListFilter{}, limit, 0)
 	if err != nil {
 		pkglog.Component(pkglog.Admin).Info("通知连通检测", "stage", "list", "err", err)
-		writeJSON(w, map[string]any{"ok": false, "summary": "失败：" + err.Error()})
+		ports.WriteJSON(w, map[string]any{"ok": false, "summary": "失败：" + err.Error()})
 		return
 	}
 	mocked := false
@@ -55,10 +56,10 @@ func (s *Server) handleNotifyTest(w http.ResponseWriter, r *http.Request) {
 		posts = mockNotifyPosts()
 		mocked = true
 	}
-	items := s.postsToProbeItems(posts)
-	if err := s.notifyProbe.Send(ctx, ch, webhook, token, topic, items); err != nil {
+	items := h.postsToProbeItems(posts)
+	if err := h.opts.NotifyProbe.Send(ctx, ch, webhook, token, topic, items); err != nil {
 		pkglog.Component(pkglog.Admin).Info("通知连通检测", "stage", "send", "channel", ch, "err", err, "mocked", mocked, "count", len(items))
-		writeJSON(w, map[string]any{"ok": false, "summary": "失败：" + err.Error(), "mocked": mocked, "count": len(items)})
+		ports.WriteJSON(w, map[string]any{"ok": false, "summary": "失败：" + err.Error(), "mocked": mocked, "count": len(items)})
 		return
 	}
 	summary := fmt.Sprintf("已发送 %d 条", len(items))
@@ -68,7 +69,7 @@ func (s *Server) handleNotifyTest(w http.ResponseWriter, r *http.Request) {
 		summary += "（最近入库，不限筛选状态）"
 	}
 	pkglog.Component(pkglog.Admin).Info("通知连通检测", "stage", "ok", "channel", ch, "mocked", mocked, "count", len(items))
-	writeJSON(w, map[string]any{"ok": true, "summary": summary, "mocked": mocked, "count": len(items)})
+	ports.WriteJSON(w, map[string]any{"ok": true, "summary": summary, "mocked": mocked, "count": len(items)})
 }
 
 func notifyProbeChannel(r *http.Request) string {
@@ -81,37 +82,37 @@ func notifyProbeChannel(r *http.Request) string {
 	return strings.ToLower(strings.TrimSpace(r.FormValue("channel")))
 }
 
-func (s *Server) draftNotifySecrets(r *http.Request) (webhook, token, topic string) {
-	stored := s.rt.Secrets().Notifier
-	webhook = firstNonEmpty(
+func (h *Handler) draftNotifySecrets(r *http.Request) (webhook, token, topic string) {
+	stored := h.opts.RT.Secrets().Notifier
+	webhook = ports.FirstNonEmpty(
 		r.FormValue("secret.notifier.feishu.webhook"),
 		r.FormValue("feishu_webhook"),
 	)
 	if webhook == "" || webhook == "••••••••" {
 		webhook = stored.Feishu.Webhook
 	}
-	token = firstNonEmpty(
+	token = ports.FirstNonEmpty(
 		r.FormValue("secret.notifier.pushplus.token"),
 		r.FormValue("pushplus_token"),
 	)
 	if token == "" || token == "••••••••" {
 		token = stored.Pushplus.Token
 	}
-	topic = firstNonEmpty(
+	topic = ports.FirstNonEmpty(
 		r.FormValue("secret.notifier.pushplus.topic"),
 		stored.Pushplus.Topic,
 	)
 	return strings.TrimSpace(webhook), strings.TrimSpace(token), strings.TrimSpace(topic)
 }
 
-func (s *Server) postsToProbeItems(posts []models.RentPost) []NotifyProbeItem {
+func (h *Handler) postsToProbeItems(posts []models.RentPost) []ports.NotifyProbeItem {
 	secret := ""
 	origin := ""
-	if s.rt != nil {
-		secret = s.rt.FeedbackSecret()
-		origin = config.ResolvePublicOrigin(s.rt.Get())
+	if h.opts.RT != nil {
+		secret = h.opts.RT.FeedbackSecret()
+		origin = config.ResolvePublicOrigin(h.opts.RT.Get())
 	}
-	items := make([]NotifyProbeItem, 0, len(posts))
+	items := make([]ports.NotifyProbeItem, 0, len(posts))
 	for _, p := range posts {
 		tag := "未分组"
 		for _, t := range p.Tags {
@@ -120,7 +121,7 @@ func (s *Server) postsToProbeItems(posts []models.RentPost) []NotifyProbeItem {
 				break
 			}
 		}
-		item := NotifyProbeItem{
+		item := ports.NotifyProbeItem{
 			PostID:             p.ID,
 			Title:              p.Title,
 			URL:                p.URL,
@@ -133,7 +134,7 @@ func (s *Server) postsToProbeItems(posts []models.RentPost) []NotifyProbeItem {
 		if models.HasContact(p.Contact) {
 			item.Contact = p.Contact
 		}
-		if fr, ok, err := s.db.FilterResultByPostID(p.ID); err == nil && ok && fr.AI != nil {
+		if fr, ok, err := h.opts.DB.FilterResultByPostID(p.ID); err == nil && ok && fr.AI != nil {
 			if item.Price <= 0 {
 				item.Price = fr.AI.Price
 			}

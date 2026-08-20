@@ -1,4 +1,4 @@
-package admin
+package config
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"rent-scout/internal/admin/ports"
 	"rent-scout/internal/config"
 	"rent-scout/internal/pkglog"
 )
@@ -28,16 +29,16 @@ func modelsPreview(models []string) []string {
 }
 
 // handleLLMTest POST /admin/config/llm/test：草稿连通检测，不写库
-func (s *Server) handleLLMTest(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) handleLLMTest(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel, ok := probeTimeout(r)
 	if !ok {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	defer cancel()
-	draft, err := s.parseLLMDraft(r)
+	draft, err := h.parseLLMDraft(r)
 	if err != nil {
-		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+		ports.WriteJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
 
@@ -48,11 +49,11 @@ func (s *Server) handleLLMTest(w http.ResponseWriter, r *http.Request) {
 		"model", draft.model,
 		"api_style", draft.apiStyle,
 	)
-	if s.llmProbe == nil {
-		writeJSON(w, map[string]any{"ok": false, "error": "探测未配置"})
+	if h.opts.LLMProbe == nil {
+		ports.WriteJSON(w, map[string]any{"ok": false, "error": "探测未配置"})
 		return
 	}
-	models, listErr := s.llmProbe.ListModels(ctx, draft.baseURL, draft.apiKey, draft.model)
+	models, listErr := h.opts.LLMProbe.ListModels(ctx, draft.baseURL, draft.apiKey, draft.model)
 	if listErr == nil {
 		pkglog.Component(pkglog.Admin).Info("LLM 连通检测",
 			"stage", "models",
@@ -61,7 +62,7 @@ func (s *Server) handleLLMTest(w http.ResponseWriter, r *http.Request) {
 			"count", len(models),
 			"preview", modelsPreview(models),
 		)
-		writeJSON(w, map[string]any{"ok": true, "detail": "models 接口可达", "via": "models", "count": len(models)})
+		ports.WriteJSON(w, map[string]any{"ok": true, "detail": "models 接口可达", "via": "models", "count": len(models)})
 		return
 	}
 	pkglog.Component(pkglog.Admin).Info("LLM 连通检测",
@@ -71,10 +72,10 @@ func (s *Server) handleLLMTest(w http.ResponseWriter, r *http.Request) {
 		"err", listErr,
 	)
 	if draft.model == "" {
-		writeJSON(w, map[string]any{"ok": false, "detail": "models 失败且未填模型: " + listErr.Error(), "error": listErr.Error()})
+		ports.WriteJSON(w, map[string]any{"ok": false, "detail": "models 失败且未填模型: " + listErr.Error(), "error": listErr.Error()})
 		return
 	}
-	reply, chatErr := s.llmProbe.Chat(ctx, draft.baseURL, draft.apiKey, draft.model, "ping", "回复 ok")
+	reply, chatErr := h.opts.LLMProbe.Chat(ctx, draft.baseURL, draft.apiKey, draft.model, "ping", "回复 ok")
 	if chatErr != nil {
 		pkglog.Component(pkglog.Admin).Info("LLM 连通检测",
 			"stage", "chat",
@@ -83,7 +84,7 @@ func (s *Server) handleLLMTest(w http.ResponseWriter, r *http.Request) {
 			"model", draft.model,
 			"err", chatErr,
 		)
-		writeJSON(w, map[string]any{"ok": false, "detail": chatErr.Error(), "error": chatErr.Error(), "via": "chat"})
+		ports.WriteJSON(w, map[string]any{"ok": false, "detail": chatErr.Error(), "error": chatErr.Error(), "via": "chat"})
 		return
 	}
 	pkglog.Component(pkglog.Admin).Info("LLM 连通检测",
@@ -93,35 +94,35 @@ func (s *Server) handleLLMTest(w http.ResponseWriter, r *http.Request) {
 		"model", draft.model,
 		"reply", clipLog(reply, 200),
 	)
-	writeJSON(w, map[string]any{"ok": true, "detail": "chat 通路正常", "via": "chat"})
+	ports.WriteJSON(w, map[string]any{"ok": true, "detail": "chat 通路正常", "via": "chat"})
 }
 
 // handleLLMModels POST /admin/config/llm/models：草稿拉取模型列表，不写库
-func (s *Server) handleLLMModels(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) handleLLMModels(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel, ok := probeTimeout(r)
 	if !ok {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	defer cancel()
-	draft, err := s.parseLLMDraft(r)
+	draft, err := h.parseLLMDraft(r)
 	if err != nil {
-		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+		ports.WriteJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
 	pkglog.Component(pkglog.Admin).Info("拉取模型开始", "stage", "start", "base_url", draft.baseURL)
-	if s.llmProbe == nil {
-		writeJSON(w, map[string]any{"ok": false, "error": "探测未配置"})
+	if h.opts.LLMProbe == nil {
+		ports.WriteJSON(w, map[string]any{"ok": false, "error": "探测未配置"})
 		return
 	}
-	models, err := s.llmProbe.ListModels(ctx, draft.baseURL, draft.apiKey, draft.model)
+	models, err := h.opts.LLMProbe.ListModels(ctx, draft.baseURL, draft.apiKey, draft.model)
 	if err != nil {
 		pkglog.Component(pkglog.Admin).Info("拉取模型失败", "stage", "models", "base_url", draft.baseURL, "err", err)
-		writeJSON(w, map[string]any{"ok": false, "detail": err.Error(), "error": err.Error()})
+		ports.WriteJSON(w, map[string]any{"ok": false, "detail": err.Error(), "error": err.Error()})
 		return
 	}
 	pkglog.Component(pkglog.Admin).Info("拉取模型成功", "stage", "models", "base_url", draft.baseURL, "count", len(models), "preview", modelsPreview(models))
-	writeJSON(w, map[string]any{"ok": true, "models": models})
+	ports.WriteJSON(w, map[string]any{"ok": true, "models": models})
 }
 
 func clipLog(s string, n int) string {
@@ -140,12 +141,12 @@ type llmDraft struct {
 	model    string
 }
 
-func (s *Server) parseLLMDraft(r *http.Request) (llmDraft, error) {
+func (h *Handler) parseLLMDraft(r *http.Request) (llmDraft, error) {
 	if err := r.ParseForm(); err != nil {
 		return llmDraft{}, err
 	}
-	stored := s.rt.Secrets().Filter.LLM
-	style := strings.ToLower(strings.TrimSpace(firstNonEmpty(
+	stored := h.opts.RT.Secrets().Filter.LLM
+	style := strings.ToLower(strings.TrimSpace(ports.FirstNonEmpty(
 		r.PostFormValue("api_style"),
 		r.PostFormValue("secret.filter.llm.api_style"),
 		stored.APIStyle,
@@ -153,7 +154,7 @@ func (s *Server) parseLLMDraft(r *http.Request) (llmDraft, error) {
 	if style == "" {
 		style = "openai"
 	}
-	baseURL := firstNonEmpty(
+	baseURL := ports.FirstNonEmpty(
 		r.PostFormValue("base_url"),
 		r.PostFormValue("secret.filter.llm.base_url"),
 	)
@@ -163,14 +164,14 @@ func (s *Server) parseLLMDraft(r *http.Request) (llmDraft, error) {
 	if baseURL == "" && style == "openai" {
 		baseURL = config.DefaultLLMBaseURL
 	}
-	apiKey := firstNonEmpty(
+	apiKey := ports.FirstNonEmpty(
 		r.PostFormValue("api_key"),
 		r.PostFormValue("secret.filter.llm.api_key"),
 	)
 	if apiKey == "" || apiKey == "••••••••" {
 		apiKey = stored.APIKey
 	}
-	model := firstNonEmpty(
+	model := ports.FirstNonEmpty(
 		r.PostFormValue("model"),
 		r.PostFormValue("secret.filter.llm.model"),
 		stored.Model,

@@ -1,4 +1,4 @@
-package admin
+package posts
 
 import (
 	"context"
@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"rent-scout/internal/admin/onboard"
+	"rent-scout/internal/admin/ports"
 	"rent-scout/internal/models"
 	"rent-scout/internal/pkglog"
 	"rent-scout/internal/store"
@@ -52,10 +54,10 @@ func (f postsFilter) With(key, val string) template.URL {
 
 // ToggleTag 点一下选中，再点取消；空了就等于点全部
 func (f postsFilter) ToggleTag(text string) template.URL {
-	return f.With("tag", toggleFilterTags(f.Tag, text))
+	return f.With("tag", ToggleFilterTags(f.Tag, text))
 }
 
-func toggleFilterTags(csv, text string) string {
+func ToggleFilterTags(csv, text string) string {
 	text = strings.TrimSpace(text)
 	cur := models.SplitFilterTags(csv)
 	var next []string
@@ -75,7 +77,7 @@ func toggleFilterTags(csv, text string) string {
 
 const filterTagPreviewN = 10
 
-func splitFilterTagPreview(tags []models.FilterTag, n int) (top, more []models.FilterTag) {
+func SplitFilterTagPreview(tags []models.FilterTag, n int) (top, more []models.FilterTag) {
 	if n < 0 {
 		n = 0
 	}
@@ -85,7 +87,7 @@ func splitFilterTagPreview(tags []models.FilterTag, n int) (top, more []models.F
 	return tags[:n], tags[n:]
 }
 
-func filterTagsContain(tags []models.FilterTag, selected string) bool {
+func FilterTagsContain(tags []models.FilterTag, selected string) bool {
 	want := map[string]bool{}
 	for _, t := range models.SplitFilterTags(selected) {
 		want[t] = true
@@ -162,13 +164,13 @@ func adminPostsPath(r *http.Request) string {
 }
 
 // handleHome 项目介绍页（GET /admin）
-func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) handleHome(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if err := s.tmpl.ExecuteTemplate(w, "home", mergePageCtx(s.pageCtx(r, "home"), map[string]any{
-		"Onboard": collectOnboard(s.rt.Get(), s.rt.Secrets(), r.URL.Query().Get("token")),
+	if err := h.opts.Tmpl.ExecuteTemplate(w, "home", ports.MergePageCtx(ports.PageCtx(h.opts.RT, r, "home"), map[string]any{
+		"Onboard": onboard.CollectOnboard(h.opts.RT.Get(), h.opts.RT.Secrets(), r.URL.Query().Get("token")),
 	})); err != nil {
 		pkglog.Component(pkglog.Admin).Error("介绍页渲染失败", "err", err)
 	}
@@ -179,7 +181,7 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 // 供 nav 链接/筛选链接/表单 action 追加，保证鉴权开启时页面内跳转与提交不 401。
 const adminPostPageSize = 20
 
-func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) handleAdmin(w http.ResponseWriter, r *http.Request) {
 	f := postListFilterFromQuery(r.URL.Query())
 	q := r.URL.Query()
 	page, _ := strconv.Atoi(q.Get("page"))
@@ -193,7 +195,7 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
 	if size > 100 {
 		size = 100
 	}
-	total, err := s.db.CountPosts(f)
+	total, err := h.opts.DB.CountPosts(f)
 	if err != nil {
 		pkglog.Component(pkglog.Admin).Error("帖子计数失败", "err", err)
 		http.Error(w, "查询失败", http.StatusInternalServerError)
@@ -207,33 +209,33 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
 		page = pages
 	}
 	offset := (page - 1) * size
-	posts, err := s.db.ListPosts(f, size, offset)
+	posts, err := h.opts.DB.ListPosts(f, size, offset)
 	if err != nil {
 		pkglog.Component(pkglog.Admin).Error("帖子列表查询失败", "err", err)
 		http.Error(w, "查询失败", http.StatusInternalServerError)
 		return
 	}
-	if err := s.db.AttachPostTags(posts); err != nil {
+	if err := h.opts.DB.AttachPostTags(posts); err != nil {
 		pkglog.Component(pkglog.Admin).Warn("标签加载失败", "err", err)
 	}
-	if err := s.db.AttachAIReasons(posts); err != nil {
+	if err := h.opts.DB.AttachAIReasons(posts); err != nil {
 		pkglog.Component(pkglog.Admin).Warn("AI 原因加载失败", "err", err)
 	}
 	chipPosts(posts)
-	tags, err := s.db.ListFilterTags()
+	tags, err := h.opts.DB.ListFilterTags()
 	if err != nil {
 		pkglog.Component(pkglog.Admin).Warn("标签聚合失败", "err", err)
 		tags = nil
 	}
 	tags = appendSelectedTags(tags, f.Tag)
-	tagsTop, tagsMore := splitFilterTagPreview(tags, filterTagPreviewN)
+	tagsTop, tagsMore := SplitFilterTagPreview(tags, filterTagPreviewN)
 	fq := adminPostsQuery(r).Encode()
 	prevQ, nextQ := pageQuery(r, page-1), pageQuery(r, page+1)
 	filter := postsFilter{
 		Q: f.Q, Status: f.Status, Tag: f.Tag, AI: f.AI, Handled: f.Handled, Source: f.Source,
 		Token: r.URL.Query().Get("token"), PageSize: size,
 	}
-	if err := s.tmpl.ExecuteTemplate(w, "admin", mergePageCtx(s.pageCtx(r, "posts"), map[string]any{
+	if err := h.opts.Tmpl.ExecuteTemplate(w, "admin", ports.MergePageCtx(ports.PageCtx(h.opts.RT, r, "posts"), map[string]any{
 		"Posts":        posts,
 		"Q":            f.Q,
 		"Status":       f.Status,
@@ -244,9 +246,9 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
 		"Sources":      models.KnownSources(),
 		"TagsTop":      tagsTop,
 		"TagsMore":     tagsMore,
-		"TagsMoreOpen": filterTagsContain(tagsMore, f.Tag),
+		"TagsMoreOpen": FilterTagsContain(tagsMore, f.Tag),
 		"Filter":       filter,
-		"Onboard":      collectorOnboard(s.rt.Get(), s.rt.Secrets(), r.URL.Query().Get("token")),
+		"Onboard":      onboard.CollectorOnboard(h.opts.RT.Get(), h.opts.RT.Secrets(), r.URL.Query().Get("token")),
 		"Page":         page,
 		"Pages":        pages,
 		"Total":        total,
@@ -272,12 +274,12 @@ func pageQuery(r *http.Request, page int) string {
 	return q.Encode()
 }
 
-func (s *Server) handlePostTags(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) handlePostTags(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	tags, err := s.db.ListFilterTags()
+	tags, err := h.opts.DB.ListFilterTags()
 	if err != nil {
 		pkglog.Component(pkglog.Admin).Error("标签聚合失败", "err", err)
 		http.Error(w, "查询失败", http.StatusInternalServerError)
@@ -294,7 +296,7 @@ func (s *Server) handlePostTags(w http.ResponseWriter, r *http.Request) {
 // handleMark 标记反馈（POST /admin/mark，表单：post_id/action/reason）
 // 仅接受 POST：GET 等请求一律 405，防止 <a>/<img> 链接触发写库。
 // 表单值只读 PostForm（body），URL query 参数天然失效，杜绝 query 注入写库。
-func (s *Server) handleMark(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) handleMark(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -309,7 +311,7 @@ func (s *Server) handleMark(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "参数无效", http.StatusBadRequest)
 		return
 	}
-	if err := s.db.AddUserFeedback(postID, action, r.PostFormValue("reason")); err != nil {
+	if err := h.opts.DB.AddUserFeedback(postID, action, r.PostFormValue("reason")); err != nil {
 		pkglog.Component(pkglog.Admin).Error("反馈写入失败", "post_id", postID, "action", action, "err", err)
 		http.Error(w, "写入失败", http.StatusInternalServerError)
 		return
@@ -321,7 +323,7 @@ func (s *Server) handleMark(w http.ResponseWriter, r *http.Request) {
 
 // handleHandled 独立「已处理」写/清 handled_at（POST /admin/handled）
 // 表单：post_id + handled=1|0；只动 handled_at，不改 feedbacks，不写 posts.status。
-func (s *Server) handleHandled(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) handleHandled(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -338,9 +340,9 @@ func (s *Server) handleHandled(w http.ResponseWriter, r *http.Request) {
 	}
 	var err error
 	if handled == "1" {
-		err = s.db.MarkPostHandled(postID)
+		err = h.opts.DB.MarkPostHandled(postID)
 	} else {
-		err = s.db.ClearPostHandled(postID)
+		err = h.opts.DB.ClearPostHandled(postID)
 	}
 	if err != nil {
 		pkglog.Component(pkglog.Admin).Error("已处理写入失败", "post_id", postID, "handled", handled, "err", err)
@@ -366,7 +368,7 @@ func redirectPostsMsg(w http.ResponseWriter, r *http.Request, msg string) {
 }
 
 // handleNotifySelected 勾选帖子后立刻发通知（POST /admin/notify，表单 post_id 可多值）
-func (s *Server) handleNotifySelected(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) handleNotifySelected(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -375,7 +377,7 @@ func (s *Server) handleNotifySelected(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad form", http.StatusBadRequest)
 		return
 	}
-	if s.notifyManual == nil {
+	if h.opts.NotifyManual == nil {
 		redirectPostsMsg(w, r, "通知未配置")
 		return
 	}
@@ -399,7 +401,7 @@ func (s *Server) handleNotifySelected(w http.ResponseWriter, r *http.Request) {
 	group := "手动触发-" + time.Now().Format("010215:04:05")
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
-	if err := s.notifyManual.SendSelected(ctx, ids, group); err != nil {
+	if err := h.opts.NotifyManual.SendSelected(ctx, ids, group); err != nil {
 		pkglog.Component(pkglog.Admin).Error("手动通知失败", "count", len(ids), "err", err)
 		redirectPostsMsg(w, r, "发送失败："+err.Error())
 		return
@@ -409,7 +411,7 @@ func (s *Server) handleNotifySelected(w http.ResponseWriter, r *http.Request) {
 }
 
 // handlePosts 帖子列表（GET /api/posts?q=&status=&tag=&handled=&limit=&offset=，规格 7.1 + §6）
-func (s *Server) handlePosts(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) handlePosts(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -423,16 +425,16 @@ func (s *Server) handlePosts(w http.ResponseWriter, r *http.Request) {
 	if offset < 0 {
 		offset = 0
 	}
-	list, err := s.db.ListPosts(postListFilterFromQuery(q), limit, offset)
+	list, err := h.opts.DB.ListPosts(postListFilterFromQuery(q), limit, offset)
 	if err != nil {
 		pkglog.Component(pkglog.Admin).Error("帖子列表失败", "err", err)
 		http.Error(w, "查询失败", http.StatusInternalServerError)
 		return
 	}
-	if err := s.db.AttachPostTags(list); err != nil {
+	if err := h.opts.DB.AttachPostTags(list); err != nil {
 		pkglog.Component(pkglog.Admin).Warn("标签加载失败", "err", err)
 	}
-	if err := s.db.AttachAIReasons(list); err != nil {
+	if err := h.opts.DB.AttachAIReasons(list); err != nil {
 		pkglog.Component(pkglog.Admin).Warn("AI 原因加载失败", "err", err)
 	}
 	chipPosts(list)
@@ -441,7 +443,7 @@ func (s *Server) handlePosts(w http.ResponseWriter, r *http.Request) {
 }
 
 // handlePost 帖子详情（GET /api/posts/{id}）：post + filter_result + notifications + tags
-func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) handlePost(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -456,7 +458,7 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "帖子 id 无效", http.StatusBadRequest)
 		return
 	}
-	post, ok, err := s.db.GetPost(id)
+	post, ok, err := h.opts.DB.GetPost(id)
 	if err != nil {
 		pkglog.Component(pkglog.Admin).Error("查帖子详情失败", "id", id, "err", err)
 		http.Error(w, "查询失败", http.StatusInternalServerError)
@@ -466,19 +468,19 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "帖子不存在", http.StatusNotFound)
 		return
 	}
-	filterResult, _, err := s.db.FilterResultByPostID(id)
+	filterResult, _, err := h.opts.DB.FilterResultByPostID(id)
 	if err != nil {
 		pkglog.Component(pkglog.Admin).Error("查筛选结果失败", "id", id, "err", err)
 		http.Error(w, "查询失败", http.StatusInternalServerError)
 		return
 	}
-	notifications, err := s.db.ListNotificationsByPost(id)
+	notifications, err := h.opts.DB.ListNotificationsByPost(id)
 	if err != nil {
 		pkglog.Component(pkglog.Admin).Error("查通知失败", "id", id, "err", err)
 		http.Error(w, "查询失败", http.StatusInternalServerError)
 		return
 	}
-	tags, err := s.db.ListTagsByPost(id)
+	tags, err := h.opts.DB.ListTagsByPost(id)
 	if err != nil {
 		pkglog.Component(pkglog.Admin).Error("查标签失败", "id", id, "err", err)
 		http.Error(w, "查询失败", http.StatusInternalServerError)

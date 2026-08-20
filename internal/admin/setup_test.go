@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"rent-scout/internal/admin/ports"
 	"rent-scout/internal/config"
 	"rent-scout/internal/store"
 )
@@ -216,8 +217,8 @@ func TestSetupAllowsCookieTestDuringSetup(t *testing.T) {
 	s := newAdminTestStore(t)
 	defer s.Close()
 	srv := newSetupInProgressServer(t, s, nil)
-	srv.SetCookieProbe(stubPageProbe{fn: func(ctx context.Context, rawURL, c string) DoubanPageResult {
-		return DoubanPageResult{OK: false, HTTP: 200, Snippet: "有异常请求从你的 IP 发出，请 登录 使用豆瓣"}
+	srv.SetCookieProbe(stubPageProbe{fn: func(ctx context.Context, rawURL, c string) ports.DoubanPageResult {
+		return ports.DoubanPageResult{OK: false, HTTP: 200, Snippet: "有异常请求从你的 IP 发出，请 登录 使用豆瓣"}
 	}})
 
 	form := url.Values{"cookie_mode": {"none"}}

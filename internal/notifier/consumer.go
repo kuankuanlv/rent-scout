@@ -3,6 +3,7 @@ package notifier
 import (
 	"context"
 	"fmt"
+	"rent-scout/internal/notifier/group"
 	"sort"
 	"strings"
 
@@ -99,7 +100,7 @@ func (n *Notifier) ProcessBatch(ctx context.Context, batch []models.RentPost) er
 }
 
 // ProcessManual 控制台勾选直发：不按地点拆组、不等凑批，已发过的也会再发一次
-func (n *Notifier) ProcessManual(ctx context.Context, batch []models.RentPost, group string) error {
+func (n *Notifier) ProcessManual(ctx context.Context, batch []models.RentPost, groupName string) error {
 	chs := n.liveChannels()
 	if len(batch) == 0 {
 		return nil
@@ -107,17 +108,17 @@ func (n *Notifier) ProcessManual(ctx context.Context, batch []models.RentPost, g
 	if len(chs) == 0 {
 		return fmt.Errorf("当前没有可用的通知渠道")
 	}
-	if strings.TrimSpace(group) == "" {
-		group = GroupUnknown
+	if strings.TrimSpace(groupName) == "" {
+		groupName = group.GroupUnknown
 	}
 	log := pkglog.Component(pkglog.Notifier)
-	log.Info("手动通知触发", "count", len(batch), "group", group)
+	log.Info("手动通知触发", "count", len(batch), "group", groupName)
 	if err := n.st.AttachPostTags(batch); err != nil {
 		return fmt.Errorf("加载标签: %w", err)
 	}
 	var firstErr error
 	for _, ch := range chs {
-		if err := n.sendGroup(ctx, ch, group, batch); err != nil && firstErr == nil {
+		if err := n.sendGroup(ctx, ch, groupName, batch); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
@@ -139,7 +140,7 @@ func (n *Notifier) sendChannel(ctx context.Context, ch Channel, batch []models.R
 	if len(pending) == 0 {
 		return nil
 	}
-	groups := groupByLocationTag(pending)
+	groups := group.ByLocationTag(pending)
 	tags := make([]string, 0, len(groups))
 	for tag := range groups {
 		tags = append(tags, tag)
@@ -174,10 +175,10 @@ func (n *Notifier) sendGroup(ctx context.Context, ch Channel, tag string, posts 
 			URL:                p.URL,
 			AddressTag:         tag,
 			Price:              models.PriceYuan(p.Price),
-FeedbackURL:        AbsActionURL(origin, BuildFeedbackURL(p.ID, "useful", secret)),
-				FeedbackUselessURL: AbsActionURL(origin, BuildFeedbackURL(p.ID, "useless", secret)),
-				HandledURL:         AbsActionURL(origin, BuildFeedbackURL(p.ID, "handled", secret)),
-			}
+			FeedbackURL:        group.AbsActionURL(origin, group.BuildFeedbackURL(p.ID, "useful", secret)),
+			FeedbackUselessURL: group.AbsActionURL(origin, group.BuildFeedbackURL(p.ID, "useless", secret)),
+			HandledURL:         group.AbsActionURL(origin, group.BuildFeedbackURL(p.ID, "handled", secret)),
+		}
 		if models.HasContact(p.Contact) {
 			item.Contact = p.Contact
 		}
@@ -202,7 +203,7 @@ FeedbackURL:        AbsActionURL(origin, BuildFeedbackURL(p.ID, "useful", secret
 	if len(items) == 0 {
 		return nil
 	}
-	items = sortByPriority(items)
+	items = group.SortByPriority(items)
 
 	log := pkglog.Component(pkglog.Notifier)
 	log.Info("渠道分组发送", "channel", ch.Name(), "group", tag, "items", len(items))

@@ -5,15 +5,16 @@ import (
 	"fmt"
 	"strings"
 
-	"rent-scout/internal/notifier"
+	"rent-scout/internal/notifier/group"
+	"rent-scout/internal/notifier/port"
 )
 
 // NewFeishuChannel 飞书：post 富文本（可点链接，非 HTML）
-func NewFeishuChannel(webhookURL string) notifier.Channel {
+func NewFeishuChannel(webhookURL string) port.Channel {
 	return &webhookChannel{
-		name: notifier.ChannelFeishu,
+		name: port.ChannelFeishu,
 		url:  webhookURL,
-		build: func(items []notifier.NotifyItem) ([]byte, error) {
+		build: func(items []port.NotifyItem) ([]byte, error) {
 			return json.Marshal(map[string]interface{}{
 				"msg_type": "post",
 				"content": map[string]interface{}{
@@ -38,10 +39,10 @@ func feishuLink(text, href string) feishuNode {
 }
 
 // feishuPost 组装 zh_cn：title + 分段 content（对齐 textPayload / HTMLView 字段）
-func feishuPost(items []notifier.NotifyItem) map[string]interface{} {
-	group := items[0].AddressTag
-	if group == "" {
-		group = notifier.GroupUnknown
+func feishuPost(items []port.NotifyItem) map[string]interface{} {
+	tag := items[0].AddressTag
+	if tag == "" {
+		tag = group.GroupUnknown
 	}
 	var paras [][]feishuNode
 	for i, it := range items {
@@ -108,7 +109,7 @@ func feishuPost(items []notifier.NotifyItem) map[string]interface{} {
 		}
 	}
 	return map[string]interface{}{
-		"title":   fmt.Sprintf("%s · %d 条", group, len(items)),
+		"title":   fmt.Sprintf("%s · %d 条", tag, len(items)),
 		"content": paras,
 	}
 }

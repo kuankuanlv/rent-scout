@@ -12,7 +12,7 @@ import (
 
 	"rent-scout/internal/collector/cookie"
 	"rent-scout/internal/config"
-	"rent-scout/internal/filter/llm"
+	"rent-scout/internal/filter/ai/llm"
 	"rent-scout/internal/models"
 	"rent-scout/internal/store"
 )

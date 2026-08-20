@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"rent-scout/internal/notifier"
+	"rent-scout/internal/notifier/port"
 )
 
 // dingtalkSign 钉钉加签：timestamp + HMAC-SHA256 签名（官方算法）
@@ -25,11 +25,11 @@ func dingtalkSign(secret string) (string, string, error) {
 }
 
 // NewDingtalkChannel 钉钉：text 消息 + 可选加签（secret 空 = 不加签）
-func NewDingtalkChannel(webhookURL, secret string) notifier.Channel {
+func NewDingtalkChannel(webhookURL, secret string) port.Channel {
 	ch := &webhookChannel{
-		name: notifier.ChannelDingtalk,
+		name: port.ChannelDingtalk,
 		url:  webhookURL,
-		build: func(items []notifier.NotifyItem) ([]byte, error) {
+		build: func(items []port.NotifyItem) ([]byte, error) {
 			return json.Marshal(map[string]interface{}{
 				"msgtype": "text",
 				"text":    map[string]string{"content": textPayload(items)},

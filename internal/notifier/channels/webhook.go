@@ -5,20 +5,21 @@ import (
 	"fmt"
 	"strings"
 
-	"rent-scout/internal/notifier"
+	"rent-scout/internal/notifier/group"
+	"rent-scout/internal/notifier/port"
 )
 
 // webhookChannel 基于 webhook 的渠道：JSON 载荷 + 可选签名；Send 按组发一条
 type webhookChannel struct {
 	name    string
 	url     string
-	build   func(items []notifier.NotifyItem) ([]byte, error) // 构造载荷
-	signURL func(rawURL string) (string, error)               // 可选 URL 签名（钉钉加签）
+	build   func(items []port.NotifyItem) ([]byte, error) // 构造载荷
+	signURL func(rawURL string) (string, error)           // 可选 URL 签名（钉钉加签）
 }
 
 func (c *webhookChannel) Name() string { return c.name }
 
-func (c *webhookChannel) Send(ctx context.Context, items []notifier.NotifyItem) ([]int64, []error, error) {
+func (c *webhookChannel) Send(ctx context.Context, items []port.NotifyItem) ([]int64, []error, error) {
 	if len(items) == 0 {
 		return nil, nil, nil
 	}
@@ -50,13 +51,13 @@ func (c *webhookChannel) Send(ctx context.Context, items []notifier.NotifyItem) 
 }
 
 // textPayload 统一文本载荷：分组标题 + 组内帖子列表
-func textPayload(items []notifier.NotifyItem) string {
+func textPayload(items []port.NotifyItem) string {
 	var sb strings.Builder
-	group := items[0].AddressTag
-	if group == "" {
-		group = notifier.GroupUnknown
+	tag := items[0].AddressTag
+	if tag == "" {
+		tag = group.GroupUnknown
 	}
-	fmt.Fprintf(&sb, "📍 %s · %d 条新帖子\n", group, len(items))
+	fmt.Fprintf(&sb, "📍 %s · %d 条新帖子\n", tag, len(items))
 	for _, it := range items {
 		sb.WriteString("——\n")
 		fmt.Fprintf(&sb, "%s\n%s\n", it.Title, it.URL)

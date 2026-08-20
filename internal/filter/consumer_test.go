@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"rent-scout/internal/config"
+	"rent-scout/internal/filter/rule"
 	"rent-scout/internal/models"
 	"rent-scout/internal/store"
 )
@@ -28,7 +29,7 @@ func TestConsumerProcessHard(t *testing.T) {
 	st.InsertPost(p1)
 	st.InsertPost(p2)
 
-	c := NewConsumerWithOptions(NewRuleChain(nil), st, ConsumerOptions{})
+	c := NewConsumerWithOptions(rule.NewRuleChain(nil), st, ConsumerOptions{})
 	batch, err := st.FetchPendingByStatus(models.PostStatusCollected, 10)
 	if err != nil {
 		t.Fatal(err)
@@ -69,7 +70,7 @@ func TestConsumerRejects(t *testing.T) {
 	p := models.RentPost{Source: "douban", ExternalID: "c", Title: "中介勿扰", Content: "中介勿扰，代理绕行",
 		CollectedAt: time.Now(), Status: models.PostStatusCollected}
 	st.InsertPost(p)
-	c := NewConsumerWithOptions(NewRuleChain(nil), st, ConsumerOptions{})
+	c := NewConsumerWithOptions(rule.NewRuleChain(nil), st, ConsumerOptions{})
 	batch, _ := st.FetchPendingByStatus(models.PostStatusCollected, 10)
 	if err := c.processHard(context.Background(), batch); err != nil {
 		t.Fatal(err)
@@ -121,7 +122,7 @@ func (f *fakeAIEvaluator) EvaluateBatch(ctx context.Context, posts []models.Rent
 	return out, nil
 }
 
-func setupAIConsumer(t *testing.T, ai AIEvaluator, opts ConsumerOptions) (*Consumer, *store.Store, []models.RentPost) {
+func setupAIConsumer(t *testing.T, ai rule.AIEvaluator, opts ConsumerOptions) (*Consumer, *store.Store, []models.RentPost) {
 	t.Helper()
 	st, err := store.Open(t.TempDir() + "/t.db")
 	if err != nil {
@@ -142,7 +143,7 @@ func setupAIConsumer(t *testing.T, ai AIEvaluator, opts ConsumerOptions) (*Consu
 			t.Fatal(err)
 		}
 	}
-	c := NewConsumerWithOptions(NewRuleChain(ai), st, opts)
+	c := NewConsumerWithOptions(rule.NewRuleChain(ai), st, opts)
 	batch, err := st.FetchPendingByStatus(models.PostStatusCollected, 10)
 	if err != nil {
 		t.Fatal(err)
@@ -241,7 +242,7 @@ func TestFetchAwaitingAIEmptyWhenOff(t *testing.T) {
 	}
 	st.InsertPost(models.RentPost{Source: "douban", ExternalID: "a", Title: "望京整租", Content: "x",
 		CollectedAt: time.Now(), Status: models.PostStatusCollected})
-	c := NewConsumerWithOptions(NewRuleChain(nil), st, ConsumerOptions{})
+	c := NewConsumerWithOptions(rule.NewRuleChain(nil), st, ConsumerOptions{})
 	batch, _ := st.FetchPendingByStatus(models.PostStatusCollected, 10)
 	_ = c.processHard(context.Background(), batch)
 	got, err := c.FetchAwaitingAI(context.Background(), 10)
@@ -270,7 +271,7 @@ func TestConsumerRulesReadErrorKeepsBatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := NewConsumerWithOptions(NewRuleChain(nil), st, ConsumerOptions{})
+	c := NewConsumerWithOptions(rule.NewRuleChain(nil), st, ConsumerOptions{})
 	st.Close()
 	if err := c.processHard(context.Background(), batch); err != nil {
 		t.Fatalf("processHard 应只记录告警不返回 error: %v", err)
@@ -314,7 +315,7 @@ func TestReplayHardRejectedToPassedClearsNotifications(t *testing.T) {
 		Value: "望京", Enabled: true, Priority: 10}); err != nil {
 		t.Fatal(err)
 	}
-	c := NewConsumerWithOptions(NewRuleChain(nil), st, ConsumerOptions{})
+	c := NewConsumerWithOptions(rule.NewRuleChain(nil), st, ConsumerOptions{})
 	if err := c.ReplayHard(context.Background(), batch); err != nil {
 		t.Fatal(err)
 	}
@@ -356,7 +357,7 @@ func TestReplayHardStillPassedKeepsNotifications(t *testing.T) {
 	if err := st.MarkNotificationSent(batch[0].ID, "pushplus"); err != nil {
 		t.Fatal(err)
 	}
-	c := NewConsumerWithOptions(NewRuleChain(nil), st, ConsumerOptions{})
+	c := NewConsumerWithOptions(rule.NewRuleChain(nil), st, ConsumerOptions{})
 	if err := c.ReplayHard(context.Background(), batch); err != nil {
 		t.Fatal(err)
 	}
@@ -377,7 +378,7 @@ func TestFetchAwaitingAISkipsWhenDisabled(t *testing.T) {
 	defer st.Close()
 	off := false
 	rt := config.NewHotConfigWithSnapshot(&config.AppConfig{Filter: config.FilterConfig{AIEnabled: &off}}, nil)
-	c := NewConsumerWithOptions(NewRuleChain(nil), st, ConsumerOptions{HotConfig: rt})
+	c := NewConsumerWithOptions(rule.NewRuleChain(nil), st, ConsumerOptions{HotConfig: rt})
 	got, err := c.FetchAwaitingAI(context.Background(), 10)
 	if err != nil {
 		t.Fatal(err)

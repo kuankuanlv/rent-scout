@@ -4,6 +4,8 @@ import (
 	"strings"
 	"time"
 
+	"rent-scout/internal/config/urls"
+	"rent-scout/internal/config/window"
 	"rent-scout/internal/models"
 )
 
@@ -42,19 +44,19 @@ func ValidateApp(cfg *AppConfig) []string {
 	// 源可以全关：默认不采集，等用户勾选后再跑
 	// 豆瓣源校验
 	for _, src := range cfg.Collector.Sources {
-		if src == models.SourceDouban.String() && len(HTTPURLs(cfg.Collector.Douban.Groups)) == 0 {
+		if src == models.SourceDouban.String() && len(urls.HTTPURLs(cfg.Collector.Douban.Groups)) == 0 {
 			errs = append(errs, "collector.douban.groups 不能为空（源 douban 已启用）")
 		}
 		if src == models.SourceWeibo.String() &&
-			len(WeiboUIDs(cfg.Collector.Weibo.Users)) == 0 &&
-			len(WeiboContainerIDs(cfg.Collector.Weibo.SuperTopics)) == 0 {
+			len(urls.WeiboUIDs(cfg.Collector.Weibo.Users)) == 0 &&
+			len(urls.WeiboContainerIDs(cfg.Collector.Weibo.SuperTopics)) == 0 {
 			errs = append(errs, "collector.weibo 的超话、博主至少配置一项（源 weibo 已启用）")
 		}
 	}
-	if _, _, err := ResolveTimeRange(cfg.Collector.Douban.RangeFrom, "now", time.Now()); err != nil {
+	if _, _, err := window.ResolveTimeRange(cfg.Collector.Douban.RangeFrom, "now", time.Now()); err != nil {
 		errs = append(errs, "collector.douban 拉取范围: "+err.Error())
 	}
-	if _, _, err := ResolveTimeRange(cfg.Collector.Weibo.RangeFrom, "now", time.Now()); err != nil {
+	if _, _, err := window.ResolveTimeRange(cfg.Collector.Weibo.RangeFrom, "now", time.Now()); err != nil {
 		errs = append(errs, "collector.weibo 拉取范围: "+err.Error())
 	}
 

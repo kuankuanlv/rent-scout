@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"rent-scout/internal/config"
+	"rent-scout/internal/config/urls"
 	"rent-scout/internal/pkglog"
 )
 
@@ -207,18 +208,18 @@ func cookieProbeURL(r *http.Request, rt *config.HotConfig) string {
 			r.PostFormValue("collector.weibo.users"),
 			r.PostFormValue("urls"),
 		)
-		if ids := config.WeiboContainerIDs(strings.Split(raw, "\n")); len(ids) > 0 {
+		if ids := urls.WeiboContainerIDs(strings.Split(raw, "\n")); len(ids) > 0 {
 			return "https://weibo.com/p/" + ids[0]
 		}
-		if uids := config.WeiboUIDs(strings.Split(raw, "\n")); len(uids) > 0 {
+		if uids := urls.WeiboUIDs(strings.Split(raw, "\n")); len(uids) > 0 {
 			return "https://weibo.com/u/" + uids[0]
 		}
 		if rt != nil {
 			if app := rt.Get(); app != nil {
-				if ids := config.WeiboContainerIDs(app.Collector.Weibo.SuperTopics); len(ids) > 0 {
+				if ids := urls.WeiboContainerIDs(app.Collector.Weibo.SuperTopics); len(ids) > 0 {
 					return "https://weibo.com/p/" + ids[0]
 				}
-				if uids := config.WeiboUIDs(app.Collector.Weibo.Users); len(uids) > 0 {
+				if uids := urls.WeiboUIDs(app.Collector.Weibo.Users); len(uids) > 0 {
 					return "https://weibo.com/u/" + uids[0]
 				}
 			}
@@ -229,12 +230,12 @@ func cookieProbeURL(r *http.Request, rt *config.HotConfig) string {
 		r.PostFormValue("collector.douban.groups"),
 		r.PostFormValue("groups"),
 	)
-	if line := config.FirstHTTPURL(raw); line != "" {
+	if line := urls.FirstHTTPURL(raw); line != "" {
 		return line
 	}
 	if rt != nil {
 		if app := rt.Get(); app != nil {
-			if urls := config.HTTPURLs(app.Collector.Douban.Groups); len(urls) > 0 {
+			if urls := urls.HTTPURLs(app.Collector.Douban.Groups); len(urls) > 0 {
 				return urls[0]
 			}
 		}

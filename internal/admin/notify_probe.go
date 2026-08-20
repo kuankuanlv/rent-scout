@@ -7,7 +7,7 @@ import (
 
 	"rent-scout/internal/config"
 	"rent-scout/internal/models"
-	"rent-scout/internal/notifier"
+	"rent-scout/internal/notifier/group"
 	"rent-scout/internal/pkglog"
 	"rent-scout/internal/store"
 )
@@ -126,29 +126,29 @@ func (s *Server) postsToProbeItems(posts []models.RentPost) []NotifyProbeItem {
 			URL:                p.URL,
 			AddressTag:         tag,
 			Price:              models.PriceYuan(p.Price),
-				FeedbackURL:        notifier.AbsActionURL(origin, notifier.BuildFeedbackURL(p.ID, "useful", secret)),
-				FeedbackUselessURL: notifier.AbsActionURL(origin, notifier.BuildFeedbackURL(p.ID, "useless", secret)),
-				HandledURL:         notifier.AbsActionURL(origin, notifier.BuildFeedbackURL(p.ID, "handled", secret)),
-			}
-			if models.HasContact(p.Contact) {
-				item.Contact = p.Contact
-			}
-			if fr, ok, err := s.db.FilterResultByPostID(p.ID); err == nil && ok && fr.AI != nil {
-				if item.Price <= 0 {
-					item.Price = fr.AI.Price
-				}
-				if item.Contact == "" && models.HasContact(fr.AI.Contact) {
-					item.Contact = fr.AI.Contact
-				}
-				item.Commuting = fr.AI.Commuting
-				item.Reason = fr.AI.Reason
-			}
-			items = append(items, item)
+			FeedbackURL:        group.AbsActionURL(origin, group.BuildFeedbackURL(p.ID, "useful", secret)),
+			FeedbackUselessURL: group.AbsActionURL(origin, group.BuildFeedbackURL(p.ID, "useless", secret)),
+			HandledURL:         group.AbsActionURL(origin, group.BuildFeedbackURL(p.ID, "handled", secret)),
 		}
-		return items
+		if models.HasContact(p.Contact) {
+			item.Contact = p.Contact
+		}
+		if fr, ok, err := s.db.FilterResultByPostID(p.ID); err == nil && ok && fr.AI != nil {
+			if item.Price <= 0 {
+				item.Price = fr.AI.Price
+			}
+			if item.Contact == "" && models.HasContact(fr.AI.Contact) {
+				item.Contact = fr.AI.Contact
+			}
+			item.Commuting = fr.AI.Commuting
+			item.Reason = fr.AI.Reason
+		}
+		items = append(items, item)
 	}
+	return items
+}
 
-	func mockNotifyPosts() []models.RentPost {
+func mockNotifyPosts() []models.RentPost {
 	return []models.RentPost{
 		{
 			ID: -1, Source: "douban", Title: "【连通检测】望京一居示例",

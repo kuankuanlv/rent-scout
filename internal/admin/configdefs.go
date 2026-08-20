@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"rent-scout/internal/config"
+	"rent-scout/internal/config/window"
 	"rent-scout/internal/models"
 	"rent-scout/internal/store"
 )
@@ -286,7 +287,7 @@ func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[stri
 			{
 				Title: "按发布时间筛选", Hint: "只抓这个时刻之后发布的帖，截止日期永远是现在（不单独配置，也不参与采集进度指纹）。单位是天，相对现在：-10 = 10 天前。支持小数。改这个值会重置该源采集进度。", Class: "bg-sky-50 border-sky-200", Group: "douban",
 				Items: []configField{
-					{Key: "collector.douban.range_from", Label: "起始（几天前）", Value: config.CanonicalDayOffset(get("collector.douban.range_from", app.Collector.Douban.RangeFrom)), Type: "text", Group: "douban", DayOffset: true, Wide: true, Hint: "只采集这个时刻之后发布的帖。必须为负数，例如 -10；改了会重置采集进度"},
+					{Key: "collector.douban.range_from", Label: "起始（几天前）", Value: window.CanonicalDayOffset(get("collector.douban.range_from", app.Collector.Douban.RangeFrom)), Type: "text", Group: "douban", DayOffset: true, Wide: true, Hint: "只采集这个时刻之后发布的帖。必须为负数，例如 -10；改了会重置采集进度"},
 				},
 			},
 			{
@@ -313,7 +314,7 @@ func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[stri
 			{
 				Title: "按发布时间筛选", Hint: "只抓这个时刻之后发布的帖，截止日期永远是现在（不单独配置，也不参与采集进度指纹）。单位是天，相对现在：-10 = 10 天前。支持小数。改这个值会重置该源采集进度。", Class: "bg-sky-50 border-sky-200", Group: "weibo",
 				Items: []configField{
-					{Key: "collector.weibo.range_from", Label: "起始（几天前）", Value: config.CanonicalDayOffset(get("collector.weibo.range_from", app.Collector.Weibo.RangeFrom)), Type: "text", Group: "weibo", DayOffset: true, Wide: true, Hint: "只采集这个时刻之后发布的帖。必须为负数，例如 -10；改了会重置采集进度"},
+					{Key: "collector.weibo.range_from", Label: "起始（几天前）", Value: window.CanonicalDayOffset(get("collector.weibo.range_from", app.Collector.Weibo.RangeFrom)), Type: "text", Group: "weibo", DayOffset: true, Wide: true, Hint: "只采集这个时刻之后发布的帖。必须为负数，例如 -10；改了会重置采集进度"},
 				},
 			},
 			{
@@ -457,7 +458,7 @@ func ParseSectionForm(form url.Values, section string, keepSecrets map[string]st
 		}
 
 		if key == "collector.douban.range_from" || key == "collector.weibo.range_from" {
-			v = config.CanonicalDayOffset(v)
+			v = window.CanonicalDayOffset(v)
 			if v == "" {
 				v = "-10"
 			}

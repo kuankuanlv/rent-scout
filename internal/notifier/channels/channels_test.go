@@ -9,7 +9,7 @@ import (
 	"sync"
 	"testing"
 
-	"rent-scout/internal/notifier"
+	"rent-scout/internal/notifier/port"
 )
 
 // feishu：发送 post 富文本 JSON；返回 sent=全部 PostID
@@ -27,10 +27,10 @@ func TestFeishuChannelSend(t *testing.T) {
 	defer srv.Close()
 
 	ch := NewFeishuChannel(srv.URL)
-	if ch.Name() != notifier.ChannelFeishu {
+	if ch.Name() != port.ChannelFeishu {
 		t.Fatalf("name: %s", ch.Name())
 	}
-	items := []notifier.NotifyItem{{
+	items := []port.NotifyItem{{
 		PostID: 1, Title: "望京整租", URL: "https://x", AddressTag: "望京",
 		FeedbackURL: "https://fb/useful", FeedbackUselessURL: "https://fb/useless", HandledURL: "https://fb/h",
 	}}
@@ -75,7 +75,7 @@ func TestDingtalkSignedURL(t *testing.T) {
 	defer srv.Close()
 
 	ch := NewDingtalkChannel(srv.URL, "secret")
-	_, _, err := ch.Send(context.Background(), []notifier.NotifyItem{{PostID: 1}})
+	_, _, err := ch.Send(context.Background(), []port.NotifyItem{{PostID: 1}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func TestPushplusChannelSend(t *testing.T) {
 	defer srv.Close()
 
 	ch := NewPushplusChannel(srv.URL, "tok", "doubanzufang")
-	_, _, err := ch.Send(context.Background(), []notifier.NotifyItem{{PostID: 1, Title: "t", AddressTag: "望京"}})
+	_, _, err := ch.Send(context.Background(), []port.NotifyItem{{PostID: 1, Title: "t", AddressTag: "望京"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +119,7 @@ func TestChannelSendFailure(t *testing.T) {
 	}))
 	defer srv.Close()
 	ch := NewFeishuChannel(srv.URL)
-	sent, failed, err := ch.Send(context.Background(), []notifier.NotifyItem{{PostID: 1}})
+	sent, failed, err := ch.Send(context.Background(), []port.NotifyItem{{PostID: 1}})
 	if err == nil {
 		t.Error("应返回 err")
 	}

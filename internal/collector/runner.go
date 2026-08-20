@@ -28,7 +28,7 @@ type Runner struct {
 	trigger chan<- struct{}
 	mu      sync.Mutex
 	enabled map[string]bool
-	// coolDownUntil Cookie 挂了之类的致命错，先歇 1 小时别狂打
+	// coolDownUntil Cookie 挂了之类的致命错，先歇 10 分钟别狂打
 	coolDownUntil map[string]time.Time
 }
 
@@ -129,10 +129,10 @@ func (r *Runner) inCoolDown(name string) bool {
 	return ok && time.Now().Before(until)
 }
 
-// enterCoolDown Cookie 挂了这类致命错：歇 1 小时再试
+// enterCoolDown Cookie 挂了这类致命错：歇 10 分钟再试
 func (r *Runner) enterCoolDown(name string, err error) {
-	pkglog.SourceWarn(name, "致命异常，冷却 1 小时", "err", err)
-	r.coolDownUntil[name] = time.Now().Add(1 * time.Hour)
+	pkglog.SourceWarn(name, "致命异常，冷却 10 分钟", "err", err)
+	r.coolDownUntil[name] = time.Now().Add(10 * time.Minute)
 }
 
 // runSourceOnce 读进度 → 开迭代器翻页 → 去重落库；返回本轮有没有写进新帖。

@@ -14,11 +14,12 @@ RUN apk add --no-cache ca-certificates tzdata && \
     adduser -D -u 1000 rentscout
 
 WORKDIR /app
-RUN mkdir -p /app/db && chown -R rentscout:rentscout /app
+RUN mkdir -p /app/db /app/logs && chown -R rentscout:rentscout /app
 
-COPY --from=builder /rent-scout /usr/local/bin/rent-scout
+COPY --from=builder /rent-scout /app/rent-scout
 USER rentscout
 
-ENV DB_PATH=/app/db/rent-scout.db
+ENV DB_PATH=/app/db/rent-scout.db \
+    LOG_DIR=/app/logs
 EXPOSE 7777
-ENTRYPOINT ["/usr/local/bin/rent-scout"]
+ENTRYPOINT ["/app/rent-scout"]

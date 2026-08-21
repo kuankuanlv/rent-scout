@@ -1,12 +1,10 @@
-package setup
+package pages
 
 import (
 	"fmt"
 	"html/template"
 	"net/http"
 	"net/url"
-	cfgpage "rent-scout/internal/admin/config"
-	"rent-scout/internal/admin/onboard"
 	"rent-scout/internal/admin/ports"
 	"rent-scout/internal/config"
 	"rent-scout/internal/store"
@@ -20,7 +18,7 @@ const (
 )
 
 // handleSetup 首次引导：步骤1鉴权必填，后续可跳过
-func (h *Handler) handleSetup(w http.ResponseWriter, r *http.Request) {
+func (h *SetupHandler) handleSetup(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
 		h.handleSetupPost(w, r)
 		return
@@ -32,9 +30,9 @@ func (h *Handler) handleSetup(w http.ResponseWriter, r *http.Request) {
 	if step > setupDoneStep {
 		step = setupDoneStep
 	}
-	kv := cfgpage.CurrentConfigKV(h.opts.DB)
+	kv := CurrentConfigKV(h.opts.DB)
 	env := config.KVToSecrets(kv)
-	cookieRawHint := onboard.CookiePasteHint(env.Collector.Douban.CookieRaw)
+	cookieRawHint := CookiePasteHint(env.Collector.Douban.CookieRaw)
 	data := ports.MergePageCtx(ports.PageCtx(h.opts.RT, r, ""), map[string]any{
 		"Step":          step,
 		"Total":         setupTotalSteps,
@@ -50,14 +48,14 @@ func (h *Handler) handleSetup(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *Handler) handleSetupPost(w http.ResponseWriter, r *http.Request) {
+func (h *SetupHandler) handleSetupPost(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "解析表单失败", http.StatusBadRequest)
 		return
 	}
 	step, _ := strconv.Atoi(r.PostFormValue("step"))
 	action := r.PostFormValue("action")
-	kv := cfgpage.CurrentConfigKV(h.opts.DB)
+	kv := CurrentConfigKV(h.opts.DB)
 
 	// step 6：导入后的完成页——可选填访问令牌开启鉴权，随后完成引导
 	if step == setupDoneStep {
@@ -106,7 +104,7 @@ func (h *Handler) handleSetupPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	updates := cfgpage.ParseSectionForm(r.PostForm, section, kv)
+	updates := ParseSectionForm(r.PostForm, section, kv)
 	if step == 1 {
 		if updates["admin.auth_required"] == "true" && updates["admin.token"] == "" {
 			if old := kv["admin.token"]; old == "" {
@@ -115,7 +113,7 @@ func (h *Handler) handleSetupPost(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	cfgpage.MergeDefaultsInto(updates, kv)
+	MergeDefaultsInto(updates, kv)
 	merged := config.MergeKV(kv, updates)
 	if step == 3 {
 		if errs := config.ValidateSecrets(config.KVToSecrets(merged)); len(errs) > 0 {
@@ -140,7 +138,7 @@ func (h *Handler) handleSetupPost(w http.ResponseWriter, r *http.Request) {
 }
 
 // finishSetup 校验全量配置、种子默认规则、标记 setup 完成
-func (h *Handler) finishSetup(w http.ResponseWriter, r *http.Request, kv map[string]string) {
+func (h *SetupHandler) finishSetup(w http.ResponseWriter, r *http.Request, kv map[string]string) {
 	if errs := config.ValidateApp(config.KVToApp(kv)); len(errs) > 0 {
 		http.Error(w, "校验失败: "+strings.Join(errs, "; "), http.StatusBadRequest)
 		return
@@ -168,7 +166,7 @@ func (h *Handler) finishSetup(w http.ResponseWriter, r *http.Request, kv map[str
 	http.Redirect(w, r, "/admin?"+q.Encode(), http.StatusSeeOther)
 }
 
-func (h *Handler) redirectSetup(w http.ResponseWriter, r *http.Request, step int) {
+func (h *SetupHandler) redirectSetup(w http.ResponseWriter, r *http.Request, step int) {
 	if step > setupTotalSteps {
 		step = setupTotalSteps
 	}
@@ -182,14 +180,14 @@ func (h *Handler) redirectSetup(w http.ResponseWriter, r *http.Request, step int
 }
 
 // setupGate setup 未完成时拦截管理页，强制进引导
-func (h *Handler) Gate(next http.Handler) http.Handler {
+func (h *SetupHandler) Gate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if store.IsSetupComplete(h.opts.DB) {
 			next.ServeHTTP(w, r)
 			return
 		}
 		path := r.URL.Path
-		if path == "/admin/setup" || path == "/admin/setup/import-defaults" || path == "/admin/config/save" || path == cfgpage.CookieTestPath || path == cfgpage.CookieCloudTestPath || path == "/healthz" || path == "/metrics" || path == "/f" || path == "/h" {
+		if path == "/admin/setup" || path == "/admin/setup/import-defaults" || path == "/admin/config/save" || path == CookieTestPath || path == CookieCloudTestPath || path == "/healthz" || path == "/metrics" || path == "/f" || path == "/h" {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -202,7 +200,7 @@ func (h *Handler) Gate(next http.Handler) http.Handler {
 }
 
 // handleImportDefaults 一键导入内置默认配置（POST /admin/setup/import-defaults）
-func (h *Handler) handleImportDefaults(w http.ResponseWriter, r *http.Request) {
+func (h *SetupHandler) handleImportDefaults(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "仅支持 POST", http.StatusMethodNotAllowed)
 		return
@@ -246,25 +244,25 @@ func SetupStepTitle(step int) string {
 	}
 }
 
-// Options 引导安装 handler 依赖
-type Options struct {
+// SetupOptions 引导安装 handler 依赖
+type SetupOptions struct {
 	DB   *store.Store
 	RT   *config.HotConfig
 	Tmpl *template.Template
 }
 
-// Handler 引导安装（/admin/setup*）处理器
-type Handler struct {
-	opts Options
+// SetupHandler 引导安装（/admin/setup*）处理器
+type SetupHandler struct {
+	opts SetupOptions
 }
 
-// New 创建引导安装 handler
-func New(opts Options) *Handler {
-	return &Handler{opts: opts}
+// NewSetup 创建引导安装 handler
+func NewSetup(opts SetupOptions) *SetupHandler {
+	return &SetupHandler{opts: opts}
 }
 
 // Routes 注册引导安装路由
-func (h *Handler) Routes(mux *http.ServeMux) {
+func (h *SetupHandler) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/admin/setup", h.handleSetup)
 	mux.HandleFunc("/admin/setup/import-defaults", h.handleImportDefaults)
 }

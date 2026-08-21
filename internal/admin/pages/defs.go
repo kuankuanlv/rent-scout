@@ -1,4 +1,4 @@
-package config
+package pages
 
 import (
 	"fmt"
@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 
-	"rent-scout/internal/admin/onboard"
 	"rent-scout/internal/admin/ports"
 	"rent-scout/internal/config"
 	"rent-scout/internal/config/window"
@@ -72,7 +71,7 @@ type configField struct {
 var RestartKeys = map[string]bool{
 	"server.addr": true, // ListenAndServe 绑死
 	"log.path":    true, // pkglog.New 只跑一次
-	"log.level":   true, // slog Handler 级别启动钉死
+	"log.level":   true, // slog ConfigHandler 级别启动钉死
 	"log.format":  true,
 }
 
@@ -86,7 +85,7 @@ func cookieBlock(group string, modeKey, rawKey, urlKey, keyKey, pwdKey, pwdVal s
 		Tools: "cookie",
 		Items: []configField{
 			{Key: modeKey, Label: "Cookie 模式", Value: ck.CookieMode, Type: "select", Options: []string{config.CookieModeNone.String(), config.CookieModeRaw.String(), config.CookieModeCookieCloud.String()}, Hint: "none 不带 cookie；raw 粘贴原文；cookiecloud 只填三元组", Group: group},
-			{Key: rawKey, Label: "Cookie 原文", Value: ck.CookieRaw, Type: "password", CanClear: true, Placeholder: "把 Cookie 整段贴进来即可，留空不改已保存的值", Hint: onboard.CookiePasteHint(ck.CookieRaw), ShowWhen: config.CookieModeRaw.String(), Group: group},
+			{Key: rawKey, Label: "Cookie 原文", Value: ck.CookieRaw, Type: "password", CanClear: true, Placeholder: "把 Cookie 整段贴进来即可，留空不改已保存的值", Hint: CookiePasteHint(ck.CookieRaw), ShowWhen: config.CookieModeRaw.String(), Group: group},
 			{Key: urlKey, Label: "CookieCloud 地址", Value: ck.CookiecloudURL, Type: "text", Hint: "如 https://cc.example.com；检测用当前输入，不读库", CanClear: true, ShowWhen: config.CookieModeCookieCloud.String(), Group: group},
 			{Key: keyKey, Label: "CookieCloud UUID", Value: ck.CookiecloudKey, Type: "password", CanClear: true, ShowWhen: config.CookieModeCookieCloud.String(), Group: group},
 			{Key: pwdKey, Label: "CookieCloud 密码", Value: pwdVal, Type: "password", CanClear: true, Hint: "默认掩码显示，点「显示」查看明文；勾选清空可删除", ShowWhen: config.CookieModeCookieCloud.String(), Group: group, Wide: true},
@@ -208,7 +207,7 @@ func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[stri
 		auth = "true"
 	}
 	cookieRawHint := func(ck config.DoubanCookieConfig) string {
-		return onboard.CookiePasteHint(ck.CookieRaw)
+		return CookiePasteHint(ck.CookieRaw)
 	}
 	apiStyle := "openai"
 	ccPass := get(config.KeyDoubanCookieCloudPwd, env.Collector.Douban.CookiecloudPass)
@@ -574,7 +573,7 @@ func MergeDefaultsInto(updates map[string]string, kv map[string]string) {
 	}
 }
 
-func (h *Handler) saveUpdates(updates map[string]string) (bool, error) {
+func (h *ConfigHandler) saveUpdates(updates map[string]string) (bool, error) {
 	if len(updates) == 0 {
 		return false, fmt.Errorf("没有有效的配置项")
 	}

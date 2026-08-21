@@ -1,4 +1,4 @@
-package rules
+package pages
 
 import (
 	"errors"
@@ -44,7 +44,7 @@ var ruleTypes = map[string]bool{
 }
 
 // handleRules 规则管理（/admin/rules）：GET → 302 到配置 tab=rules；POST 新增（PRG）
-func (h *Handler) handleRules(w http.ResponseWriter, r *http.Request) {
+func (h *RulesHandler) handleRules(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		h.redirectRules(w, r)
@@ -89,7 +89,7 @@ func LoadRuleRows(db *store.Store) ([]Row, error) {
 
 // createRule 新增规则（POST /admin/rules）：name/type/value/priority 表单 → CreateRule
 // 校验：type ∈ 三枚举、value/name 非空、priority 可解析；mode 废弃可忽略；非法 → 400
-func (h *Handler) createRule(w http.ResponseWriter, r *http.Request) {
+func (h *RulesHandler) createRule(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "bad form", http.StatusBadRequest)
 		return
@@ -124,7 +124,7 @@ func (h *Handler) createRule(w http.ResponseWriter, r *http.Request) {
 
 // handleRulesID 规则更新/删除（POST /admin/rules/{id} 与 /admin/rules/{id}/delete）
 // 仅接受 POST：GET 等请求一律 405，防止 <a>/<img> 链接触发写库。
-func (h *Handler) handleRulesID(w http.ResponseWriter, r *http.Request) {
+func (h *RulesHandler) handleRulesID(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -148,7 +148,7 @@ func (h *Handler) handleRulesID(w http.ResponseWriter, r *http.Request) {
 
 // updateRule 更新规则（POST /admin/rules/{id}）：value/priority/enabled 表单 → UpdateRule
 // name/type 随行内 hidden 回传（本页不支持改名/改型）；mode 废弃可忽略；enabled 由 checkbox 存在性决定
-func (h *Handler) updateRule(w http.ResponseWriter, r *http.Request, id int64) {
+func (h *RulesHandler) updateRule(w http.ResponseWriter, r *http.Request, id int64) {
 	if err := r.ParseForm(); err != nil {
 		h.replyRule(w, r, http.StatusBadRequest, "bad form")
 		return
@@ -203,7 +203,7 @@ func (h *Handler) updateRule(w http.ResponseWriter, r *http.Request, id int64) {
 	h.replyRuleOK(w, r)
 }
 
-func (h *Handler) replyRuleOK(w http.ResponseWriter, r *http.Request) {
+func (h *RulesHandler) replyRuleOK(w http.ResponseWriter, r *http.Request) {
 	if ports.WantsJSON(r) {
 		ports.WriteJSON(w, map[string]any{"ok": true})
 		return
@@ -211,7 +211,7 @@ func (h *Handler) replyRuleOK(w http.ResponseWriter, r *http.Request) {
 	h.redirectRules(w, r)
 }
 
-func (h *Handler) replyRule(w http.ResponseWriter, r *http.Request, code int, msg string) {
+func (h *RulesHandler) replyRule(w http.ResponseWriter, r *http.Request, code int, msg string) {
 	if ports.WantsJSON(r) {
 		ports.WriteJSONStatus(w, code, map[string]any{"ok": false, "error": msg})
 		return
@@ -220,7 +220,7 @@ func (h *Handler) replyRule(w http.ResponseWriter, r *http.Request, code int, ms
 }
 
 // deleteRule 删除规则（POST /admin/rules/{id}/delete）
-func (h *Handler) deleteRule(w http.ResponseWriter, r *http.Request, id int64) {
+func (h *RulesHandler) deleteRule(w http.ResponseWriter, r *http.Request, id int64) {
 	if err := h.opts.DB.DeleteRule(id); err != nil {
 		if errors.Is(err, store.ErrLastEnabledRule) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -279,7 +279,7 @@ func ruleKeywordSet(value string) map[string]struct{} {
 }
 
 // redirectRules GET/PRG：回到配置页规则 Tab；鉴权开启时把 token 带回，避免跳回后 401
-func (h *Handler) redirectRules(w http.ResponseWriter, r *http.Request) {
+func (h *RulesHandler) redirectRules(w http.ResponseWriter, r *http.Request) {
 	q := url.Values{"tab": {"rules"}}
 	if tok := r.URL.Query().Get("token"); tok != "" {
 		q.Set("token", tok)
@@ -291,36 +291,36 @@ func (h *Handler) redirectRules(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/admin/config?"+q.Encode(), status)
 }
 
-// Options 规则管理 handler 依赖
-type Options struct {
+// RulesOptions 规则管理 handler 依赖
+type RulesOptions struct {
 	DB             *store.Store
 	RT             *config.HotConfig
 	Tmpl           *template.Template
 	OnRulesChanged func()
 }
 
-// Handler 规则管理（/admin/rules）处理器
-type Handler struct {
-	opts Options
+// RulesHandler 规则管理（/admin/rules）处理器
+type RulesHandler struct {
+	opts RulesOptions
 }
 
-// New 创建规则管理 handler
-func New(opts Options) *Handler {
-	return &Handler{opts: opts}
+// NewRules 创建规则管理 handler
+func NewRules(opts RulesOptions) *RulesHandler {
+	return &RulesHandler{opts: opts}
 }
 
 // notifyRulesChanged 规则变更回调（根包注入，用于触发采集器重载）
-func (h *Handler) notifyRulesChanged() {
+func (h *RulesHandler) notifyRulesChanged() {
 	if h.opts.OnRulesChanged != nil {
 		h.opts.OnRulesChanged()
 	}
 }
 
 // Routes 注册规则管理路由
-func (h *Handler) Routes(mux *http.ServeMux) {
+func (h *RulesHandler) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/admin/rules", h.handleRules)
 	mux.HandleFunc("/admin/rules/", h.handleRulesID)
 }
 
 // SetOnRulesChanged 注入规则变更回调（根包装配用）
-func (h *Handler) SetOnRulesChanged(fn func()) { h.opts.OnRulesChanged = fn }
+func (h *RulesHandler) SetOnRulesChanged(fn func()) { h.opts.OnRulesChanged = fn }

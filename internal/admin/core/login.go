@@ -1,4 +1,4 @@
-package admin
+package core
 
 import (
 	"crypto/subtle"

@@ -1,4 +1,4 @@
-package posts
+package pages
 
 import (
 	"crypto/hmac"
@@ -22,7 +22,7 @@ import (
 
 // verifyFeedbackSig 校验反馈链接签名（规格 7.1）。
 // token 空（鉴权关闭）= 链接不签名，直接放行；有签名则 constant-time 校验 + exp 过期检查
-func (h *Handler) verifyFeedbackSig(postID int64, action, exp, sig string) error {
+func (h *PostsHandler) verifyFeedbackSig(postID int64, action, exp, sig string) error {
 	token := h.opts.RT.Get().Admin.Token
 	if token == "" {
 		return nil // 全开放场景（BuildFeedbackURL 同样不签名）
@@ -44,7 +44,7 @@ func (h *Handler) verifyFeedbackSig(postID int64, action, exp, sig string) error
 	return nil
 }
 
-func (h *Handler) postIDFromRefQuery(q url.Values) (int64, error) {
+func (h *PostsHandler) postIDFromRefQuery(q url.Values) (int64, error) {
 	p := strings.TrimSpace(q.Get("p"))
 	if p == "" {
 		return 0, errors.New("缺少引用")
@@ -53,7 +53,7 @@ func (h *Handler) postIDFromRefQuery(q url.Values) (int64, error) {
 }
 
 // handleFeedback 反馈链接（/f?p=&action=&exp=&sig=）：校验 → 写反馈 → 结果页
-func (h *Handler) handleFeedback(w http.ResponseWriter, r *http.Request) {
+func (h *PostsHandler) handleFeedback(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	postID, err := h.postIDFromRefQuery(q)
 	action := q.Get("action")
@@ -78,7 +78,7 @@ func (h *Handler) handleFeedback(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleHandledLink 已处理签名入口（GET /h?post=&exp=&sig=）：验签 → MarkPostHandled → 结果页；不写 feedbacks（Spec 09 §3.4）
-func (h *Handler) handleHandledLink(w http.ResponseWriter, r *http.Request) {
+func (h *PostsHandler) handleHandledLink(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -107,7 +107,7 @@ func (h *Handler) handleHandledLink(w http.ResponseWriter, r *http.Request) {
 
 // handleFeedbacks 反馈写入接口（POST /api/feedbacks，规格 7.1）。
 // 鉴权：带 query sig → HMAC 校验（卡片链接场景）；否则走管理 token（auth 中间件）
-func (h *Handler) handleFeedbacks(w http.ResponseWriter, r *http.Request) {
+func (h *PostsHandler) handleFeedbacks(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -148,7 +148,7 @@ func (h *Handler) handleFeedbacks(w http.ResponseWriter, r *http.Request) {
 }
 
 // renderHandledResult 已处理结果页（内联 HTML）
-func (h *Handler) renderHandledResult(w http.ResponseWriter, msg string, ok bool) {
+func (h *PostsHandler) renderHandledResult(w http.ResponseWriter, msg string, ok bool) {
 	title := "已处理失败"
 	if ok {
 		title = "已处理成功"
@@ -159,7 +159,7 @@ func (h *Handler) renderHandledResult(w http.ResponseWriter, msg string, ok bool
 }
 
 // renderFeedbackResult 简单结果页（内联 HTML，标题+文案）
-func (h *Handler) renderFeedbackResult(w http.ResponseWriter, msg string, ok bool) {
+func (h *PostsHandler) renderFeedbackResult(w http.ResponseWriter, msg string, ok bool) {
 	title := "反馈结果"
 	if ok {
 		title = "反馈成功"

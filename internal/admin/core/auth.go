@@ -1,4 +1,4 @@
-package admin
+package core
 
 import (
 	"crypto/subtle"
@@ -6,7 +6,7 @@ import (
 	"net/url"
 	"strings"
 
-	cfgpage "rent-scout/internal/admin/config"
+	"rent-scout/internal/admin/pages"
 	"rent-scout/internal/admin/ports"
 	"rent-scout/internal/store"
 )
@@ -50,7 +50,7 @@ func loginExempt(path string) bool {
 }
 
 func setupExempt(path string) bool {
-	return path == "/admin/setup" || path == "/admin/setup/import-defaults" || path == cfgpage.CookieTestPath || path == cfgpage.CookieCloudTestPath
+	return path == "/admin/setup" || path == "/admin/setup/import-defaults" || path == pages.CookieTestPath || path == pages.CookieCloudTestPath
 }
 
 // validToken 校验 token：URL ?token=、Bearer 或 Cookie；与 HotConfig 中 admin.token 比较

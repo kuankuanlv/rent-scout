@@ -1,4 +1,4 @@
-package config
+package pages
 
 import (
 	"context"
@@ -14,7 +14,7 @@ import (
 )
 
 // handleCookieCloudTest POST /admin/config/cookiecloud/test：只测连通和解密，不打豆瓣
-func (h *Handler) handleCookieCloudTest(w http.ResponseWriter, r *http.Request) {
+func (h *ConfigHandler) handleCookieCloudTest(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -76,7 +76,7 @@ func (h *Handler) handleCookieCloudTest(w http.ResponseWriter, r *http.Request) 
 }
 
 // handleCookieTest POST /admin/config/cookie/test：用当前 Cookie 打豆瓣；通过或 HTTP+摘要
-func (h *Handler) handleCookieTest(w http.ResponseWriter, r *http.Request) {
+func (h *ConfigHandler) handleCookieTest(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -147,7 +147,7 @@ func cookieSource(r *http.Request) string {
 	return config.CookieSource(ports.FirstNonEmpty(r.PostFormValue("source"), r.FormValue("source")))
 }
 
-func (h *Handler) draftCookieConfig(r *http.Request) config.DoubanCookieConfig {
+func (h *ConfigHandler) draftCookieConfig(r *http.Request) config.DoubanCookieConfig {
 	source := cookieSource(r)
 	mode := strings.ToLower(strings.TrimSpace(ports.FirstNonEmpty(
 		r.PostFormValue("cookie_mode"),
@@ -177,7 +177,7 @@ func (h *Handler) draftCookieConfig(r *http.Request) config.DoubanCookieConfig {
 	}
 }
 
-func (h *Handler) fetchDraftCookie(ctx context.Context, mode string, draft config.DoubanCookieConfig, source string) (string, error) {
+func (h *ConfigHandler) fetchDraftCookie(ctx context.Context, mode string, draft config.DoubanCookieConfig, source string) (string, error) {
 	m := config.ParseCookieMode(mode)
 	if m == config.CookieModeNone {
 		return "", nil

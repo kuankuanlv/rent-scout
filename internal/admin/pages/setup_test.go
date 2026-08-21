@@ -1,4 +1,4 @@
-package admin
+package pages_test
 
 import (
 	"context"
@@ -9,13 +9,15 @@ import (
 	"strings"
 	"testing"
 
+	"rent-scout/internal/admin/core"
 	"rent-scout/internal/admin/ports"
+	"rent-scout/internal/admin/testutil"
 	"rent-scout/internal/config"
 	"rent-scout/internal/store"
 )
 
 // newSetupInProgressServer 未完成 setup 的管理面（可预置 kv）
-func newSetupInProgressServer(t *testing.T, s *store.Store, extra map[string]string) *Server {
+func newSetupInProgressServer(t *testing.T, s *store.Store, extra map[string]string) *core.Server {
 	t.Helper()
 	app := config.DefaultApp()
 	app.Admin.AuthRequired = true
@@ -32,15 +34,34 @@ func newSetupInProgressServer(t *testing.T, s *store.Store, extra map[string]str
 	if err := rt.ReloadOnce(); err != nil {
 		t.Fatal(err)
 	}
-	srv := NewServer(s, rt, nil)
-	srv.SetCookieProbe(testCookieProbe{})
-	srv.SetLLMProbe(testLLMProbe{})
+	srv := core.NewServer(s, rt, nil)
+	srv.SetCookieProbe(testutil.TestCookieProbe{})
+	srv.SetLLMProbe(testutil.TestLLMProbe{})
+	return srv
+}
+
+// newTestServer 创建已完成 setup 的 admin Server（含新 store）
+func newTestServer(t *testing.T, app *config.AppConfig, token string, ctrl ports.SourceController) *core.Server {
+	t.Helper()
+	s := testutil.NewAdminTestStore(t)
+	t.Cleanup(func() { s.Close() })
+	return newTestServerWithStore(t, s, app, token, ctrl)
+}
+
+// newTestServerWithStore 在已有 store 上创建 admin Server
+func newTestServerWithStore(t *testing.T, s *store.Store, app *config.AppConfig, token string, ctrl ports.SourceController) *core.Server {
+	t.Helper()
+	rt := testutil.NewTestHotConfig(t, s, app, token)
+	srv := core.NewServer(s, rt, ctrl)
+	srv.SetCookieProbe(testutil.TestCookieProbe{})
+	srv.SetLLMProbe(testutil.TestLLMProbe{})
+	srv.SetNotifyProbe(&testutil.StubNotifyProbe{})
 	return srv
 }
 
 // TestSetupFinishSeedsDefaultRule finish 时无启用规则 → 种子默认地点白名单
 func TestSetupFinishSeedsDefaultRule(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newSetupInProgressServer(t, s, nil)
 
@@ -71,7 +92,7 @@ func TestSetupFinishSeedsDefaultRule(t *testing.T) {
 
 // TestSetupSkipLastStepFinishes 末步 skip = finish 语义
 func TestSetupSkipLastStepFinishes(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newSetupInProgressServer(t, s, nil)
 
@@ -105,7 +126,7 @@ func TestSetupSkipLastStepFinishes(t *testing.T) {
 
 // TestSetupStep3ValidateSecretsRejectsRawEmpty raw 且无 cookie_raw → 400
 func TestSetupStep3ValidateSecretsRejectsRawEmpty(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newSetupInProgressServer(t, s, nil)
 
@@ -135,7 +156,7 @@ func TestSetupStep3ValidateSecretsRejectsRawEmpty(t *testing.T) {
 
 // TestSetupStep3KeepsStoredCookieRaw 回步骤 3 留空 raw 应沿用已存
 func TestSetupStep3KeepsStoredCookieRaw(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newSetupInProgressServer(t, s, map[string]string{
 		"secret.collector.douban.cookie_mode": "raw",
@@ -168,7 +189,7 @@ func TestSetupStep3KeepsStoredCookieRaw(t *testing.T) {
 
 // TestSetupStep3RendersCookieModeAndHint GET 步骤 3 绑定已存 mode + raw 长度 hint
 func TestSetupStep3RendersCookieModeAndHint(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	raw := "dbcl2=abcdefghijklmnopqrstuvwxyz"
 	srv := newSetupInProgressServer(t, s, map[string]string{
@@ -214,7 +235,7 @@ func TestSetupStep3RendersCookieModeAndHint(t *testing.T) {
 
 // TestSetupAllowsCookieTestDuringSetup setup 未完成时 POST cookie/test 不重定向
 func TestSetupAllowsCookieTestDuringSetup(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newSetupInProgressServer(t, s, nil)
 	srv.SetCookieProbe(stubPageProbe{fn: func(ctx context.Context, rawURL, c string) ports.DoubanPageResult {
@@ -246,7 +267,7 @@ func TestSetupAllowsCookieTestDuringSetup(t *testing.T) {
 
 // TestImportDefaults POST /admin/setup/import-defaults 一键导入默认配置
 func TestImportDefaults(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newSetupInProgressServer(t, s, nil)
 
@@ -287,7 +308,7 @@ func TestImportDefaults(t *testing.T) {
 
 // TestSetupWelcomeChoice GET /admin/setup -> 200，body 含选择项
 func TestSetupWelcomeChoice(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newSetupInProgressServer(t, s, nil)
 
@@ -308,7 +329,7 @@ func TestSetupWelcomeChoice(t *testing.T) {
 
 // TestSetupDoneWithToken POST /admin/setup (step=6 & admin.token) -> 303 /admin
 func TestSetupDoneWithToken(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newSetupInProgressServer(t, s, nil)
 
@@ -338,7 +359,7 @@ func TestSetupDoneWithToken(t *testing.T) {
 
 // TestSetupDoneNoToken POST /admin/setup (step=6, no token) -> 303 /admin
 func TestSetupDoneNoToken(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newSetupInProgressServer(t, s, map[string]string{
 		"admin.auth_required": "false",
@@ -366,7 +387,7 @@ func TestSetupDoneNoToken(t *testing.T) {
 
 // TestCookieCloudTestUsesFormNotDB 页面没填 url/key/password 时不得用库里的凭证
 func TestCookieCloudTestUsesFormNotDB(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newSetupInProgressServer(t, s, map[string]string{
 		"secret.collector.douban.cookie_mode":          "cookiecloud",

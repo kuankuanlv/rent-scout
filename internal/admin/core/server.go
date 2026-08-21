@@ -1,4 +1,4 @@
-package admin
+package core
 
 import (
 	"embed"
@@ -6,13 +6,8 @@ import (
 	"html/template"
 	"math"
 	"net/http"
-	cfgpage "rent-scout/internal/admin/config"
-	"rent-scout/internal/admin/logs"
+	"rent-scout/internal/admin/pages"
 	"rent-scout/internal/admin/ports"
-	"rent-scout/internal/admin/posts"
-	"rent-scout/internal/admin/rules"
-	"rent-scout/internal/admin/setup"
-	"rent-scout/internal/admin/sources"
 	"rent-scout/internal/config"
 	"rent-scout/internal/models"
 	"rent-scout/internal/store"
@@ -33,12 +28,12 @@ type Server struct {
 	notifyProbe    ports.NotifyProbe
 	notifyManual   ports.NotifyManual
 
-	posts   *posts.Handler
-	config  *cfgpage.Handler
-	rules   *rules.Handler
-	setup   *setup.Handler
-	sources *sources.Handler
-	logs    *logs.Handler
+	posts   *pages.PostsHandler
+	config  *pages.ConfigHandler
+	rules   *pages.RulesHandler
+	setup   *pages.SetupHandler
+	sources *pages.SourcesHandler
+	logs    *pages.LogsHandler
 }
 
 // NewServer 创建管理面服务
@@ -47,7 +42,7 @@ func NewServer(db *store.Store, rt *config.HotConfig, ctrl ports.SourceControlle
 		"percent":        percent,
 		"statusLabel":    statusLabel,
 		"sourceLabel":    sourceLabel,
-		"setupStepTitle": setup.SetupStepTitle,
+		"setupStepTitle": pages.SetupStepTitle,
 		"csvHas":         csvHas,
 		"seq": func(n int) []int {
 			s := make([]int, n)
@@ -64,16 +59,21 @@ func NewServer(db *store.Store, rt *config.HotConfig, ctrl ports.SourceControlle
 		rt:      rt,
 		ctrl:    ctrl,
 		tmpl:    t,
-		posts:   posts.New(posts.Options{DB: db, RT: rt, Tmpl: t}),
-		config:  cfgpage.New(cfgpage.Options{DB: db, RT: rt, Tmpl: t, Ctrl: ctrl}),
-		rules:   rules.New(rules.Options{DB: db, RT: rt, Tmpl: t}),
-		setup:   setup.New(setup.Options{DB: db, RT: rt, Tmpl: t}),
-		sources: sources.New(sources.Options{Ctrl: ctrl, DB: db}),
-		logs:    logs.New(logs.Options{RT: rt, Tmpl: t}),
+		posts:   pages.NewPosts(pages.PostsOptions{DB: db, RT: rt, Tmpl: t}),
+		config:  pages.NewConfig(pages.ConfigOptions{DB: db, RT: rt, Tmpl: t, Ctrl: ctrl}),
+		rules:   pages.NewRules(pages.RulesOptions{DB: db, RT: rt, Tmpl: t}),
+		setup:   pages.NewSetup(pages.SetupOptions{DB: db, RT: rt, Tmpl: t}),
+		sources: pages.NewSources(pages.SourcesOptions{Ctrl: ctrl, DB: db}),
+		logs:    pages.NewLogs(pages.LogsOptions{RT: rt, Tmpl: t}),
 	}
 }
 
 // SetOnRulesChanged 规则能力变强时回调（新建/启用/加关键字等触发 replay；纯删除/禁用不触发）
+// ReloadConfig 重新加载热配置（配置变更后生效）
+func (s *Server) ReloadConfig() error {
+	return s.rt.ReloadOnce()
+}
+
 func (s *Server) SetOnRulesChanged(fn func()) {
 	s.onRulesChanged = fn
 	s.rules.SetOnRulesChanged(fn)

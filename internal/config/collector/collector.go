@@ -49,6 +49,12 @@ const (
 	KeyWeiboCookieCloudURL = "secret.collector.weibo.cookiecloud_url"
 	KeyWeiboCookieCloudKey = "secret.collector.weibo.cookiecloud_key"
 	KeyWeiboCookieCloudPwd = "secret.collector.weibo.cookiecloud_password"
+
+	KeyXiaohongshuCookieMode     = "secret.collector.xiaohongshu.cookie_mode"
+	KeyXiaohongshuCookieRaw      = "secret.collector.xiaohongshu.cookie_raw"
+	KeyXiaohongshuCookieCloudURL = "secret.collector.xiaohongshu.cookiecloud_url"
+	KeyXiaohongshuCookieCloudKey = "secret.collector.xiaohongshu.cookiecloud_key"
+	KeyXiaohongshuCookieCloudPwd = "secret.collector.xiaohongshu.cookiecloud_password"
 )
 
 // CookieSource 归一化采集源名
@@ -88,6 +94,9 @@ func CookieModeKey(source string) string {
 	if weiboCookieFamily(source) {
 		return KeyWeiboCookieMode
 	}
+	if CookieSource(source) == "xiaohongshu" {
+		return KeyXiaohongshuCookieMode
+	}
 	return KeyDoubanCookieMode
 }
 
@@ -97,6 +106,8 @@ func CookieRawKey(source string) string {
 		return KeyWeiboCookieRawCN
 	case "weibo":
 		return KeyWeiboCookieRaw
+	case "xiaohongshu":
+		return KeyXiaohongshuCookieRaw
 	default:
 		return KeyDoubanCookieRaw
 	}
@@ -106,6 +117,9 @@ func CookieCloudURLKey(source string) string {
 	if weiboCookieFamily(source) {
 		return KeyWeiboCookieCloudURL
 	}
+	if CookieSource(source) == "xiaohongshu" {
+		return KeyXiaohongshuCookieCloudURL
+	}
 	return KeyDoubanCookieCloudURL
 }
 
@@ -113,12 +127,18 @@ func CookieCloudKeyKey(source string) string {
 	if weiboCookieFamily(source) {
 		return KeyWeiboCookieCloudKey
 	}
+	if CookieSource(source) == "xiaohongshu" {
+		return KeyXiaohongshuCookieCloudKey
+	}
 	return KeyDoubanCookieCloudKey
 }
 
 func CookieCloudPwdKey(source string) string {
 	if weiboCookieFamily(source) {
 		return KeyWeiboCookieCloudPwd
+	}
+	if CookieSource(source) == "xiaohongshu" {
+		return KeyXiaohongshuCookieCloudPwd
 	}
 	return KeyDoubanCookieCloudPwd
 }
@@ -166,8 +186,9 @@ type DoubanCookieConfig struct {
 }
 
 type SecretsCollector struct {
-	Douban DoubanCookieConfig
-	Weibo  DoubanCookieConfig
+	Douban      DoubanCookieConfig
+	Weibo       DoubanCookieConfig
+	Xiaohongshu DoubanCookieConfig
 }
 
 func (c SecretsCollector) CookieFor(source string) DoubanCookieConfig {
@@ -178,6 +199,8 @@ func (c SecretsCollector) CookieFor(source string) DoubanCookieConfig {
 		return dc
 	case "weibo":
 		return c.Weibo
+	case "xiaohongshu":
+		return c.Xiaohongshu
 	default:
 		return c.Douban
 	}

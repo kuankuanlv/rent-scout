@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
+	"rent-scout/internal/batch"
 	"rent-scout/internal/config"
 	"rent-scout/internal/models"
 	"rent-scout/internal/notifier/channels"
-	"rent-scout/internal/batch"
 	"rent-scout/internal/pkglog"
 	"rent-scout/internal/store"
 )
@@ -23,9 +23,9 @@ type Options struct {
 
 // NotifierService 通知 batch；协程常驻，每轮自己读热配置
 type NotifierService struct {
-	rt   *config.HotConfig                  // 热配置：渠道开关、批大小、发送间隔
-	db   *store.Store                       // SQLite：拉取待通知帖、写通知账本
-	n    *Notifier                          // 通知核心：组批、渠道分发、账本
+	rt   *config.HotConfig                // 热配置：渠道开关、批大小、发送间隔
+	db   *store.Store                     // SQLite：拉取待通知帖、写通知账本
+	n    *Notifier                        // 通知核心：组批、渠道分发、账本
 	pipe *batch.Consumer[models.RentPost] // 拉批管道（fetch → ProcessBatch）
 }
 
@@ -46,31 +46,52 @@ func New(opts Options) (*NotifierService, error) {
 		s.fetch,
 		n.ProcessBatch,
 		batch.Options{
-			BatchSize: config.DefaultNotifierBatch,
-			Tick:      batch.DefaultTick,
-			WaitFull:  true,
-			Component: pkglog.Notifier,
-			LiveBatchSize: func() int {
-				if rt == nil {
-					return config.DefaultNotifierBatch
-				}
-				if n := rt.Get().Notifier.BatchSize; n > 0 {
-					return n
-				}
-				return config.DefaultNotifierBatch
-			},
-			LiveLinger: func() time.Duration {
-				sec := config.DefaultNotifierInterval
+			BatchSize:     config.DefaultNotifierBatch,
+			Tick:          batch.DefaultTick,
+			WaitFull:      true,
+			Component:     pkglog.Notifier,
+			LiveBatchSize: s.liveBatchSize,
+			LiveLinger:    s.liveLinger,
+			// 每轮探测只打这一条：体现当前开启了什么渠道、凑批节奏（满批立发，不足批最多等 linger）
+			TickLog: func() {
+				lg := pkglog.Component(pkglog.Notifier)
+				var app *config.AppConfig
+				var env *config.Secrets
 				if rt != nil {
-					if n := rt.Get().Notifier.Interval; n > 0 {
-						sec = n
-					}
+					app = rt.Get()
+					env = rt.Secrets()
 				}
-				return time.Duration(sec) * time.Second
+				lg.Info("通知探测：满批立发，不足批最多等 linger",
+					"channels", enabledChannelsSummary(app, env),
+					"batch", s.liveBatchSize(),
+					"linger", s.liveLinger().String(),
+				)
 			},
 		},
 	)
 	return s, nil
+}
+
+// liveBatchSize 当前凑批大小（热读；与 batch.Options.LiveBatchSize 同源）
+func (s *NotifierService) liveBatchSize() int {
+	if s.rt == nil {
+		return config.DefaultNotifierBatch
+	}
+	if n := s.rt.Get().Notifier.BatchSize; n > 0 {
+		return n
+	}
+	return config.DefaultNotifierBatch
+}
+
+// liveLinger 当前不足批最长等待（notifier.interval，秒；热读）
+func (s *NotifierService) liveLinger() time.Duration {
+	sec := config.DefaultNotifierInterval
+	if s.rt != nil {
+		if n := s.rt.Get().Notifier.Interval; n > 0 {
+			sec = n
+		}
+	}
+	return time.Duration(sec) * time.Second
 }
 
 // --- batch 信号接口 ---
@@ -126,25 +147,19 @@ func (s *NotifierService) Run(ctx context.Context) error {
 // --- 内部：batch 拉批回调 ---
 
 func (s *NotifierService) fetch(ctx context.Context, limit int) ([]models.RentPost, error) {
-	log := pkglog.Component(pkglog.Notifier)
 	if s.rt == nil {
-		log.Info("当前配置通知未启用，无需执行")
 		return nil, nil
 	}
 	app := s.rt.Get()
 	if app == nil {
-		log.Info("当前配置通知未启用，无需执行")
 		return nil, nil
 	}
-	// 每分钟探测日志：先打当前各渠道开关，再决定后续逻辑
-	log.Info("当前通知配置：" + channelSwitchSummary(app, s.rt.Secrets()))
+	// 当前状态（渠道开关/凑批节奏）由 TickLog 的单条「通知探测」日志体现，这里不再重复打
 	if len(app.Notifier.Channels) == 0 {
-		log.Info("当前配置通知未启用，无需执行")
 		return nil, nil
 	}
 	chs := channels.Live(app, s.rt.Secrets())
 	if len(chs) == 0 {
-		log.Info("当前配置通知渠道密钥为空，无需执行")
 		return nil, nil
 	}
 
@@ -157,12 +172,20 @@ func (s *NotifierService) fetch(ctx context.Context, limit int) ([]models.RentPo
 	return s.db.FetchNotifyBatch(names, limit, requireAI)
 }
 
-// channelSwitchSummary 当前通知渠道开关摘要（每分钟探测日志用）：
-// 渠道=勾选且密钥非空（与 channels.Live 同一判定），固定顺序输出
-func channelSwitchSummary(app *config.AppConfig, env *config.Secrets) string {
-	parts := make([]string, 0, len(channels.Names()))
-	for _, name := range channels.Names() {
-		parts = append(parts, fmt.Sprintf("%s=%t", name, channels.Enabled(app, env, name)))
+// enabledChannelsSummary 当前已开启的通知渠道（勾选且密钥非空，与 channels.Live 同一判定）；
+// 全关或配置不可用时返回「无」。探测单行日志用。
+func enabledChannelsSummary(app *config.AppConfig, env *config.Secrets) string {
+	if app == nil || env == nil {
+		return "无"
 	}
-	return strings.Join(parts, "、")
+	names := make([]string, 0, len(channels.Names()))
+	for _, name := range channels.Names() {
+		if channels.Enabled(app, env, name) {
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 {
+		return "无"
+	}
+	return strings.Join(names, ",")
 }

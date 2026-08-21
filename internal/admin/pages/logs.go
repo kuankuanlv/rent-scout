@@ -1,4 +1,4 @@
-package logs
+package pages
 
 import (
 	"encoding/json"
@@ -13,7 +13,7 @@ import (
 )
 
 // handleLogs 系统日志页（GET /admin/logs）：SSE 滚动，成熟方案是内存 ring + EventSource
-func (h *Handler) handleLogs(w http.ResponseWriter, r *http.Request) {
+func (h *LogsHandler) handleLogs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -26,7 +26,7 @@ func (h *Handler) handleLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleLogsRecent 最近日志 JSON（GET /admin/logs/recent?n=200）
-func (h *Handler) handleLogsRecent(w http.ResponseWriter, r *http.Request) {
+func (h *LogsHandler) handleLogsRecent(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -43,7 +43,7 @@ func (h *Handler) handleLogsRecent(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleLogsStream SSE 实时尾巴（GET /admin/logs/stream）
-func (h *Handler) handleLogsStream(w http.ResponseWriter, r *http.Request) {
+func (h *LogsHandler) handleLogsStream(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -106,24 +106,24 @@ func writeSSE(w http.ResponseWriter, line pkglog.Line) error {
 	return err
 }
 
-// Options 日志页面 handler 依赖
-type Options struct {
+// LogsOptions 日志页面 handler 依赖
+type LogsOptions struct {
 	RT   *config.HotConfig
 	Tmpl *template.Template
 }
 
-// Handler 日志页面（/admin/logs）处理器
-type Handler struct {
-	opts Options
+// LogsHandler 日志页面（/admin/logs）处理器
+type LogsHandler struct {
+	opts LogsOptions
 }
 
-// New 创建日志页面 handler
-func New(opts Options) *Handler {
-	return &Handler{opts: opts}
+// NewLogs 创建日志页面 handler
+func NewLogs(opts LogsOptions) *LogsHandler {
+	return &LogsHandler{opts: opts}
 }
 
 // Routes 注册日志页面路由
-func (h *Handler) Routes(mux *http.ServeMux) {
+func (h *LogsHandler) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/admin/logs", h.handleLogs)
 	mux.HandleFunc("/admin/logs/stream", h.handleLogsStream)
 	mux.HandleFunc("/admin/logs/recent", h.handleLogsRecent)

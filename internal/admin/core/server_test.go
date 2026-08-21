@@ -1,4 +1,4 @@
-package admin
+package core
 
 import (
 	"context"
@@ -9,9 +9,8 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"rent-scout/internal/admin/ports"
-	"rent-scout/internal/collector/cookie"
+	"rent-scout/internal/admin/testutil"
 	"rent-scout/internal/config"
-	"rent-scout/internal/filter/ai/llm"
 	"rent-scout/internal/models"
 	"rent-scout/internal/pkglog"
 	"rent-scout/internal/store"
@@ -20,66 +19,10 @@ import (
 	"time"
 )
 
-// newAdminTestStore 管理面测试用 store 实例（admin 测试需要真实 db 播种数据）
-func newAdminTestStore(t *testing.T) *store.Store {
-	t.Helper()
-	s, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return s
-}
-
-// newTestHotConfig 写入 setup 完成标记并加载 HotConfig
-func newTestHotConfig(t *testing.T, s *store.Store, app *config.AppConfig, token string) *config.HotConfig {
-	t.Helper()
-	if app == nil {
-		app = config.DefaultApp()
-	}
-	if token != "" {
-		app.Admin.Token = token
-	}
-	kv := config.MergeKV(config.AppToKV(app), config.SecretsToKV(config.DefaultSecrets()))
-	kv["setup.completed"] = "true"
-	if err := store.SetConfigBatch(s, kv); err != nil {
-		t.Fatal(err)
-	}
-	rt := config.NewHotConfig(s)
-	if err := rt.ReloadOnce(); err != nil {
-		t.Fatal(err)
-	}
-	return rt
-}
-
-type testCookieProbe struct{}
-
-func (testCookieProbe) InspectCookieCloud(ctx context.Context, draft config.DoubanCookieConfig, source string) (ports.CookieCloudInspect, error) {
-	ins, err := cookie.InspectCookieCloudFor(ctx, draft, source)
-	return ports.CookieCloudInspect{
-		Cookie: ins.Cookie, Names: ins.Names, Previews: ins.Previews,
-		Algo: ins.Algo, CipherField: ins.CipherField, HTTPStatus: ins.HTTPStatus, Domains: ins.Domains,
-	}, err
-}
-
-func (testCookieProbe) ProbePage(ctx context.Context, probeURL, rawCookie string) ports.DoubanPageResult {
-	page := cookie.ProbePage(ctx, probeURL, rawCookie, nil)
-	return ports.DoubanPageResult{OK: page.OK, HTTP: page.HTTP, Snippet: page.Snippet}
-}
-
-type testLLMProbe struct{}
-
-func (testLLMProbe) ListModels(ctx context.Context, baseURL, apiKey, model string) ([]string, error) {
-	return llm.NewClient(llm.ClientOptions{BaseURL: baseURL, APIKey: apiKey, Model: model, DumpHTTP: true}).ListModels(ctx)
-}
-
-func (testLLMProbe) Chat(ctx context.Context, baseURL, apiKey, model, system, user string) (string, error) {
-	return llm.NewClient(llm.ClientOptions{BaseURL: baseURL, APIKey: apiKey, Model: model, DumpHTTP: true}).Chat(ctx, system, user)
-}
-
 // newTestServer 创建已完成 setup 的 admin Server（含新 store）
 func newTestServer(t *testing.T, app *config.AppConfig, token string, ctrl ports.SourceController) *Server {
 	t.Helper()
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	t.Cleanup(func() { s.Close() })
 	return newTestServerWithStore(t, s, app, token, ctrl)
 }
@@ -87,24 +30,12 @@ func newTestServer(t *testing.T, app *config.AppConfig, token string, ctrl ports
 // newTestServerWithStore 在已有 store 上创建 admin Server
 func newTestServerWithStore(t *testing.T, s *store.Store, app *config.AppConfig, token string, ctrl ports.SourceController) *Server {
 	t.Helper()
-	rt := newTestHotConfig(t, s, app, token)
+	rt := testutil.NewTestHotConfig(t, s, app, token)
 	srv := NewServer(s, rt, ctrl)
-	srv.SetCookieProbe(testCookieProbe{})
-	srv.SetLLMProbe(testLLMProbe{})
-	srv.SetNotifyProbe(&stubNotifyProbe{})
+	srv.SetCookieProbe(testutil.TestCookieProbe{})
+	srv.SetLLMProbe(testutil.TestLLMProbe{})
+	srv.SetNotifyProbe(&testutil.StubNotifyProbe{})
 	return srv
-}
-
-type stubNotifyProbe struct {
-	channel string
-	items   []ports.NotifyProbeItem
-	err     error
-}
-
-func (s *stubNotifyProbe) Send(ctx context.Context, channel, webhook, token, topic string, items []ports.NotifyProbeItem) error {
-	s.channel = channel
-	s.items = items
-	return s.err
 }
 
 // TestHealthzNoAuth：健康检查豁免鉴权，无 token 直接 200 "ok"
@@ -204,7 +135,7 @@ func TestAuthOptional(t *testing.T) {
 
 // TestMetrics：播种数据 → Prometheus 文本含预期行（计数 + 渠道维度）
 func TestMetrics(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	now := time.Now()
 	// 3 帖今日采集（今日统计来源）
@@ -216,19 +147,19 @@ func TestMetrics(t *testing.T) {
 		}
 	}
 	// 1 passed + 1 rejected 今日判定
-	s.SaveFilterResult(models.FilterResult{PostID: postID(t, s, "m0"), Status: models.PostStatusPassed,
+	s.SaveFilterResult(models.FilterResult{PostID: testutil.PostID(t, s, "m0"), Status: models.PostStatusPassed,
 		Stage: models.StageHardRule, DecidedAt: now})
-	s.SaveFilterResult(models.FilterResult{PostID: postID(t, s, "m1"), Status: models.PostStatusRejected,
+	s.SaveFilterResult(models.FilterResult{PostID: testutil.PostID(t, s, "m1"), Status: models.PostStatusRejected,
 		Stage: models.StageHardRule, RejectedBy: "x", DecidedAt: now})
 	// 通知：feishu sent ×1、pushplus dead ×1
-	sent := postID(t, s, "m2")
+	sent := testutil.PostID(t, s, "m2")
 	if _, err := s.InsertNotification(sent, "feishu"); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.MarkNotificationSent(sent, "feishu"); err != nil {
 		t.Fatal(err)
 	}
-	dead := postID(t, s, "m0")
+	dead := testutil.PostID(t, s, "m0")
 	if _, err := s.InsertNotification(dead, "pushplus"); err != nil {
 		t.Fatal(err)
 	}
@@ -265,20 +196,6 @@ func TestMetrics(t *testing.T) {
 }
 
 // postID 按 external_id 反查帖子 ID（admin 包测试无法访问 store 内部字段，走公开查询）
-func postID(t *testing.T, s *store.Store, externalID string) int64 {
-	t.Helper()
-	all, err := s.ListPosts(store.PostListFilter{}, 100, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, p := range all {
-		if p.ExternalID == externalID {
-			return p.ID
-		}
-	}
-	t.Fatalf("帖子 %s 未找到", externalID)
-	return 0
-}
 
 func TestHTTPShutdownBudget(t *testing.T) {
 	s, err := store.Open(filepath.Join(t.TempDir(), "t.db"))

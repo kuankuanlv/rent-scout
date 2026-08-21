@@ -1,4 +1,4 @@
-package admin
+package pages_test
 
 import (
 	"context"
@@ -10,7 +10,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"rent-scout/internal/admin/posts"
+	"rent-scout/internal/admin/pages"
+	"rent-scout/internal/admin/testutil"
 	"rent-scout/internal/config"
 	"rent-scout/internal/models"
 	"rent-scout/internal/security/actionref"
@@ -89,7 +90,7 @@ func TestHandleNotifySelectedEmpty(t *testing.T) {
 }
 
 func TestAdminPostsOnboardWhenSourcesOff(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, config.DefaultApp(), "", nil)
 	req := httptest.NewRequest(http.MethodGet, "/admin/posts", nil)
@@ -123,7 +124,7 @@ func TestAdminPostsOnboardWhenSourcesOff(t *testing.T) {
 }
 
 func TestAdminPostsHasBatchSelect(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	if _, err := s.InsertPost(models.RentPost{
 		Source: "douban", ExternalID: "batch-1", Title: "批量勾选",
@@ -163,16 +164,16 @@ func TestAdminPostsHasBatchSelect(t *testing.T) {
 }
 
 func TestToggleFilterTags(t *testing.T) {
-	if got := posts.ToggleFilterTags("", "望京"); got != "望京" {
+	if got := pages.ToggleFilterTags("", "望京"); got != "望京" {
 		t.Errorf("空选加上望京 = %q", got)
 	}
-	if got := posts.ToggleFilterTags("望京", "中介"); got != "望京,中介" {
+	if got := pages.ToggleFilterTags("望京", "中介"); got != "望京,中介" {
 		t.Errorf("再选中介 = %q", got)
 	}
-	if got := posts.ToggleFilterTags("望京,中介", "望京"); got != "中介" {
+	if got := pages.ToggleFilterTags("望京,中介", "望京"); got != "中介" {
 		t.Errorf("取消望京 = %q", got)
 	}
-	if got := posts.ToggleFilterTags("中介", "中介"); got != "" {
+	if got := pages.ToggleFilterTags("中介", "中介"); got != "" {
 		t.Errorf("取消最后一个应清空 = %q", got)
 	}
 }
@@ -182,21 +183,21 @@ func TestSplitFilterTagPreview(t *testing.T) {
 	for i := 0; i < 12; i++ {
 		tags = append(tags, models.FilterTag{Text: string(rune('A' + i)), Count: 12 - i})
 	}
-	top, more := posts.SplitFilterTagPreview(tags, 10)
+	top, more := pages.SplitFilterTagPreview(tags, 10)
 	if len(top) != 10 || len(more) != 2 {
 		t.Fatalf("top=%d more=%d, want 10+2", len(top), len(more))
 	}
 	if top[0].Text != "A" || more[0].Text != "K" {
 		t.Errorf("顺序不对 top0=%s more0=%s", top[0].Text, more[0].Text)
 	}
-	if !posts.FilterTagsContain(more, "K") || posts.FilterTagsContain(top, "K") {
+	if !pages.FilterTagsContain(more, "K") || pages.FilterTagsContain(top, "K") {
 		t.Error("K 应在 more")
 	}
 }
 
 // TestAdminPage 帖子全览页：GET /admin 200 含全部标题；?status=passed 过滤只显示 passed 帖
 func TestAdminPage(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 
@@ -284,14 +285,14 @@ func TestAdminPage(t *testing.T) {
 
 // TestAdminPageFilters q/tag/handled 筛选 + 标签 chips + 已处理按钮
 func TestAdminPageFilters(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 
 	if _, err := s.InsertPost(models.RentPost{Source: "douban", ExternalID: "chip1", Title: "望京合租帖", Status: models.PostStatusPassed}); err != nil {
 		t.Fatal(err)
 	}
-	chip1ID := postID(t, s, "chip1")
+	chip1ID := testutil.PostID(t, s, "chip1")
 	if err := s.ReplaceSystemTags(chip1ID, []models.PostTag{
 		{Kind: models.TagKindLocation, Text: "望京", Source: models.TagSourceSystem},
 		{Kind: models.TagKindLocation, Text: "14号线", Source: models.TagSourceSystem},
@@ -305,13 +306,13 @@ func TestAdminPageFilters(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := s.SaveFilterResult(models.FilterResult{
-		PostID: postID(t, s, "blk1"), Status: models.PostStatusRejected, Stage: models.StageHardRule,
+		PostID: testutil.PostID(t, s, "blk1"), Status: models.PostStatusRejected, Stage: models.StageHardRule,
 		RejectedBy: "黑名单命中:中介", DecidedAt: time.Now(),
 		HardRules: []models.RuleHit{{Reason: "中介"}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ReplaceSystemTags(postID(t, s, "blk1"), []models.PostTag{
+	if err := s.ReplaceSystemTags(testutil.PostID(t, s, "blk1"), []models.PostTag{
 		{Kind: models.TagKindBlock, Text: "中介", Source: models.TagSourceSystem},
 	}); err != nil {
 		t.Fatal(err)
@@ -393,7 +394,7 @@ func TestAdminPageFilters(t *testing.T) {
 }
 
 func TestAdminTagFilterPreview(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 	for i := 0; i < 12; i++ {
@@ -402,7 +403,7 @@ func TestAdminTagFilterPreview(t *testing.T) {
 		if _, err := s.InsertPost(models.RentPost{Source: "douban", ExternalID: ext, Title: "预览" + text, Status: models.PostStatusPassed}); err != nil {
 			t.Fatal(err)
 		}
-		if err := s.ReplaceSystemTags(postID(t, s, ext), []models.PostTag{
+		if err := s.ReplaceSystemTags(testutil.PostID(t, s, ext), []models.PostTag{
 			{Kind: models.TagKindLocation, Text: text, Source: models.TagSourceSystem},
 		}); err != nil {
 			t.Fatal(err)
@@ -431,7 +432,7 @@ func TestAdminTagFilterPreview(t *testing.T) {
 }
 
 func TestAdminPostsPagination(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 	base := time.Date(2026, 8, 1, 12, 0, 0, 0, time.Local)
@@ -471,14 +472,14 @@ func TestAdminPostsPagination(t *testing.T) {
 
 // TestAdminMark 标记反馈：POST /admin/mark 合法 → 302（PRG）+ DB 有记录；非法 action → 400
 func TestAdminMark(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 
 	if _, err := s.InsertPost(models.RentPost{Source: "douban", ExternalID: "mark1", Title: "标记帖", Status: models.PostStatusPassed}); err != nil {
 		t.Fatal(err)
 	}
-	id := postID(t, s, "mark1")
+	id := testutil.PostID(t, s, "mark1")
 
 	post := func(action string) *httptest.ResponseRecorder {
 		form := url.Values{"post_id": {fmt.Sprintf("%d", id)}, "action": {action}, "reason": {"测试原因"}}
@@ -515,14 +516,14 @@ func TestAdminMark(t *testing.T) {
 // TestAdminMarkMethodNotAllowed GET /admin/mark 必须 405 且不写库：
 // 钉死「GET 链接触发写库」漏洞（mux 不限方法 + FormValue 并入 query）。
 func TestAdminMarkMethodNotAllowed(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 
 	if _, err := s.InsertPost(models.RentPost{Source: "douban", ExternalID: "getmark", Title: "GET 标记", Status: models.PostStatusPassed}); err != nil {
 		t.Fatal(err)
 	}
-	id := postID(t, s, "getmark")
+	id := testutil.PostID(t, s, "getmark")
 
 	// 模拟 <a>/<img> 链接触发：GET + query 携带全部写库参数
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/admin/mark?post_id=%d&action=useful&reason=x", id), nil)
@@ -542,7 +543,7 @@ func TestAdminMarkMethodNotAllowed(t *testing.T) {
 
 // TestAdminMarkInvalidPostID post_id=0 → 400（审查点名未测分支）
 func TestAdminMarkInvalidPostID(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 
@@ -559,14 +560,14 @@ func TestAdminMarkInvalidPostID(t *testing.T) {
 // TestAdminTokenPropagation 鉴权开启 + ?token=secret：
 // 页面 nav/筛选链接与表单 action 均透传 token（不 401）；无 token 访问 401（对照鉴权生效）。
 func TestAdminTokenPropagation(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}}, "secret", nil)
 
 	if _, err := s.InsertPost(models.RentPost{Source: "douban", ExternalID: "tok1", Title: "鉴权帖", Status: models.PostStatusPassed}); err != nil {
 		t.Fatal(err)
 	}
-	id := postID(t, s, "tok1")
+	id := testutil.PostID(t, s, "tok1")
 
 	// 无 token → 302 重定向到登录页
 	req0 := httptest.NewRequest(http.MethodGet, "/admin", nil)
@@ -625,14 +626,14 @@ func TestAdminTokenPropagation(t *testing.T) {
 
 // TestAdminHandled 独立已处理写/清：POST handled=1/0 → 302 + HandledAt；非法参数 400；不写反馈
 func TestAdminHandled(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 
 	if _, err := s.InsertPost(models.RentPost{Source: "douban", ExternalID: "h1", Title: "处理帖", Status: models.PostStatusPassed}); err != nil {
 		t.Fatal(err)
 	}
-	id := postID(t, s, "h1")
+	id := testutil.PostID(t, s, "h1")
 
 	post := func(handled string) *httptest.ResponseRecorder {
 		form := url.Values{"post_id": {fmt.Sprintf("%d", id)}, "handled": {handled}}
@@ -691,7 +692,7 @@ func TestAdminHandled(t *testing.T) {
 
 // TestStatsPage 统计页：GET /admin/stats 200 含今日计数、渠道成功率、死信行
 func TestStatsPage(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 
@@ -704,11 +705,11 @@ func TestStatsPage(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := s.SaveFilterResult(models.FilterResult{PostID: postID(t, s, "st0"), Status: models.PostStatusPassed,
+	if err := s.SaveFilterResult(models.FilterResult{PostID: testutil.PostID(t, s, "st0"), Status: models.PostStatusPassed,
 		Stage: models.StageHardRule, DecidedAt: now}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SaveFilterResult(models.FilterResult{PostID: postID(t, s, "st1"), Status: models.PostStatusRejected,
+	if err := s.SaveFilterResult(models.FilterResult{PostID: testutil.PostID(t, s, "st1"), Status: models.PostStatusRejected,
 		Stage: models.StageHardRule, RejectedBy: "x", DecidedAt: now}); err != nil {
 		t.Fatal(err)
 	}
@@ -718,20 +719,20 @@ func TestStatsPage(t *testing.T) {
 		CollectedAt: yesterday, Status: models.PostStatusCollected}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SaveFilterResult(models.FilterResult{PostID: postID(t, s, "st-yesterday"), Status: models.PostStatusPassed,
+	if err := s.SaveFilterResult(models.FilterResult{PostID: testutil.PostID(t, s, "st-yesterday"), Status: models.PostStatusPassed,
 		Stage: models.StageHardRule, DecidedAt: yesterday}); err != nil {
 		t.Fatal(err)
 	}
 
 	// 渠道：feishu sent×1 + dead×1 → 成功率 50%
-	sentID := postID(t, s, "st0")
+	sentID := testutil.PostID(t, s, "st0")
 	if _, err := s.InsertNotification(sentID, "feishu"); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.MarkNotificationSent(sentID, "feishu"); err != nil {
 		t.Fatal(err)
 	}
-	deadID := postID(t, s, "st1")
+	deadID := testutil.PostID(t, s, "st1")
 	if _, err := s.InsertNotification(deadID, "feishu"); err != nil {
 		t.Fatal(err)
 	}
@@ -760,14 +761,14 @@ func TestStatsPage(t *testing.T) {
 // TestDeadReset 死信重发：POST /admin/dead/reset → 302 + dead→pending（FetchPendingNotifications 可见）；
 // 再点 → 302 + 提示"该通知非死信"渲染在统计页
 func TestDeadReset(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 
 	if _, err := s.InsertPost(models.RentPost{Source: "douban", ExternalID: "dead1", Title: "死信帖", Status: models.PostStatusPassed}); err != nil {
 		t.Fatal(err)
 	}
-	id := postID(t, s, "dead1")
+	id := testutil.PostID(t, s, "dead1")
 	if _, err := s.InsertNotification(id, "feishu"); err != nil {
 		t.Fatal(err)
 	}
@@ -819,7 +820,7 @@ func TestDeadReset(t *testing.T) {
 
 // TestDeadResetInvalid 非法参数 → 400：post_id=0 / 空 channel；GET → 405（防 GET 链接触发写库）
 func TestDeadResetInvalid(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 
@@ -855,14 +856,14 @@ func TestDeadResetInvalid(t *testing.T) {
 // TestStatsTokenPropagation 鉴权开启 + ?token=secret：统计页表单 action 透传 token；
 // POST 重发带 token → 302 且 Location 带回 token（PRG 后不 401）
 func TestStatsTokenPropagation(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}}, "secret", nil)
 
 	if _, err := s.InsertPost(models.RentPost{Source: "douban", ExternalID: "tokdead", Title: "t", Status: models.PostStatusPassed}); err != nil {
 		t.Fatal(err)
 	}
-	id := postID(t, s, "tokdead")
+	id := testutil.PostID(t, s, "tokdead")
 	if _, err := s.InsertNotification(id, "feishu"); err != nil {
 		t.Fatal(err)
 	}
@@ -939,7 +940,7 @@ func feedbackSig(postID int64, action string, exp int64, secret string) string {
 
 // TestFeedbackNoToken：token 空（鉴权关闭）→ 不签名直接放行，任意合法参数 200
 func TestFeedbackNoToken(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}}, "", nil)
 
@@ -956,7 +957,7 @@ func TestFeedbackNoToken(t *testing.T) {
 
 // TestFeedbackSigned：token 非空 → 无 sig/过期/错 sig 失败页；正确签名 200 + 写库；重复点击两次 200
 func TestFeedbackSigned(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}}, "secret", nil)
 
@@ -1021,7 +1022,7 @@ func TestFeedbackSigned(t *testing.T) {
 
 // TestFeedbackBadAction：非法 action → 400
 func TestFeedbackBadAction(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}}, "secret", nil)
 
@@ -1035,7 +1036,7 @@ func TestFeedbackBadAction(t *testing.T) {
 
 // TestFeedbackAuthDisabled：AuthRequired=false → 无效签名也放行（开关为准）
 func TestFeedbackAuthDisabled(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 
 	// 鉴权关闭 + token 非空（模拟有 token 但开关关闭的场景）
@@ -1065,7 +1066,7 @@ func TestFeedbackAuthDisabled(t *testing.T) {
 
 // TestFeedbackAuthEnabledInvalidSig：AuthRequired=true + token 非空 → 无效签名被拒绝
 func TestFeedbackAuthEnabledInvalidSig(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 
 	srv := newTestServerWithStore(t, s, &config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}}, "secret", nil)
@@ -1086,12 +1087,12 @@ func TestFeedbackAuthEnabledInvalidSig(t *testing.T) {
 
 // TestHandledLinkSigned：验签成功写 handled_at；错签失败；不写 feedbacks（Spec 09 §3.5）
 func TestHandledLinkSigned(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	if _, err := s.InsertPost(models.RentPost{Source: "douban", ExternalID: "h1", Title: "已处理帖", Status: models.PostStatusPassed}); err != nil {
 		t.Fatal(err)
 	}
-	id := postID(t, s, "h1")
+	id := testutil.PostID(t, s, "h1")
 	srv := newTestServerWithStore(t, s, &config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}}, "secret", nil)
 
 	future := time.Now().Add(time.Hour).Unix()
@@ -1140,12 +1141,12 @@ func TestHandledLinkSigned(t *testing.T) {
 
 // TestHandledLinkAuthDisabled：鉴权关 → 无签也可标记，仍不写 feedbacks
 func TestHandledLinkAuthDisabled(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	if _, err := s.InsertPost(models.RentPost{Source: "douban", ExternalID: "h2", Title: "开放已处理", Status: models.PostStatusPassed}); err != nil {
 		t.Fatal(err)
 	}
-	id := postID(t, s, "h2")
+	id := testutil.PostID(t, s, "h2")
 	srv := newTestServerWithStore(t, s, &config.AppConfig{Admin: config.AdminConfig{AuthRequired: false}}, "secret", nil)
 
 	req := httptest.NewRequest(http.MethodGet, hRef(id, "secret", ""), nil)
@@ -1167,7 +1168,7 @@ func TestHandledLinkAuthDisabled(t *testing.T) {
 // TestAPIFeedbacksAuth 反馈写入鉴权矩阵（规格 7.1）：
 // 管理 token 鉴权下 → 无 sig+Bearer 201；无 token 401；错 sig 401；正确 sig 201；非法 action 400
 func TestAPIFeedbacksAuth(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}}, "secret", nil)
 
@@ -1227,7 +1228,7 @@ func TestAPIFeedbacksAuth(t *testing.T) {
 // TestAPIFeedbacksAuthOff 鉴权关闭（AuthRequired=false）时以开关为准：
 // 即使配置了 server token，无 sig / 带 sig 一律放行 201（不验证）；畸形 JSON 仍 400
 func TestAPIFeedbacksAuthOff(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "secret", nil)
 
@@ -1278,7 +1279,7 @@ func TestAPIFeedbacksAuthOff(t *testing.T) {
 
 // TestAPIPostsList 列表：status 过滤 / limit+offset 分页 / 空 status 全量
 func TestAPIPostsList(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}}, "secret", nil)
 
@@ -1317,7 +1318,7 @@ func TestAPIPostsList(t *testing.T) {
 
 // TestAPIPostsListFilters API 透传 q/tag/handled（规格 §6）
 func TestAPIPostsListFilters(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}}, "secret", nil)
 
@@ -1330,8 +1331,8 @@ func TestAPIPostsListFilters(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	id1 := postID(t, s, "af1")
-	id2 := postID(t, s, "af2")
+	id1 := testutil.PostID(t, s, "af1")
+	id2 := testutil.PostID(t, s, "af2")
 	if err := s.ReplaceSystemTags(id1, []models.PostTag{{Kind: models.TagKindLocation, Text: "望京", Source: models.TagSourceSystem}}); err != nil {
 		t.Fatal(err)
 	}
@@ -1399,7 +1400,7 @@ func TestAPIPostsListFilters(t *testing.T) {
 
 // TestAPIPostsListDefaultLimit：不传 limit → 默认 50（播种 55 帖验证默认值生效）
 func TestAPIPostsListDefaultLimit(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}}, "secret", nil)
 
@@ -1429,14 +1430,14 @@ func TestAPIPostsListDefaultLimit(t *testing.T) {
 
 // TestAPIPostDetail 详情：播种完整链路（post+filter_result+notification+feedback）→ 组合字段齐全；不存在 404
 func TestAPIPostDetail(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}}, "secret", nil)
 
 	if _, err := s.InsertPost(models.RentPost{Source: "douban", ExternalID: "detail1", Title: "详情帖", Status: models.PostStatusPassed}); err != nil {
 		t.Fatal(err)
 	}
-	id := postID(t, s, "detail1")
+	id := testutil.PostID(t, s, "detail1")
 	if err := s.SaveFilterResult(models.FilterResult{PostID: id, Status: models.PostStatusPassed, Stage: models.StageHardRule, DecidedAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
@@ -1488,7 +1489,7 @@ func TestAPIPostDetail(t *testing.T) {
 
 // TestAPIPostsEdgeCases：路径/方法边界——空 id 400、非数字 id 400、POST 405
 func TestAPIPostsEdgeCases(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}}, "secret", nil)
 
@@ -1591,9 +1592,9 @@ func TestNotifyTestFeishuNeedsWebhook(t *testing.T) {
 }
 
 func TestNotifyTestMockWhenEmpty(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
-	probe := &stubNotifyProbe{}
+	probe := &testutil.StubNotifyProbe{}
 	srv := newTestServerWithStore(t, s, config.DefaultApp(), "", nil)
 	srv.SetNotifyProbe(probe)
 	form := url.Values{
@@ -1611,16 +1612,16 @@ func TestNotifyTestMockWhenEmpty(t *testing.T) {
 	if out["ok"] != true || out["mocked"] != true {
 		t.Fatalf("空库应用 mock: %v", out)
 	}
-	if probe.channel != "feishu" || len(probe.items) != 2 {
-		t.Fatalf("channel=%s items=%d", probe.channel, len(probe.items))
+	if probe.Channel != "feishu" || len(probe.Items) != 2 {
+		t.Fatalf("channel=%s items=%d", probe.Channel, len(probe.Items))
 	}
-	if !strings.Contains(probe.items[0].Title, "连通检测") {
-		t.Errorf("样例标题: %s", probe.items[0].Title)
+	if !strings.Contains(probe.Items[0].Title, "连通检测") {
+		t.Errorf("样例标题: %s", probe.Items[0].Title)
 	}
 }
 
 func TestNotifyTestUsesRecentAnyStatus(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	p := models.RentPost{
 		Source: "douban", ExternalID: "rej-1", Title: "被拒的帖子也能试发",
@@ -1629,7 +1630,7 @@ func TestNotifyTestUsesRecentAnyStatus(t *testing.T) {
 	if _, err := s.InsertPost(p); err != nil {
 		t.Fatal(err)
 	}
-	probe := &stubNotifyProbe{}
+	probe := &testutil.StubNotifyProbe{}
 	srv := newTestServerWithStore(t, s, config.DefaultApp(), "", nil)
 	srv.SetNotifyProbe(probe)
 	form := url.Values{
@@ -1645,8 +1646,8 @@ func TestNotifyTestUsesRecentAnyStatus(t *testing.T) {
 	if out["ok"] != true || out["mocked"] != false {
 		t.Fatalf("应用库内帖: %v", out)
 	}
-	if probe.channel != "pushplus" || len(probe.items) != 1 || probe.items[0].Title != "被拒的帖子也能试发" {
-		t.Fatalf("items=%+v channel=%s", probe.items, probe.channel)
+	if probe.Channel != "pushplus" || len(probe.Items) != 1 || probe.Items[0].Title != "被拒的帖子也能试发" {
+		t.Fatalf("items=%+v channel=%s", probe.Items, probe.Channel)
 	}
 	n, err := s.FetchPendingNotifications("pushplus", 10)
 	if err != nil {
@@ -1688,7 +1689,7 @@ func (f *fakeController) SourceEnabled(name string) bool {
 }
 
 func TestAPISourceActions(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	if err := s.SetProgress("douban", store.SourceProgress{Page: "1:0"}); err != nil {
 		t.Fatal(err)
@@ -1722,7 +1723,7 @@ func TestAPISourceActions(t *testing.T) {
 }
 
 func TestAPISourcesUnavailable(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}}, "secret", nil)
 

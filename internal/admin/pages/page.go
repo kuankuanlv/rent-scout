@@ -1,4 +1,4 @@
-package config
+package pages
 
 import (
 	"database/sql"
@@ -9,9 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"rent-scout/internal/admin/onboard"
 	"rent-scout/internal/admin/ports"
-	"rent-scout/internal/admin/rules"
 	"rent-scout/internal/config"
 	"rent-scout/internal/models"
 	"rent-scout/internal/pkglog"
@@ -21,7 +19,7 @@ import (
 )
 
 // handleConfig 配置管理页与各分区独立保存（二级 Tab：仅渲染当前 tab）
-func (h *Handler) handleConfig(w http.ResponseWriter, r *http.Request) {
+func (h *ConfigHandler) handleConfig(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost && r.URL.Path == "/admin/config/save" {
 		h.handleConfigSectionSave(w, r)
 		return
@@ -36,7 +34,7 @@ func (h *Handler) handleConfig(w http.ResponseWriter, r *http.Request) {
 	data := ports.MergePageCtx(ports.PageCtx(h.opts.RT, r, "config"), map[string]any{
 		"Tab":     tab,
 		"Tabs":    configTabs,
-		"Onboard": onboard.OnboardHint{},
+		"Onboard": OnboardHint{},
 	})
 	if ok := r.URL.Query().Get("ok"); ok != "" {
 		if ok == "import" {
@@ -53,7 +51,7 @@ func (h *Handler) handleConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if tab == "rules" {
-		rows, err := rules.LoadRuleRows(h.opts.DB)
+		rows, err := LoadRuleRows(h.opts.DB)
 		if err != nil {
 			http.Error(w, "查询失败", http.StatusInternalServerError)
 			return
@@ -71,7 +69,7 @@ func (h *Handler) handleConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		data["Section"] = sec
-		data["Onboard"] = onboard.OnboardForTab(tab, app, env, token)
+		data["Onboard"] = OnboardForTab(tab, app, env, token)
 		if tab == "general" {
 			history, _ := store.ListConfigHistory(h.opts.DB, 20)
 			data["History"] = history
@@ -83,7 +81,7 @@ func (h *Handler) handleConfig(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *Handler) handleConfigSectionSave(w http.ResponseWriter, r *http.Request) {
+func (h *ConfigHandler) handleConfigSectionSave(w http.ResponseWriter, r *http.Request) {
 	if err := parseAdminForm(r); err != nil {
 		if ports.WantsJSON(r) {
 			ports.WriteJSONStatus(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "解析表单失败"})
@@ -133,7 +131,7 @@ func (h *Handler) handleConfigSectionSave(w http.ResponseWriter, r *http.Request
 }
 
 // handleConfigExport GET /admin/config/export：当前 KV 导出为 JSON（含敏感项，当备份用）
-func (h *Handler) handleConfigExport(w http.ResponseWriter, r *http.Request) {
+func (h *ConfigHandler) handleConfigExport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -147,7 +145,7 @@ func (h *Handler) handleConfigExport(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleConfigImport POST /admin/config/import：粘贴 key=value 或 JSON（与导出兼容），覆盖对应项
-func (h *Handler) handleConfigImport(w http.ResponseWriter, r *http.Request) {
+func (h *ConfigHandler) handleConfigImport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -214,7 +212,7 @@ func readConfigImportPayload(r *http.Request) ([]byte, error) {
 }
 
 // handleConfigHistory 变更历史的只读快照页（从当前 KV 倒放 diff 还原）
-func (h *Handler) handleConfigHistory(w http.ResponseWriter, r *http.Request) {
+func (h *ConfigHandler) handleConfigHistory(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -250,8 +248,8 @@ func (h *Handler) handleConfigHistory(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// Options 配置页面 handler 依赖
-type Options struct {
+// ConfigOptions 配置页面 handler 依赖
+type ConfigOptions struct {
 	DB          *store.Store
 	RT          *config.HotConfig
 	Tmpl        *template.Template
@@ -261,18 +259,18 @@ type Options struct {
 	NotifyProbe ports.NotifyProbe
 }
 
-// Handler 配置页面（/admin/config*）处理器
-type Handler struct {
-	opts Options
+// ConfigHandler 配置页面（/admin/config*）处理器
+type ConfigHandler struct {
+	opts ConfigOptions
 }
 
-// New 创建配置页面 handler
-func New(opts Options) *Handler {
-	return &Handler{opts: opts}
+// NewConfig 创建配置页面 handler
+func NewConfig(opts ConfigOptions) *ConfigHandler {
+	return &ConfigHandler{opts: opts}
 }
 
 // Routes 注册配置页面路由
-func (h *Handler) Routes(mux *http.ServeMux) {
+func (h *ConfigHandler) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/admin/config", h.handleConfig)
 	mux.HandleFunc("/admin/config/save", h.handleConfig)
 	mux.HandleFunc("/admin/config/export", h.handleConfigExport)
@@ -286,10 +284,10 @@ func (h *Handler) Routes(mux *http.ServeMux) {
 }
 
 // SetCookieProbe 注入 Cookie 探测器（根包装配用）
-func (h *Handler) SetCookieProbe(p ports.CookieProbe) { h.opts.CookieProbe = p }
+func (h *ConfigHandler) SetCookieProbe(p ports.CookieProbe) { h.opts.CookieProbe = p }
 
 // SetLLMProbe 注入 LLM 探测器（根包装配用）
-func (h *Handler) SetLLMProbe(p ports.LLMProbe) { h.opts.LLMProbe = p }
+func (h *ConfigHandler) SetLLMProbe(p ports.LLMProbe) { h.opts.LLMProbe = p }
 
 // SetNotifyProbe 注入通知探测器（根包装配用）
-func (h *Handler) SetNotifyProbe(p ports.NotifyProbe) { h.opts.NotifyProbe = p }
+func (h *ConfigHandler) SetNotifyProbe(p ports.NotifyProbe) { h.opts.NotifyProbe = p }

@@ -6,7 +6,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"rent-scout/internal/admin"
+	"rent-scout/internal/admin/core"
 	"rent-scout/internal/app"
 	"rent-scout/internal/collector"
 	"rent-scout/internal/collector/cookie"
@@ -66,7 +66,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	adminSvc, err := admin.New(admin.Options{
+	adminSvc, err := core.New(core.Options{
 		Config:         resources.Config,
 		Store:          resources.Store,
 		Sources:        collectorSvc.Controller(),

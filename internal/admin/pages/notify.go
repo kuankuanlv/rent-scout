@@ -1,4 +1,4 @@
-package config
+package pages
 
 import (
 	"fmt"
@@ -14,7 +14,7 @@ import (
 )
 
 // handleNotifyTest POST /admin/config/notify/test：用草稿试发最近一批帖，不写通知账本
-func (h *Handler) handleNotifyTest(w http.ResponseWriter, r *http.Request) {
+func (h *ConfigHandler) handleNotifyTest(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel, ok := probeTimeout(r)
 	if !ok {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -82,7 +82,7 @@ func notifyProbeChannel(r *http.Request) string {
 	return strings.ToLower(strings.TrimSpace(r.FormValue("channel")))
 }
 
-func (h *Handler) draftNotifySecrets(r *http.Request) (webhook, token, topic string) {
+func (h *ConfigHandler) draftNotifySecrets(r *http.Request) (webhook, token, topic string) {
 	stored := h.opts.RT.Secrets().Notifier
 	webhook = ports.FirstNonEmpty(
 		r.FormValue("secret.notifier.feishu.webhook"),
@@ -105,7 +105,7 @@ func (h *Handler) draftNotifySecrets(r *http.Request) (webhook, token, topic str
 	return strings.TrimSpace(webhook), strings.TrimSpace(token), strings.TrimSpace(topic)
 }
 
-func (h *Handler) postsToProbeItems(posts []models.RentPost) []ports.NotifyProbeItem {
+func (h *ConfigHandler) postsToProbeItems(posts []models.RentPost) []ports.NotifyProbeItem {
 	secret := ""
 	origin := ""
 	if h.opts.RT != nil {

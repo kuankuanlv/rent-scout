@@ -1,4 +1,4 @@
-package posts
+package pages
 
 import (
 	"context"
@@ -6,7 +6,6 @@ import (
 	"html/template"
 	"net/http"
 	"net/url"
-	"rent-scout/internal/admin/onboard"
 	"rent-scout/internal/admin/ports"
 	"rent-scout/internal/config"
 	"rent-scout/internal/models"
@@ -164,13 +163,13 @@ func adminPostsPath(r *http.Request) string {
 }
 
 // handleHome 项目介绍页（GET /admin）
-func (h *Handler) handleHome(w http.ResponseWriter, r *http.Request) {
+func (h *PostsHandler) handleHome(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	if err := h.opts.Tmpl.ExecuteTemplate(w, "home", ports.MergePageCtx(ports.PageCtx(h.opts.RT, r, "home"), map[string]any{
-		"Onboard": onboard.CollectOnboard(h.opts.RT.Get(), h.opts.RT.Secrets(), r.URL.Query().Get("token")),
+		"Onboard": CollectOnboard(h.opts.RT.Get(), h.opts.RT.Secrets(), r.URL.Query().Get("token")),
 	})); err != nil {
 		pkglog.Component(pkglog.Admin).Error("介绍页渲染失败", "err", err)
 	}
@@ -181,7 +180,7 @@ func (h *Handler) handleHome(w http.ResponseWriter, r *http.Request) {
 // 供 nav 链接/筛选链接/表单 action 追加，保证鉴权开启时页面内跳转与提交不 401。
 const adminPostPageSize = 20
 
-func (h *Handler) handleAdmin(w http.ResponseWriter, r *http.Request) {
+func (h *PostsHandler) handleAdmin(w http.ResponseWriter, r *http.Request) {
 	f := postListFilterFromQuery(r.URL.Query())
 	q := r.URL.Query()
 	page, _ := strconv.Atoi(q.Get("page"))
@@ -248,7 +247,7 @@ func (h *Handler) handleAdmin(w http.ResponseWriter, r *http.Request) {
 		"TagsMore":     tagsMore,
 		"TagsMoreOpen": FilterTagsContain(tagsMore, f.Tag),
 		"Filter":       filter,
-		"Onboard":      onboard.CollectorOnboard(h.opts.RT.Get(), h.opts.RT.Secrets(), r.URL.Query().Get("token")),
+		"Onboard":      CollectorOnboard(h.opts.RT.Get(), h.opts.RT.Secrets(), r.URL.Query().Get("token")),
 		"Page":         page,
 		"Pages":        pages,
 		"Total":        total,
@@ -274,7 +273,7 @@ func pageQuery(r *http.Request, page int) string {
 	return q.Encode()
 }
 
-func (h *Handler) handlePostTags(w http.ResponseWriter, r *http.Request) {
+func (h *PostsHandler) handlePostTags(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -296,7 +295,7 @@ func (h *Handler) handlePostTags(w http.ResponseWriter, r *http.Request) {
 // handleMark 标记反馈（POST /admin/mark，表单：post_id/action/reason）
 // 仅接受 POST：GET 等请求一律 405，防止 <a>/<img> 链接触发写库。
 // 表单值只读 PostForm（body），URL query 参数天然失效，杜绝 query 注入写库。
-func (h *Handler) handleMark(w http.ResponseWriter, r *http.Request) {
+func (h *PostsHandler) handleMark(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -323,7 +322,7 @@ func (h *Handler) handleMark(w http.ResponseWriter, r *http.Request) {
 
 // handleHandled 独立「已处理」写/清 handled_at（POST /admin/handled）
 // 表单：post_id + handled=1|0；只动 handled_at，不改 feedbacks，不写 posts.status。
-func (h *Handler) handleHandled(w http.ResponseWriter, r *http.Request) {
+func (h *PostsHandler) handleHandled(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -368,7 +367,7 @@ func redirectPostsMsg(w http.ResponseWriter, r *http.Request, msg string) {
 }
 
 // handleNotifySelected 勾选帖子后立刻发通知（POST /admin/notify，表单 post_id 可多值）
-func (h *Handler) handleNotifySelected(w http.ResponseWriter, r *http.Request) {
+func (h *PostsHandler) handleNotifySelected(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -411,7 +410,7 @@ func (h *Handler) handleNotifySelected(w http.ResponseWriter, r *http.Request) {
 }
 
 // handlePosts 帖子列表（GET /api/posts?q=&status=&tag=&handled=&limit=&offset=，规格 7.1 + §6）
-func (h *Handler) handlePosts(w http.ResponseWriter, r *http.Request) {
+func (h *PostsHandler) handlePosts(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -443,7 +442,7 @@ func (h *Handler) handlePosts(w http.ResponseWriter, r *http.Request) {
 }
 
 // handlePost 帖子详情（GET /api/posts/{id}）：post + filter_result + notifications + tags
-func (h *Handler) handlePost(w http.ResponseWriter, r *http.Request) {
+func (h *PostsHandler) handlePost(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -501,26 +500,26 @@ func (h *Handler) handlePost(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Options 帖子页面 handler 依赖
-type Options struct {
+// PostsOptions 帖子页面 handler 依赖
+type PostsOptions struct {
 	DB           *store.Store
 	RT           *config.HotConfig
 	Tmpl         *template.Template
 	NotifyManual ports.NotifyManual
 }
 
-// Handler 帖子页面（/admin、/admin/posts*、/admin/stats、反馈链接）处理器
-type Handler struct {
-	opts Options
+// PostsHandler 帖子页面（/admin、/admin/posts*、/admin/stats、反馈链接）处理器
+type PostsHandler struct {
+	opts PostsOptions
 }
 
-// New 创建帖子页面 handler
-func New(opts Options) *Handler {
-	return &Handler{opts: opts}
+// NewPosts 创建帖子页面 handler
+func NewPosts(opts PostsOptions) *PostsHandler {
+	return &PostsHandler{opts: opts}
 }
 
 // Routes 注册帖子页面路由
-func (h *Handler) Routes(mux *http.ServeMux) {
+func (h *PostsHandler) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/f", h.handleFeedback)
 	mux.HandleFunc("/h", h.handleHandledLink)
 	mux.HandleFunc("/api/post-tags", h.handlePostTags)
@@ -537,4 +536,4 @@ func (h *Handler) Routes(mux *http.ServeMux) {
 }
 
 // SetNotifyManual 注入手动通知器（根包装配用）
-func (h *Handler) SetNotifyManual(p ports.NotifyManual) { h.opts.NotifyManual = p }
+func (h *PostsHandler) SetNotifyManual(p ports.NotifyManual) { h.opts.NotifyManual = p }

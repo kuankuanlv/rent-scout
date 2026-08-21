@@ -1,4 +1,4 @@
-package admin
+package pages_test
 
 import (
 	"fmt"
@@ -9,14 +9,15 @@ import (
 	"testing"
 	"time"
 
-	"rent-scout/internal/admin/rules"
+	"rent-scout/internal/admin/pages"
+	"rent-scout/internal/admin/testutil"
 	"rent-scout/internal/config"
 	"rent-scout/internal/models"
 )
 
 // TestRulesPage GET /admin/rules → 302 到配置 tab=rules；配置页含规则名与命中统计
 func TestRulesPage(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 
@@ -33,7 +34,7 @@ func TestRulesPage(t *testing.T) {
 	if _, err := s.InsertPost(models.RentPost{Source: "douban", ExternalID: "hit1", Title: "命中帖", Status: models.PostStatusPassed}); err != nil {
 		t.Fatal(err)
 	}
-	pid := postID(t, s, "hit1")
+	pid := testutil.PostID(t, s, "hit1")
 	if err := s.SaveFilterResult(models.FilterResult{PostID: pid, Status: models.PostStatusPassed, Stage: models.StageHardRule,
 		DecidedAt: time.Now(), HardRules: []models.RuleHit{{RuleID: r1.ID, Reason: "中介"}}}); err != nil {
 		t.Fatal(err)
@@ -78,7 +79,7 @@ func TestRulesPage(t *testing.T) {
 
 // TestRulesCreate POST /admin/rules 合法 → 302（PRG）+ DB 有记录；Location 回列表
 func TestRulesCreate(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 
@@ -115,7 +116,7 @@ func TestRulesCreate(t *testing.T) {
 }
 
 func TestRulesCreateAIUsesBuiltInValue(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 
@@ -149,7 +150,7 @@ func TestRulesCreateAIUsesBuiltInValue(t *testing.T) {
 
 // TestRulesUpdate POST /admin/rules/{id} 改 value + 关启用 → 生效（另有启用规则，不触底）
 func TestRulesUpdate(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 
@@ -192,7 +193,7 @@ func TestRulesUpdate(t *testing.T) {
 
 // TestRulesUpdateEnableEnabled 勾选 enabled 提交 → 保持启用
 func TestRulesUpdateEnableEnabled(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 
@@ -227,7 +228,7 @@ func TestRulesUpdateEnableEnabled(t *testing.T) {
 }
 
 func TestRulesUpdateJSON(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 
@@ -270,7 +271,7 @@ func TestRulesUpdateJSON(t *testing.T) {
 }
 
 func TestRulesUpdateJSONMissingValue(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 	r, err := s.CreateRule(models.Rule{Name: "缺值", Type: models.RuleTypeBlacklist, Value: "v", Enabled: true, Priority: 1})
@@ -302,7 +303,7 @@ func TestRulesUpdateJSONMissingValue(t *testing.T) {
 }
 
 func TestRulesToggleEnabledOnly(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 	r, err := s.CreateRule(models.Rule{Name: "只改启用", Type: models.RuleTypeBlacklist, Value: "中介", Enabled: false, Priority: 9})
@@ -330,7 +331,7 @@ func TestRulesToggleEnabledOnly(t *testing.T) {
 
 // TestRulesDelete POST /admin/rules/{id}/delete → 302 + 规则消失（另有启用规则）
 func TestRulesDelete(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 
@@ -376,7 +377,7 @@ func TestRuleNeedsReplay(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := rules.RuleNeedsReplay(tc.before, tc.after); got != tc.want {
+			if got := pages.RuleNeedsReplay(tc.before, tc.after); got != tc.want {
 				t.Fatalf("ruleNeedsReplay = %v, want %v", got, tc.want)
 			}
 		})
@@ -385,7 +386,7 @@ func TestRuleNeedsReplay(t *testing.T) {
 
 // TestRulesChangedCallback 新建/加关键字会通知；删除、只删关键字、禁用不通知
 func TestRulesChangedCallback(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 	var n int
@@ -466,7 +467,7 @@ func TestRulesChangedCallback(t *testing.T) {
 
 // TestRulesCreateInvalid 非法参数 → 400：坏 type / 空 value / 坏 priority（mode 废弃不校验）
 func TestRulesCreateInvalid(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 
@@ -498,7 +499,7 @@ func TestRulesCreateInvalid(t *testing.T) {
 
 // TestRulesUpdateInvalid 更新非法参数（坏 type / id<=0）→ 400
 func TestRulesUpdateInvalid(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 
@@ -541,7 +542,7 @@ func TestRulesUpdateInvalid(t *testing.T) {
 
 // TestRulesMethodNotAllowed GET 写操作路由必须 405 且不落库（钉死「GET 链接触发写库」漏洞）
 func TestRulesMethodNotAllowed(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 
@@ -570,7 +571,7 @@ func TestRulesMethodNotAllowed(t *testing.T) {
 // TestRulesTokenPropagation 鉴权开启 + ?token=secret：
 // GET /admin/rules 302 到配置 tab；配置页表单 action 透传 token；写操作 PRG 带回 token
 func TestRulesTokenPropagation(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{Admin: config.AdminConfig{AuthRequired: true}}, "secret", nil)
 
@@ -645,7 +646,7 @@ func TestRulesTokenPropagation(t *testing.T) {
 
 // TestRulesEnsureDefaultOnEmptyTab 启用规则为 0 时打开 rules tab → 种子默认黑白名单
 func TestRulesEnsureDefaultOnEmptyTab(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 
@@ -676,7 +677,7 @@ func TestRulesEnsureDefaultOnEmptyTab(t *testing.T) {
 
 // TestRulesDeleteLastEnabled 删除唯一启用规则 → 400，规则仍在
 func TestRulesDeleteLastEnabled(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 
@@ -701,7 +702,7 @@ func TestRulesDeleteLastEnabled(t *testing.T) {
 
 // TestRulesDisableLastEnabled 禁用唯一启用规则 → 400，仍启用
 func TestRulesDisableLastEnabled(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 

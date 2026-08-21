@@ -1,4 +1,4 @@
-package config
+package pages
 
 import (
 	"context"
@@ -29,7 +29,7 @@ func modelsPreview(models []string) []string {
 }
 
 // handleLLMTest POST /admin/config/llm/test：草稿连通检测，不写库
-func (h *Handler) handleLLMTest(w http.ResponseWriter, r *http.Request) {
+func (h *ConfigHandler) handleLLMTest(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel, ok := probeTimeout(r)
 	if !ok {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -98,7 +98,7 @@ func (h *Handler) handleLLMTest(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleLLMModels POST /admin/config/llm/models：草稿拉取模型列表，不写库
-func (h *Handler) handleLLMModels(w http.ResponseWriter, r *http.Request) {
+func (h *ConfigHandler) handleLLMModels(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel, ok := probeTimeout(r)
 	if !ok {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -141,7 +141,7 @@ type llmDraft struct {
 	model    string
 }
 
-func (h *Handler) parseLLMDraft(r *http.Request) (llmDraft, error) {
+func (h *ConfigHandler) parseLLMDraft(r *http.Request) (llmDraft, error) {
 	if err := r.ParseForm(); err != nil {
 		return llmDraft{}, err
 	}

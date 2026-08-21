@@ -1,4 +1,4 @@
-package admin
+package pages_test
 
 import (
 	"context"
@@ -6,8 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	cfgpage "rent-scout/internal/admin/config"
+	"rent-scout/internal/admin/pages"
 	"rent-scout/internal/admin/ports"
+	"rent-scout/internal/admin/testutil"
 	"rent-scout/internal/collector/cookie"
 	"rent-scout/internal/config"
 	"rent-scout/internal/store"
@@ -18,7 +19,7 @@ import (
 
 // TestConfigTabs 配置二级 Tab：默认 general；仅渲染当前 tab；sources→collector；history 仅 general
 func TestConfigTabs(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 	if err := store.SetConfig(s, "secret.notifier.pushplus.token", "pp-token-plain"); err != nil {
@@ -315,7 +316,7 @@ func TestConfigTabs(t *testing.T) {
 
 // TestConfigSectionSaveRestartBanner 改需重启项 → Location 带 restart=1；admin.token 不带
 func TestConfigSectionSaveRestartBanner(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, config.DefaultApp(), "", nil)
 
@@ -331,7 +332,7 @@ func TestConfigSectionSaveRestartBanner(t *testing.T) {
 		return rec.Header().Get("Location")
 	}
 
-	// server.addr 在 cfgpage.RestartKeys → 应提示重启
+	// server.addr 在 pages.RestartKeys → 应提示重启
 	loc := post(url.Values{
 		"section":     {"general"},
 		"server.addr": {":9999"},
@@ -369,12 +370,12 @@ func TestConfigSectionSaveRestartBanner(t *testing.T) {
 
 // TestRestartKeysExcludesAdminToken admin.token / auth_required 不在需重启集合
 func TestRestartKeysExcludesAdminToken(t *testing.T) {
-	if cfgpage.RestartKeys["admin.token"] || cfgpage.RestartKeys["admin.auth_required"] {
-		t.Fatal("admin.token / auth_required 应热生效，不得列入 cfgpage.RestartKeys")
+	if pages.RestartKeys["admin.token"] || pages.RestartKeys["admin.auth_required"] {
+		t.Fatal("admin.token / auth_required 应热生效，不得列入 pages.RestartKeys")
 	}
 	for _, k := range []string{"server.addr", "log.path", "log.level"} {
-		if !cfgpage.RestartKeys[k] {
-			t.Errorf("cfgpage.RestartKeys 缺 %q", k)
+		if !pages.RestartKeys[k] {
+			t.Errorf("pages.RestartKeys 缺 %q", k)
 		}
 	}
 	for _, k := range []string{
@@ -383,8 +384,8 @@ func TestRestartKeysExcludesAdminToken(t *testing.T) {
 		"filter.ai_enabled", "secret.filter.llm.api_key",
 		"notifier.channels", "secret.notifier.feishu.webhook",
 	} {
-		if cfgpage.RestartKeys[k] {
-			t.Errorf("%s 应热生效，不应列入 cfgpage.RestartKeys", k)
+		if pages.RestartKeys[k] {
+			t.Errorf("%s 应热生效，不应列入 pages.RestartKeys", k)
 		}
 	}
 }
@@ -393,14 +394,14 @@ func TestRestartKeysExcludesAdminToken(t *testing.T) {
 func TestChangedRestartKeys(t *testing.T) {
 	before := map[string]string{"server.addr": ":7777", "log.level": "info", "admin.token": "a"}
 	updates := map[string]string{"server.addr": ":8888", "log.level": "debug", "admin.token": "b"}
-	got := cfgpage.ChangedRestartKeys(before, updates)
+	got := pages.ChangedRestartKeys(before, updates)
 	if len(got) != 2 || got[0] != "log.level" || got[1] != "server.addr" {
-		t.Errorf("ChangedRestartKeys = %v, want [log.level server.addr]", got)
+		t.Errorf("pages.ChangedRestartKeys = %v, want [log.level server.addr]", got)
 	}
 }
 
 func TestConfigExportJSON(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, config.DefaultApp(), "", nil)
 
@@ -422,7 +423,7 @@ func TestConfigExportJSON(t *testing.T) {
 }
 
 func TestConfigImportLines(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, config.DefaultApp(), "", nil)
 
@@ -443,7 +444,7 @@ func TestConfigImportLines(t *testing.T) {
 }
 
 func TestConfigImportJSONRoundTrip(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	app := config.DefaultApp()
 	app.Log.Level = "debug"
@@ -473,7 +474,7 @@ func TestConfigImportJSONRoundTrip(t *testing.T) {
 }
 
 func TestConfigHistorySnapshotPage(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, config.DefaultApp(), "", nil)
 
@@ -534,7 +535,7 @@ func TestParseSectionFormGroupKeepsOtherSource(t *testing.T) {
 		"collector.interval":     {"300"},
 		"collector.jitter_ratio": {"0.2"},
 	}
-	got := cfgpage.ParseSectionForm(form, "collector", keep)
+	got := pages.ParseSectionForm(form, "collector", keep)
 	if got["collector.weibo.users"] != "1111111111" {
 		t.Errorf("weibo users = %q", got["collector.weibo.users"])
 	}
@@ -547,7 +548,7 @@ func TestParseSectionFormGroupKeepsOtherSource(t *testing.T) {
 }
 
 func TestConfigSectionSaveJSONNoRedirect(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, config.DefaultApp(), "", nil)
 	form := url.Values{
@@ -577,7 +578,7 @@ func TestConfigSectionSaveJSONNoRedirect(t *testing.T) {
 }
 
 func TestCookieTestNoneProbesOnline(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 	srv.SetCookieProbe(stubPageProbe{fn: func(ctx context.Context, rawURL, c string) ports.DoubanPageResult {
@@ -612,7 +613,7 @@ func TestCookieTestNoneProbesOnline(t *testing.T) {
 }
 
 func TestCookieTestRawDraftNoWrite(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 	srv.SetCookieProbe(stubPageProbe{fn: func(ctx context.Context, rawURL, c string) ports.DoubanPageResult {
@@ -648,7 +649,7 @@ func TestCookieTestRawDraftNoWrite(t *testing.T) {
 }
 
 func TestCookieTestWeiboProbesWeiboURL(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 	srv.SetCookieProbe(stubPageProbe{fn: func(ctx context.Context, rawURL, c string) ports.DoubanPageResult {
@@ -679,7 +680,7 @@ func TestCookieTestWeiboProbesWeiboURL(t *testing.T) {
 }
 
 func TestCookieTestRawEmptyDoesNotUseStored(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 	srv.SetCookieProbe(stubPageProbe{fn: func(ctx context.Context, rawURL, c string) ports.DoubanPageResult {
@@ -694,7 +695,7 @@ func TestCookieTestRawEmptyDoesNotUseStored(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := srv.rt.ReloadOnce(); err != nil {
+	if err := srv.ReloadConfig(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -716,7 +717,7 @@ func TestCookieTestRawEmptyDoesNotUseStored(t *testing.T) {
 }
 
 func TestCookieTestMethodNotAllowed(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 	req := httptest.NewRequest(http.MethodGet, "/admin/config/cookie/test", nil)
@@ -728,7 +729,7 @@ func TestCookieTestMethodNotAllowed(t *testing.T) {
 }
 
 func TestCookieTestInvalidModeRejected(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 
@@ -750,7 +751,7 @@ func TestCookieTestInvalidModeRejected(t *testing.T) {
 }
 
 func TestCookieCloudTestIncomplete(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 
@@ -782,7 +783,7 @@ func TestCookieCloudTestOK(t *testing.T) {
 	}))
 	defer cc.Close()
 
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 
@@ -826,7 +827,7 @@ func TestCookieHeaderPreviews(t *testing.T) {
 }
 
 func TestCookieCloudTestUsesPageTripleAndSource(t *testing.T) {
-	s := newAdminTestStore(t)
+	s := testutil.NewAdminTestStore(t)
 	defer s.Close()
 	srv := newTestServerWithStore(t, s, &config.AppConfig{}, "", nil)
 	probe := &recCloudProbe{}
@@ -839,7 +840,7 @@ func TestCookieCloudTestUsesPageTripleAndSource(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := srv.rt.ReloadOnce(); err != nil {
+	if err := srv.ReloadConfig(); err != nil {
 		t.Fatal(err)
 	}
 	form := url.Values{
@@ -884,7 +885,7 @@ type stubPageProbe struct {
 }
 
 func (s stubPageProbe) InspectCookieCloud(ctx context.Context, draft config.DoubanCookieConfig, source string) (ports.CookieCloudInspect, error) {
-	return testCookieProbe{}.InspectCookieCloud(ctx, draft, source)
+	return testutil.TestCookieProbe{}.InspectCookieCloud(ctx, draft, source)
 }
 
 func (s stubPageProbe) ProbePage(ctx context.Context, probeURL, rawCookie string) ports.DoubanPageResult {

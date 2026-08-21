@@ -1,4 +1,4 @@
-package sources
+package pages
 
 import (
 	"encoding/json"
@@ -11,7 +11,7 @@ import (
 
 // handleSources 源列表（GET /api/sources，规格 7.1）：name/enabled/cursor（store.GetCursor）。
 // ctrl nil（采集未启动）→ 503；仅接受 GET，写操作走 HandleSourceAction
-func (h *Handler) handleSources(w http.ResponseWriter, r *http.Request) {
+func (h *SourcesHandler) handleSources(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -39,7 +39,7 @@ func (h *Handler) handleSources(w http.ResponseWriter, r *http.Request) {
 // handleSourceAction 源动作（POST /api/sources/{name}/enable | /disable | /reset）。
 // enable/disable → ctrl.SetEnabled；reset 清进度；未知源 → 404；
 // 仅接受 POST（GET 等一律 405，防止 <a>/<img> 链接触发写操作）
-func (h *Handler) handleSourceAction(w http.ResponseWriter, r *http.Request) {
+func (h *SourcesHandler) handleSourceAction(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -100,24 +100,24 @@ func sourceKnown(ctrl ports.SourceController, name string) bool {
 	return false
 }
 
-// Options 采集源管理 handler 依赖
-type Options struct {
+// SourcesOptions 采集源管理 handler 依赖
+type SourcesOptions struct {
 	Ctrl ports.SourceController
 	DB   *store.Store
 }
 
-// Handler 采集源管理（/admin/sources、/api/sources*）处理器
-type Handler struct {
-	opts Options
+// SourcesHandler 采集源管理（/admin/sources、/api/sources*）处理器
+type SourcesHandler struct {
+	opts SourcesOptions
 }
 
-// New 创建采集源管理 handler
-func New(opts Options) *Handler {
-	return &Handler{opts: opts}
+// NewSources 创建采集源管理 handler
+func NewSources(opts SourcesOptions) *SourcesHandler {
+	return &SourcesHandler{opts: opts}
 }
 
 // Routes 注册采集源管理路由
-func (h *Handler) Routes(mux *http.ServeMux) {
+func (h *SourcesHandler) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/sources", h.handleSources)
 	mux.HandleFunc("/api/sources/", h.handleSourceAction)
 }

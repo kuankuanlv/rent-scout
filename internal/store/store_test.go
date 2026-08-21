@@ -111,6 +111,35 @@ func TestInsertPostDedup(t *testing.T) {
 	}
 }
 
+func TestInsertPostDefaultsCollectedAt(t *testing.T) {
+	s := newTestStore(t)
+	defer s.Close()
+
+	before := time.Now()
+	added, err := s.InsertPost(models.RentPost{
+		Source: "weibo", ExternalID: "missing-collected-at", Title: "北京租房",
+		Status: models.PostStatusCollected,
+	})
+	if err != nil {
+		t.Fatalf("插入缺少 collected_at 的帖子: %v", err)
+	}
+	if !added {
+		t.Fatal("首次插入应返回 added=true")
+	}
+	after := time.Now()
+
+	got, ok, err := s.GetPost(1)
+	if err != nil || !ok {
+		t.Fatalf("GetPost: ok=%v err=%v", ok, err)
+	}
+	if got.CollectedAt.IsZero() {
+		t.Fatal("缺少 collected_at 时应由入库层补当前时间")
+	}
+	if got.CollectedAt.Before(before) || got.CollectedAt.After(after) {
+		t.Fatalf("collected_at = %v，不在插入时间范围 [%v, %v] 内", got.CollectedAt, before, after)
+	}
+}
+
 func TestListFilterTags(t *testing.T) {
 	s := newTestStore(t)
 	defer s.Close()

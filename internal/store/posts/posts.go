@@ -20,6 +20,9 @@ func (r *Repo) InsertPost(p models.RentPost) (bool, error) {
 	if err := validatePostStatusWrite(p.Status); err != nil {
 		return false, err
 	}
+	if p.CollectedAt.IsZero() {
+		p.CollectedAt = time.Now()
+	}
 	models.FillPostExtracted(&p)
 	res, err := r.DB.Exec(`INSERT OR IGNORE INTO posts
 	    (source, external_id, url, title, content, author, author_url, published_at, collected_at, status, raw, price, contact)

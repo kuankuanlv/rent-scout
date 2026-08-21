@@ -4,15 +4,16 @@ package models
 type Source string
 
 const (
-	SourceDouban Source = "douban"
-	SourceWeibo  Source = "weibo"
+	SourceDouban      Source = "douban"
+	SourceWeibo       Source = "weibo"
+	SourceXiaohongshu Source = "xiaohongshu"
 )
 
 func (s Source) String() string { return string(s) }
 
 func (s Source) Valid() bool {
 	switch s {
-	case SourceDouban, SourceWeibo:
+	case SourceDouban, SourceWeibo, SourceXiaohongshu:
 		return true
 	}
 	return false
@@ -29,5 +30,5 @@ func ParseSource(s string) (Source, bool) {
 
 // KnownSources 配置多选与校验用
 func KnownSources() []Source {
-	return []Source{SourceDouban, SourceWeibo}
+	return []Source{SourceDouban, SourceWeibo, SourceXiaohongshu}
 }

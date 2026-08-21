@@ -60,6 +60,9 @@ func CookieSource(source string) string {
 	if s == "weibo" {
 		return "weibo"
 	}
+	if s == "xiaohongshu" {
+		return "xiaohongshu"
+	}
 	return "douban"
 }
 
@@ -69,6 +72,8 @@ func CookieCloudDomain(source string) string {
 		return "weibo.cn"
 	case "weibo":
 		return "weibo.com"
+	case "xiaohongshu":
+		return "xiaohongshu.com"
 	default:
 		return "douban.com"
 	}
@@ -125,6 +130,7 @@ type Config struct {
 	MaxAgeDays  int          // 时间窗：超过此天数的帖子不再采集
 	Douban      DoubanConfig // 豆瓣源
 	Weibo       WeiboConfig
+	Xiaohongshu XiaohongshuConfig
 }
 
 type DoubanConfig struct {
@@ -139,6 +145,15 @@ type WeiboConfig struct {
 	SuperTopics []string
 	Interval    int
 	RangeFrom   string
+}
+
+type XiaohongshuConfig struct {
+	Searches  []string
+	Topics    []string
+	Users     []string
+	Interval  int
+	RangeFrom string
+	MaxPages  int
 }
 
 type DoubanCookieConfig struct {
@@ -203,6 +218,17 @@ func ApplyDefaults(c *Config) {
 	}
 	if c.Weibo.Interval == 0 {
 		c.Weibo.Interval = 5
+	}
+
+	if c.Xiaohongshu.Interval == 0 {
+		c.Xiaohongshu.Interval = 600
+	}
+	if c.Xiaohongshu.RangeFrom == "" {
+		c.Xiaohongshu.RangeFrom = "-10"
+	}
+	c.Xiaohongshu.RangeFrom = window.CanonicalDayOffset(c.Xiaohongshu.RangeFrom)
+	if c.Xiaohongshu.MaxPages == 0 {
+		c.Xiaohongshu.MaxPages = 5
 	}
 
 	if c.Weibo.RangeFrom == "" {

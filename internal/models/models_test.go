@@ -27,6 +27,25 @@ func TestStatusConstants(t *testing.T) {
 	}
 }
 
+// 小红书源身份
+func TestSourceXiaohongshu(t *testing.T) {
+	if _, ok := ParseSource("xiaohongshu"); !ok {
+		t.Fatal("ParseSource(xiaohongshu) 应成功")
+	}
+	if !SourceXiaohongshu.Valid() {
+		t.Fatal("SourceXiaohongshu 应有效")
+	}
+	found := false
+	for _, s := range KnownSources() {
+		if s == SourceXiaohongshu {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("KnownSources 应包含 xiaohongshu")
+	}
+}
+
 // Tags JSON 可序列化
 func TestTagsJSON(t *testing.T) {
 	p := RentPost{Source: "douban", ExternalID: "1", Tags: []PostTag{

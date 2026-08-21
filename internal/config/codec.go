@@ -1,8 +1,8 @@
 package config
 
 import (
-	"rent-scout/internal/config/window"
 	"fmt"
+	"rent-scout/internal/config/window"
 	"strconv"
 	"strings"
 )
@@ -54,34 +54,52 @@ func AppToKV(cfg *AppConfig) map[string]string {
 	if weiboFrom == "" {
 		weiboFrom = "-10"
 	}
+	xhsInterval := cfg.Collector.Xiaohongshu.Interval
+	if xhsInterval <= 0 {
+		xhsInterval = 600
+	}
+	xhsFrom := window.CanonicalDayOffset(cfg.Collector.Xiaohongshu.RangeFrom)
+	if xhsFrom == "" {
+		xhsFrom = "-10"
+	}
+	xhsMaxPages := cfg.Collector.Xiaohongshu.MaxPages
+	if xhsMaxPages <= 0 {
+		xhsMaxPages = 5
+	}
 	kv := map[string]string{
-		"server.addr":                 cfg.Server.Addr,
-		"server.public_base":          cfg.Server.PublicBase,
-		"log.level":                   cfg.Log.Level,
-		"log.format":                  cfg.Log.Format,
-		"log.path":                    cfg.Log.Path,
-		"log.memory_lines":            strconv.Itoa(cfg.Log.MemoryLines),
-		"collector.sources":           strings.Join(cfg.Collector.Sources, ","),
-		"collector.interval":          strconv.Itoa(cfg.Collector.Interval),
-		"collector.jitter_ratio":      fmt.Sprintf("%g", cfg.Collector.JitterRatio),
-		"collector.max_age_days":      strconv.Itoa(cfg.Collector.MaxAgeDays),
-		"collector.douban.groups":     strings.Join(cfg.Collector.Douban.Groups, "\n"),
-		"collector.douban.interval":   strconv.Itoa(doubanInterval),
-		"collector.douban.range_from": rangeFrom,
-		"collector.douban.range_to":   rangeTo,
-		"collector.weibo.users":       strings.Join(cfg.Collector.Weibo.Users, "\n"),
-		"collector.weibo.supertopics": strings.Join(cfg.Collector.Weibo.SuperTopics, "\n"),
-		"collector.weibo.interval":    strconv.Itoa(weiboInterval),
-		"collector.weibo.range_from":  weiboFrom,
-		"filter.ai_enabled":           ai,
-		"filter.batch_size":           strconv.Itoa(cfg.Filter.BatchSize),
-		"filter.ai_batch_size":        strconv.Itoa(cfg.Filter.AIBatchSize),
-		"filter.ai_linger":            strconv.Itoa(cfg.Filter.AILinger),
-		"notifier.batch_size":         strconv.Itoa(cfg.Notifier.BatchSize),
-		"notifier.interval":           strconv.Itoa(cfg.Notifier.Interval),
-		"notifier.channels":           strings.Join(cfg.Notifier.Channels, ","),
-		"admin.auth_required":         auth,
-		"admin.token":                 cfg.Admin.Token,
+		"server.addr":                      cfg.Server.Addr,
+		"server.public_base":               cfg.Server.PublicBase,
+		"log.level":                        cfg.Log.Level,
+		"log.format":                       cfg.Log.Format,
+		"log.path":                         cfg.Log.Path,
+		"log.memory_lines":                 strconv.Itoa(cfg.Log.MemoryLines),
+		"collector.sources":                strings.Join(cfg.Collector.Sources, ","),
+		"collector.interval":               strconv.Itoa(cfg.Collector.Interval),
+		"collector.jitter_ratio":           fmt.Sprintf("%g", cfg.Collector.JitterRatio),
+		"collector.max_age_days":           strconv.Itoa(cfg.Collector.MaxAgeDays),
+		"collector.douban.groups":          strings.Join(cfg.Collector.Douban.Groups, "\n"),
+		"collector.douban.interval":        strconv.Itoa(doubanInterval),
+		"collector.douban.range_from":      rangeFrom,
+		"collector.douban.range_to":        rangeTo,
+		"collector.weibo.users":            strings.Join(cfg.Collector.Weibo.Users, "\n"),
+		"collector.weibo.supertopics":      strings.Join(cfg.Collector.Weibo.SuperTopics, "\n"),
+		"collector.weibo.interval":         strconv.Itoa(weiboInterval),
+		"collector.weibo.range_from":       weiboFrom,
+		"collector.xiaohongshu.searches":   strings.Join(cfg.Collector.Xiaohongshu.Searches, "\n"),
+		"collector.xiaohongshu.topics":     strings.Join(cfg.Collector.Xiaohongshu.Topics, "\n"),
+		"collector.xiaohongshu.users":      strings.Join(cfg.Collector.Xiaohongshu.Users, "\n"),
+		"collector.xiaohongshu.interval":   strconv.Itoa(xhsInterval),
+		"collector.xiaohongshu.range_from": xhsFrom,
+		"collector.xiaohongshu.max_pages":  strconv.Itoa(xhsMaxPages),
+		"filter.ai_enabled":                ai,
+		"filter.batch_size":                strconv.Itoa(cfg.Filter.BatchSize),
+		"filter.ai_batch_size":             strconv.Itoa(cfg.Filter.AIBatchSize),
+		"filter.ai_linger":                 strconv.Itoa(cfg.Filter.AILinger),
+		"notifier.batch_size":              strconv.Itoa(cfg.Notifier.BatchSize),
+		"notifier.interval":                strconv.Itoa(cfg.Notifier.Interval),
+		"notifier.channels":                strings.Join(cfg.Notifier.Channels, ","),
+		"admin.auth_required":              auth,
+		"admin.token":                      cfg.Admin.Token,
 	}
 	return kv
 }
@@ -102,31 +120,31 @@ func SecretsToKV(sec *Secrets) map[string]string {
 		apiStyle = LLMStyleOpenAI.String()
 	}
 	return map[string]string{
-		KeyDoubanCookieMode:                   cookieMode,
-		KeyDoubanCookieRaw:                    dc.CookieRaw,
-		KeyDoubanCookieCloudURL:               dc.CookiecloudURL,
-		KeyDoubanCookieCloudKey:               dc.CookiecloudKey,
-		KeyDoubanCookieCloudPwd:               dc.CookiecloudPass,
-		KeyWeiboCookieMode:                    weiboMode,
-		KeyWeiboCookieRaw:                     wc.CookieRaw,
-		KeyWeiboCookieRawCN:                   wc.CookieRawCN,
-		KeyWeiboCookieCloudURL:                wc.CookiecloudURL,
-		KeyWeiboCookieCloudKey:                wc.CookiecloudKey,
-		KeyWeiboCookieCloudPwd:                wc.CookiecloudPass,
-		"secret.filter.llm.api_key":           llm.APIKey,
-		"secret.filter.llm.base_url":          llm.BaseURL,
-		"secret.filter.llm.model":             llm.Model,
-		"secret.filter.llm.fallback_models":   strings.Join(llm.FallbackModels, ","),
-		"secret.filter.llm.api_style":         apiStyle,
-		"secret.notifier.feishu.webhook":      n.Feishu.Webhook,
-		"secret.notifier.dingtalk.webhook":    n.Dingtalk.Webhook,
-		"secret.notifier.dingtalk.secret":     n.Dingtalk.Secret,
-		"secret.notifier.wecom.webhook":       n.Wecom.Webhook,
-		"secret.notifier.pushplus.token":      n.Pushplus.Token,
-		"secret.notifier.pushplus.topic":      n.Pushplus.Topic,
-		"secret.notifier.serverchan.sendkey":  n.Serverchan.Sendkey,
-		"secret.notifier.webhook.url":         n.Webhook.URL,
-		"secret.notifier.webhook.template":    n.Webhook.Template,
+		KeyDoubanCookieMode:                  cookieMode,
+		KeyDoubanCookieRaw:                   dc.CookieRaw,
+		KeyDoubanCookieCloudURL:              dc.CookiecloudURL,
+		KeyDoubanCookieCloudKey:              dc.CookiecloudKey,
+		KeyDoubanCookieCloudPwd:              dc.CookiecloudPass,
+		KeyWeiboCookieMode:                   weiboMode,
+		KeyWeiboCookieRaw:                    wc.CookieRaw,
+		KeyWeiboCookieRawCN:                  wc.CookieRawCN,
+		KeyWeiboCookieCloudURL:               wc.CookiecloudURL,
+		KeyWeiboCookieCloudKey:               wc.CookiecloudKey,
+		KeyWeiboCookieCloudPwd:               wc.CookiecloudPass,
+		"secret.filter.llm.api_key":          llm.APIKey,
+		"secret.filter.llm.base_url":         llm.BaseURL,
+		"secret.filter.llm.model":            llm.Model,
+		"secret.filter.llm.fallback_models":  strings.Join(llm.FallbackModels, ","),
+		"secret.filter.llm.api_style":        apiStyle,
+		"secret.notifier.feishu.webhook":     n.Feishu.Webhook,
+		"secret.notifier.dingtalk.webhook":   n.Dingtalk.Webhook,
+		"secret.notifier.dingtalk.secret":    n.Dingtalk.Secret,
+		"secret.notifier.wecom.webhook":      n.Wecom.Webhook,
+		"secret.notifier.pushplus.token":     n.Pushplus.Token,
+		"secret.notifier.pushplus.topic":     n.Pushplus.Topic,
+		"secret.notifier.serverchan.sendkey": n.Serverchan.Sendkey,
+		"secret.notifier.webhook.url":        n.Webhook.URL,
+		"secret.notifier.webhook.template":   n.Webhook.Template,
 	}
 }
 
@@ -141,6 +159,9 @@ var SectionKeys = map[string][]string{
 		"collector.douban.range_from", "collector.douban.range_to",
 		"collector.weibo.users", "collector.weibo.supertopics",
 		"collector.weibo.interval", "collector.weibo.range_from",
+		"collector.xiaohongshu.searches", "collector.xiaohongshu.topics",
+		"collector.xiaohongshu.users", "collector.xiaohongshu.interval",
+		"collector.xiaohongshu.range_from", "collector.xiaohongshu.max_pages",
 		"secret.collector.douban.cookie_mode", "secret.collector.douban.cookie_raw",
 		"secret.collector.douban.cookiecloud_url", "secret.collector.douban.cookiecloud_key",
 		"secret.collector.douban.cookiecloud_password",
@@ -211,6 +232,24 @@ func KVToApp(kv map[string]string) *AppConfig {
 	}
 	if v, ok := kv["collector.weibo.range_from"]; ok {
 		cfg.Collector.Weibo.RangeFrom = window.CanonicalDayOffset(v)
+	}
+	if v := kv["collector.xiaohongshu.searches"]; v != "" {
+		cfg.Collector.Xiaohongshu.Searches = splitLines(v)
+	}
+	if v := kv["collector.xiaohongshu.topics"]; v != "" {
+		cfg.Collector.Xiaohongshu.Topics = splitLines(v)
+	}
+	if v := kv["collector.xiaohongshu.users"]; v != "" {
+		cfg.Collector.Xiaohongshu.Users = splitLines(v)
+	}
+	if v := kv["collector.xiaohongshu.interval"]; v != "" {
+		cfg.Collector.Xiaohongshu.Interval = atoi(v, 0)
+	}
+	if v, ok := kv["collector.xiaohongshu.range_from"]; ok {
+		cfg.Collector.Xiaohongshu.RangeFrom = window.CanonicalDayOffset(v)
+	}
+	if v := kv["collector.xiaohongshu.max_pages"]; v != "" {
+		cfg.Collector.Xiaohongshu.MaxPages = atoi(v, 0)
 	}
 	if v := kv["collector.douban.interval"]; v != "" {
 		cfg.Collector.Douban.Interval = atoi(v, 0)

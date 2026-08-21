@@ -13,6 +13,7 @@ type LogConfig = general.LogConfig
 type CollectorConfig = collector.Config
 type DoubanConfig = collector.DoubanConfig
 type WeiboConfig = collector.WeiboConfig
+type XiaohongshuConfig = collector.XiaohongshuConfig
 type DoubanCookieConfig = collector.DoubanCookieConfig
 type SecretsCollector = collector.SecretsCollector
 type FilterConfig = filter.Config
@@ -77,15 +78,15 @@ const (
 
 var DefaultDoubanGroups = collector.DefaultDoubanGroups
 
-func ParseCookieMode(s string) CookieMode         { return collector.ParseCookieMode(s) }
-func CookieSource(source string) string           { return collector.CookieSource(source) }
-func CookieCloudDomain(source string) string      { return collector.CookieCloudDomain(source) }
-func CookieModeKey(source string) string          { return collector.CookieModeKey(source) }
-func CookieRawKey(source string) string           { return collector.CookieRawKey(source) }
-func CookieCloudURLKey(source string) string      { return collector.CookieCloudURLKey(source) }
-func CookieCloudKeyKey(source string) string      { return collector.CookieCloudKeyKey(source) }
-func CookieCloudPwdKey(source string) string      { return collector.CookieCloudPwdKey(source) }
-func ParseLLMAPIStyle(s string) LLMAPIStyle       { return filter.ParseLLMAPIStyle(s) }
+func ParseCookieMode(s string) CookieMode    { return collector.ParseCookieMode(s) }
+func CookieSource(source string) string      { return collector.CookieSource(source) }
+func CookieCloudDomain(source string) string { return collector.CookieCloudDomain(source) }
+func CookieModeKey(source string) string     { return collector.CookieModeKey(source) }
+func CookieRawKey(source string) string      { return collector.CookieRawKey(source) }
+func CookieCloudURLKey(source string) string { return collector.CookieCloudURLKey(source) }
+func CookieCloudKeyKey(source string) string { return collector.CookieCloudKeyKey(source) }
+func CookieCloudPwdKey(source string) string { return collector.CookieCloudPwdKey(source) }
+func ParseLLMAPIStyle(s string) LLMAPIStyle  { return filter.ParseLLMAPIStyle(s) }
 
 func DefaultApp() *AppConfig {
 	cfg := &AppConfig{}
@@ -116,4 +117,3 @@ func applyDefaults(cfg *AppConfig) {
 	notifier.ApplyDefaults(&cfg.Notifier)
 	admin.ApplyDefaults(&cfg.Admin)
 }
-

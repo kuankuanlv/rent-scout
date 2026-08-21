@@ -277,7 +277,13 @@ func (r *Runner) timeWindowForSource(sourceName string, now time.Time) (time.Tim
 		if err == nil {
 			return start, end
 		}
+	case models.SourceXiaohongshu.String():
+		start, end, err := window.ResolveTimeRange(app.Collector.Xiaohongshu.RangeFrom, "now", now)
+		if err == nil {
+			return start, end
+		}
 	}
+
 	days := app.Collector.MaxAgeDays
 	if days <= 0 {
 		days = 7

@@ -190,6 +190,8 @@ func sourceLabel(s string) string {
 		return "豆瓣"
 	case models.SourceWeibo.String():
 		return "微博"
+	case models.SourceXiaohongshu.String():
+		return "小红书"
 	default:
 		return s
 	}

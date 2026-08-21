@@ -12,7 +12,9 @@ import (
 	"rent-scout/internal/collector/cookie"
 	"rent-scout/internal/collector/sources/douban"
 	"rent-scout/internal/collector/sources/weibo"
+	"rent-scout/internal/collector/sources/xiaohongshu"
 	"rent-scout/internal/config"
+
 	"rent-scout/internal/filter"
 	"rent-scout/internal/notifier"
 	"rent-scout/internal/pkglog"
@@ -91,5 +93,6 @@ func collectorSources(rt *config.HotConfig) []collector.Source {
 		os.Exit(1)
 	}
 	w := weibo.New(weibo.Options{Config: rt, Cookie: cp})
-	return []collector.Source{d, w}
+	xhs := xiaohongshu.New(xiaohongshu.Options{Config: rt, Cookie: cp})
+	return []collector.Source{d, w, xhs}
 }

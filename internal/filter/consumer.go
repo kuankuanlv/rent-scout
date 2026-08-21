@@ -34,11 +34,11 @@ func (c *Consumer) FetchCollected(ctx context.Context, limit int) ([]models.Rent
 }
 
 // FetchAwaitingAI 仅 AI 协程调用：没开 AI 或没有启用的 AI 规则就空捞；否则捞已通过且还没 ai_result 的帖。
+// 当前状态（AI 开关/规则数/凑批节奏）由 TickLog 的单条「AI 审核探测」日志体现，这里不再重复打。
 func (c *Consumer) FetchAwaitingAI(ctx context.Context, limit int) ([]models.RentPost, error) {
 	log := pkglog.Component(pkglog.AIReview)
 	if c.rt != nil {
-		if ev, reason := ai.LiveAIEvaluator(c.rt); ev == nil {
-			log.Info(reason)
+		if ev, _ := ai.LiveAIEvaluator(c.rt); ev == nil {
 			return nil, nil
 		}
 	} else if c.chain == nil || !c.chain.HasAI() {
@@ -50,7 +50,6 @@ func (c *Consumer) FetchAwaitingAI(ctx context.Context, limit int) ([]models.Ren
 		return nil, nil
 	}
 	if len(rule.EnabledAIRules(rules)) == 0 {
-		log.Info("当前配置没有启用的 AI 规则，无需执行")
 		return nil, nil
 	}
 	return c.store.FetchPassedWithoutAI(limit)

@@ -3,7 +3,6 @@ package window
 import (
 	"testing"
 	"time"
-
 )
 
 func TestResolveTimeRange(t *testing.T) {

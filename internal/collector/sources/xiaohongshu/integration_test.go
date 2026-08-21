@@ -2,12 +2,12 @@ package xiaohongshu
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
-	"testing"
-	"rent-scout/internal/config"
 	"rent-scout/internal/collector/cookie"
-	"errors"
+	"rent-scout/internal/config"
+	"testing"
 )
 
 func TestXiaohongshuIntegration(t *testing.T) {
@@ -18,7 +18,7 @@ func TestXiaohongshuIntegration(t *testing.T) {
 		defer server.Close()
 
 		s := New(Options{SearchURL: server.URL})
-		
+
 		targets := s.targets()
 		if len(targets) != 0 {
 			t.Errorf("Expected 0 targets, got %d", len(targets))
@@ -29,7 +29,7 @@ func TestXiaohongshuIntegration(t *testing.T) {
 		app := config.DefaultApp()
 		app.Collector.Xiaohongshu.Searches = []string{"test-keyword"}
 		cfg := config.NewHotConfigWithSnapshot(app, nil)
-		
+
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
@@ -39,7 +39,7 @@ func TestXiaohongshuIntegration(t *testing.T) {
 
 		s := New(Options{Config: cfg, SearchURL: server.URL})
 		targets := s.targets()
-		
+
 		if len(targets) == 0 {
 			t.Fatal("Expected targets to be enabled, but got none")
 		}
@@ -54,7 +54,7 @@ func TestXiaohongshuIntegration(t *testing.T) {
 		app := config.DefaultApp()
 		app.Collector.Xiaohongshu.Searches = []string{"test-keyword"}
 		cfg := config.NewHotConfigWithSnapshot(app, nil)
-		
+
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(461)
 		}))
@@ -62,7 +62,7 @@ func TestXiaohongshuIntegration(t *testing.T) {
 
 		s := New(Options{Config: cfg, SearchURL: server.URL})
 		targets := s.targets()
-		
+
 		_, err := s.searchNotes(context.Background(), targets[0], 1)
 		if err == nil {
 			t.Errorf("Expected error on 461, got nil")

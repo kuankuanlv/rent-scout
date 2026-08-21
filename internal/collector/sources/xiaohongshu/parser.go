@@ -32,7 +32,7 @@ func ParseSearchNotes(data []byte) ([]collector.ListItem, error) {
 
 	var items []collector.ListItem
 	for _, item := range resp.Data.Items {
-			items = append(items, collector.ListItem{
+		items = append(items, collector.ListItem{
 			ExternalID:  item.ID,
 			Title:       item.NoteCard.Title,
 			Content:     item.NoteCard.Desc,

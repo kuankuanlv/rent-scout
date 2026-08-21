@@ -1,8 +1,8 @@
 package config
 
 import (
-	"strings"
 	"rent-scout/internal/config/collector"
+	"strings"
 )
 
 // DefaultKV 一键导入的完整基线配置（参考现网 sqlite 脱敏整理）。

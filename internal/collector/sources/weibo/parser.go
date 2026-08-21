@@ -8,8 +8,8 @@ import (
 	"unicode/utf8"
 
 	"rent-scout/internal/collector"
-	"rent-scout/internal/pkglog"
 	"rent-scout/internal/models"
+	"rent-scout/internal/pkglog"
 )
 
 const WeiboStatusTime = "Mon Jan 02 15:04:05 -0700 2006"

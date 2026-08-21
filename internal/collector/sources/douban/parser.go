@@ -47,7 +47,7 @@ func ParseList(body string) ([]collector.ListItem, error) {
 		author := strings.TrimSpace(sel.Find("td").Eq(1).Find("a").Text())
 		pub, err := parseDoubanListTime(sel.Find("td.time").First().Text())
 		if err != nil {
-			return 
+			return
 		}
 		items = append(items, collector.ListItem{
 			ExternalID:  topicIDFromURL(link),

@@ -22,6 +22,7 @@ type Options struct {
 	WaitFull      bool          // true=凑满 BatchSize 或 linger 才处理；false=有信号立刻处理并可抽干
 	LiveBatchSize func() int
 	LiveLinger    func() time.Duration
+	TickLog       func() // 非空时替代默认的「定时轮询检查」日志；仅影响日志，不影响轮询逻辑
 }
 
 // DefaultTick 各消费协程固定 1 分钟扫一次库，热读配置；业务间隔走 Linger
@@ -110,7 +111,11 @@ func (c *Consumer[T]) Run(ctx context.Context) {
 			log.Info("信号触发采集")
 			c.step(ctx)
 		case <-ticker.C:
-			log.Info("定时轮询检查")
+			if c.opts.TickLog != nil {
+				c.opts.TickLog()
+			} else {
+				log.Info("定时轮询检查")
+			}
 			c.step(ctx)
 		}
 	}

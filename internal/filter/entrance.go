@@ -4,11 +4,12 @@ import (
 	"context"
 	"time"
 
+	"rent-scout/internal/batch"
 	"rent-scout/internal/config"
 	"rent-scout/internal/config/window"
+	"rent-scout/internal/filter/ai"
 	"rent-scout/internal/filter/rule"
 	"rent-scout/internal/models"
-	"rent-scout/internal/batch"
 	"rent-scout/internal/pkglog"
 	"rent-scout/internal/store"
 )
@@ -27,14 +28,14 @@ type Options struct {
 
 // FilterService 硬筛、AI 筛和规则 replay
 type FilterService struct {
-	rt            *config.HotConfig                  // 热配置：批大小、AI 开关等运行中读取
-	db            *store.Store                       // SQLite：拉帖、回写 AI 结果
-	consumer      *Consumer                          // 硬筛/AI 筛执行器
+	rt            *config.HotConfig                // 热配置：批大小、AI 开关等运行中读取
+	db            *store.Store                     // SQLite：拉帖、回写 AI 结果
+	consumer      *Consumer                        // 硬筛/AI 筛执行器
 	hard          *batch.Consumer[models.RentPost] // 硬筛管道（新帖 → 硬规则）
 	ai            *batch.Consumer[models.RentPost] // AI 筛管道（pending → LLM 审核）
-	collected     chan struct{}                      // 采集入库信号（容量 collectedCap，满则丢）
-	replay        chan struct{}                      // 规则变更 replay 信号（容量 1，满则丢）
-	onNotifyReady func()                             // 筛选落库完成回调（通知消费器立即拉批）
+	collected     chan struct{}                    // 采集入库信号（容量 collectedCap，满则丢）
+	replay        chan struct{}                    // 规则变更 replay 信号（容量 1，满则丢）
+	onNotifyReady func()                           // 筛选落库完成回调（通知消费器立即拉批）
 }
 
 // --- 构造 ---
@@ -65,6 +66,35 @@ func New(opts Options) (*FilterService, error) {
 		return nil
 	}
 
+	// 热读闭包：Options 与 TickLog 共用同一来源，保证日志和实际行为一致
+	hardBatchSize := func() int {
+		if rt == nil {
+			return 20
+		}
+		if n := rt.Get().Filter.BatchSize; n > 0 {
+			return n
+		}
+		return 20
+	}
+	aiBatchSize := func() int {
+		if rt == nil {
+			return 10
+		}
+		if n := rt.Get().Filter.AIBatchSize; n > 0 {
+			return n
+		}
+		return 10
+	}
+	aiLinger := func() time.Duration {
+		if rt == nil {
+			return batch.DefaultLinger
+		}
+		if n := rt.Get().Filter.AILinger; n > 0 {
+			return time.Duration(n) * time.Second
+		}
+		return batch.DefaultLinger
+	}
+
 	hardPipe := batch.New(
 		func(ctx context.Context, limit int) ([]models.RentPost, error) {
 			if rt != nil {
@@ -76,17 +106,15 @@ func New(opts Options) (*FilterService, error) {
 		},
 		notifyHard,
 		batch.Options{
-			BatchSize: 20,
-			Tick:      batch.DefaultTick,
-			Component: pkglog.Filter,
-			LiveBatchSize: func() int {
-				if rt == nil {
-					return 20
-				}
-				if n := rt.Get().Filter.BatchSize; n > 0 {
-					return n
-				}
-				return 20
+			BatchSize:     20,
+			Tick:          batch.DefaultTick,
+			Component:     pkglog.Filter,
+			LiveBatchSize: hardBatchSize,
+			// 每轮探测只打这一条：硬筛不等批，体现当前批大小
+			TickLog: func() {
+				pkglog.Component(pkglog.Filter).Info("筛选探测：不等批，新帖即筛",
+					"batch", hardBatchSize(),
+				)
 			},
 		},
 	)
@@ -94,28 +122,32 @@ func New(opts Options) (*FilterService, error) {
 		fc.FetchAwaitingAI,
 		notifyAI,
 		batch.Options{
-			BatchSize: 10,
-			Tick:      batch.DefaultTick,
-			Linger:    batch.DefaultLinger,
-			Component: pkglog.AIReview,
-			WaitFull:  true,
-			LiveBatchSize: func() int {
-				if rt == nil {
-					return 10
+			BatchSize:     10,
+			Tick:          batch.DefaultTick,
+			Linger:        batch.DefaultLinger,
+			Component:     pkglog.AIReview,
+			WaitFull:      true,
+			LiveBatchSize: aiBatchSize,
+			LiveLinger:    aiLinger,
+			// 每轮探测只打这一条：体现 AI 是否开启、生效规则数、凑批节奏（满批立发，不足批最多等 linger）
+			TickLog: func() {
+				lg := pkglog.Component(pkglog.AIReview)
+				aiOn := false
+				if rt != nil {
+					if ev, _ := ai.LiveAIEvaluator(rt); ev != nil {
+						aiOn = true
+					}
 				}
-				if n := rt.Get().Filter.AIBatchSize; n > 0 {
-					return n
+				rulesOn := 0
+				if r, err := fc.rules(); err == nil {
+					rulesOn = len(rule.EnabledAIRules(r))
 				}
-				return 10
-			},
-			LiveLinger: func() time.Duration {
-				if rt == nil {
-					return batch.DefaultLinger
-				}
-				if n := rt.Get().Filter.AILinger; n > 0 {
-					return time.Duration(n) * time.Second
-				}
-				return batch.DefaultLinger
+				lg.Info("AI 审核探测：满批立发，不足批最多等 linger",
+					"ai", aiOn,
+					"rules", rulesOn,
+					"batch", aiBatchSize(),
+					"linger", aiLinger().String(),
+				)
 			},
 		},
 	)

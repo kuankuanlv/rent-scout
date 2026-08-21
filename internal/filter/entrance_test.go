@@ -4,8 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"rent-scout/internal/config"
 	"rent-scout/internal/batch"
+	"rent-scout/internal/config"
 	"rent-scout/internal/store"
 )
 

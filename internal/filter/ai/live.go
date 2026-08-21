@@ -2,8 +2,8 @@ package ai
 
 import (
 	"rent-scout/internal/config"
-	"rent-scout/internal/filter/rule"
 	"rent-scout/internal/filter/ai/llm"
+	"rent-scout/internal/filter/rule"
 )
 
 func aiSwitchOn(app *config.AppConfig) bool {

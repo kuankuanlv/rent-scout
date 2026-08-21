@@ -1,8 +1,8 @@
 package notifier
 
 import (
-	"rent-scout/internal/notifier/group"
 	"context"
+	"rent-scout/internal/notifier/group"
 	"testing"
 )
 

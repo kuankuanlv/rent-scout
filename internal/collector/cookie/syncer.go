@@ -52,6 +52,7 @@ func (s *Syncer) syncOnce(ctx context.Context) {
 	s.syncSource(ctx, "douban", col.Douban)
 	s.syncSource(ctx, "weibo", col.Weibo)
 	s.syncSource(ctx, "weibo.cn", col.Weibo)
+	s.syncSource(ctx, "xiaohongshu", col.Xiaohongshu)
 }
 
 func (s *Syncer) syncSource(ctx context.Context, source string, dc config.DoubanCookieConfig) {

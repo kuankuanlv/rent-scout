@@ -111,10 +111,12 @@ func SecretsToKV(sec *Secrets) map[string]string {
 	}
 	dc := sec.Collector.Douban
 	wc := sec.Collector.Weibo
+	xc := sec.Collector.Xiaohongshu
 	llm := sec.Filter.LLM
 	n := sec.Notifier
 	cookieMode := ParseCookieMode(dc.CookieMode).String()
 	weiboMode := ParseCookieMode(wc.CookieMode).String()
+	xhsMode := ParseCookieMode(xc.CookieMode).String()
 	apiStyle := ParseLLMAPIStyle(llm.APIStyle).String()
 	if apiStyle == "" {
 		apiStyle = LLMStyleOpenAI.String()
@@ -131,6 +133,11 @@ func SecretsToKV(sec *Secrets) map[string]string {
 		KeyWeiboCookieCloudURL:               wc.CookiecloudURL,
 		KeyWeiboCookieCloudKey:               wc.CookiecloudKey,
 		KeyWeiboCookieCloudPwd:               wc.CookiecloudPass,
+		KeyXiaohongshuCookieMode:             xhsMode,
+		KeyXiaohongshuCookieRaw:              xc.CookieRaw,
+		KeyXiaohongshuCookieCloudURL:         xc.CookiecloudURL,
+		KeyXiaohongshuCookieCloudKey:         xc.CookiecloudKey,
+		KeyXiaohongshuCookieCloudPwd:         xc.CookiecloudPass,
 		"secret.filter.llm.api_key":          llm.APIKey,
 		"secret.filter.llm.base_url":         llm.BaseURL,
 		"secret.filter.llm.model":            llm.Model,
@@ -303,6 +310,7 @@ func KVToSecrets(kv map[string]string) *Secrets {
 	sec.Collector.Douban = cookieConfigFromKV(kv, "douban")
 	sec.Collector.Weibo = cookieConfigFromKV(kv, "weibo")
 	sec.Collector.Weibo.CookieRawCN = kv[KeyWeiboCookieRawCN]
+	sec.Collector.Xiaohongshu = cookieConfigFromKV(kv, "xiaohongshu")
 	sec.Filter.LLM = LLMConfig{
 		APIKey:         kv["secret.filter.llm.api_key"],
 		BaseURL:        kv["secret.filter.llm.base_url"],

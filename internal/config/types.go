@@ -103,8 +103,9 @@ func DefaultApp() *AppConfig {
 func DefaultSecrets() *Secrets {
 	return &Secrets{
 		Collector: SecretsCollector{
-			Douban: DoubanCookieConfig{CookieMode: CookieModeNone.String()},
-			Weibo:  DoubanCookieConfig{CookieMode: CookieModeNone.String()},
+			Douban:      DoubanCookieConfig{CookieMode: CookieModeNone.String()},
+			Weibo:       DoubanCookieConfig{CookieMode: CookieModeNone.String()},
+			Xiaohongshu: DoubanCookieConfig{CookieMode: CookieModeNone.String()},
 		},
 		Filter: SecretsFilter{
 			LLM: LLMConfig{

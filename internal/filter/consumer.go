@@ -128,7 +128,8 @@ func (c *Consumer) processAI(ctx context.Context, batch []models.RentPost) error
 		return nil
 	}
 	enabled := rule.EnabledAIRules(rules)
-	log.Info("当前 AI 审核状态", "active_rules", len(enabled), "pending_posts", len(batch))
+	log.Info("当前 AI 审核状态", "active_rules", len(enabled), "pending_posts", len(batch),
+		"batch_limit", c.aiSize())
 
 	if len(batch) == 0 {
 		return nil

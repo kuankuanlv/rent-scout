@@ -73,7 +73,7 @@ func (n *Notifier) ProcessBatch(ctx context.Context, batch []models.RentPost) er
 		return nil
 	}
 	log := pkglog.Component(pkglog.Notifier)
-	log.Info("收到通知触发", "count", len(batch))
+	log.Info("收到通知触发", "count", len(batch), "active_channels", len(chs))
 	if err := n.st.AttachPostTags(batch); err != nil {
 		return fmt.Errorf("加载标签: %w", err)
 	}

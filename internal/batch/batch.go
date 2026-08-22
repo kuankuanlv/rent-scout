@@ -141,9 +141,23 @@ func (c *Consumer[T]) step(ctx context.Context) {
 			if c.pendingSince.IsZero() {
 				c.pendingSince = time.Now()
 			}
-			if time.Since(c.pendingSince) < linger {
+			elapsed := time.Since(c.pendingSince)
+			if elapsed < linger {
+				log.Info("凑批等待：不足批，等待时长及预计剩余",
+					"progress", len(batch),
+					"target", batchSize,
+					"elapsed", elapsed.Round(time.Second).String(),
+					"remaining", (linger - elapsed).Round(time.Second).String(),
+					"batch", batchSize,
+					"linger", linger.String())
 				return
 			}
+			log.Info("凑批等待：到期强发",
+				"progress", len(batch),
+				"target", batchSize,
+				"elapsed", elapsed.Round(time.Second).String(),
+				"batch", batchSize,
+				"linger", linger.String())
 		}
 		if err := c.process(ctx, batch); err != nil {
 			log.Error("批处理失败", "err", err, "count", len(batch))

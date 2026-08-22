@@ -611,7 +611,7 @@
           </div>
           {{else if eq .Type "select"}}
           {{$selVal := .Value}}{{$labels := .OptionLabels}}
-          <select name="{{.Key}}" {{if eq .Key "secret.filter.llm.api_style"}}id="llm-api-style"{{end}} class="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white{{if .Readonly}} bg-gray-50{{end}}{{if or (eq .Key "secret.collector.douban.cookie_mode") (eq .Key "secret.collector.weibo.cookie_mode")}} cookie-mode-select{{end}}" {{if .Readonly}}disabled{{end}}>
+          <select name="{{.Key}}" {{if eq .Key "secret.filter.llm.api_style"}}id="llm-api-style"{{end}} class="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white{{if .Readonly}} bg-gray-50{{end}}{{if or (eq .Key "secret.collector.douban.cookie_mode") (eq .Key "secret.collector.weibo.cookie_mode") (eq .Key "secret.collector.xiaohongshu.cookie_mode")}} cookie-mode-select{{end}}" {{if .Readonly}}disabled{{end}}>
             {{range $i, $opt := .Options}}
             <option value="{{$opt}}" {{if eq $selVal $opt}}selected{{end}}>{{if and $labels (lt $i (len $labels))}}{{index $labels $i}}{{else}}{{$opt}}{{end}}</option>
             {{else}}

@@ -67,6 +67,12 @@ const (
 	KeyWeiboCookieCloudKey = collector.KeyWeiboCookieCloudKey
 	KeyWeiboCookieCloudPwd = collector.KeyWeiboCookieCloudPwd
 
+	KeyXiaohongshuCookieMode     = collector.KeyXiaohongshuCookieMode
+	KeyXiaohongshuCookieRaw      = collector.KeyXiaohongshuCookieRaw
+	KeyXiaohongshuCookieCloudURL = collector.KeyXiaohongshuCookieCloudURL
+	KeyXiaohongshuCookieCloudKey = collector.KeyXiaohongshuCookieCloudKey
+	KeyXiaohongshuCookieCloudPwd = collector.KeyXiaohongshuCookieCloudPwd
+
 	DefaultLogMemoryLines   = general.DefaultLogMemoryLines
 	MinLogMemoryLines       = general.MinLogMemoryLines
 	MaxLogMemoryLines       = general.MaxLogMemoryLines

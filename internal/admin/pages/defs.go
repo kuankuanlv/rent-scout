@@ -241,7 +241,7 @@ func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[stri
 			{Key: "collector.interval", Label: "采集间隔(秒)", Value: get("collector.interval", strconv.Itoa(app.Collector.Interval)), Type: "number", Hint: "跑完一轮后等多久再开下一轮，默认 300（5 分钟）", Group: group},
 			{Key: "collector.jitter_ratio", Label: "抖动比例", Value: get("collector.jitter_ratio", fmt.Sprintf("%g", app.Collector.JitterRatio)), Type: "text", Group: group},
 		}
-		if source != models.SourceDouban.String() && source != models.SourceWeibo.String() {
+		if source != models.SourceDouban.String() && source != models.SourceWeibo.String() && source != models.SourceXiaohongshu.String() {
 			items = append(items, configField{Key: "collector.max_age_days", Label: "帖子时效(天)", Value: get("collector.max_age_days", strconv.Itoa(app.Collector.MaxAgeDays)), Type: "number", Hint: "超过此天数的帖不再采集。", Group: group, Wide: true})
 		}
 		return items
@@ -325,6 +325,36 @@ func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[stri
 					{Key: config.KeyWeiboCookieCloudURL, Label: "CookieCloud 地址", Value: get(config.KeyWeiboCookieCloudURL, env.Collector.Weibo.CookiecloudURL), Type: "text", Hint: "如 https://cc.example.com；检测用当前输入，不读库", CanClear: true, ShowWhen: config.CookieModeCookieCloud.String(), Group: "weibo"},
 					{Key: config.KeyWeiboCookieCloudKey, Label: "CookieCloud UUID", Value: get(config.KeyWeiboCookieCloudKey, env.Collector.Weibo.CookiecloudKey), Type: "password", CanClear: true, ShowWhen: config.CookieModeCookieCloud.String(), Group: "weibo"},
 					{Key: config.KeyWeiboCookieCloudPwd, Label: "CookieCloud 密码", Value: weiboCCPass, Type: "password", CanClear: true, Hint: "默认掩码显示，点「显示」查看明文；勾选清空可删除", ShowWhen: config.CookieModeCookieCloud.String(), Group: "weibo", Wide: true},
+				},
+			},
+			{
+				Title: "小红书", Hint: "超话和租房博主共用这一个启用开关、一份采集间隔和一份时间窗，想停掉某条渠道就把它的清单留空。Cookie 失效本轮结束。", Class: "bg-slate-50 border-slate-200", Group: "xiaohongshu",
+				Items: sourceBase(models.SourceXiaohongshu.String(), "xiaohongshu"),
+			},
+			{
+				Title: "按发布时间筛选", Hint: "只抓这个时刻之后发布的帖，截止日期永远是现在（不单独配置，也不参与采集进度指纹）。单位是天，相对现在：-10 = 10 天前。支持小数。改这个值会重置该源采集进度。", Class: "bg-sky-50 border-sky-200", Group: "xiaohongshu",
+				Items: []configField{
+					{Key: "collector.xiaohongshu.range_from", Label: "起始（几天前）", Value: window.CanonicalDayOffset(get("collector.xiaohongshu.range_from", app.Collector.Xiaohongshu.RangeFrom)), Type: "text", Group: "xiaohongshu", DayOffset: true, Wide: true, Hint: "只采集这个时刻之后发布的帖。必须为负数，例如 -10；改了会重置采集进度"},
+				},
+			},
+			{
+				Title: "小红书采集渠道与请求节奏", Hint: "按「关键词 → 话题 → 用户」的顺序轮流采集，每条渠道各自记自己的进度。三个全空则小红书源不执行。", Class: "bg-emerald-50/80 border-emerald-200", Group: "xiaohongshu",
+				Items: []configField{
+					{Key: "collector.xiaohongshu.searches", Label: "关键词", Value: get("collector.xiaohongshu.searches", strings.Join(app.Collector.Xiaohongshu.Searches, "\n")), Type: "textarea", Group: "xiaohongshu", Hint: "每行一个关键词，如「北京 租房」。行首「# 空格」当注释。走搜索接口，按时间往旧翻，水位到了就停。需要 xiaohongshu.com Cookie。"},
+					{Key: "collector.xiaohongshu.topics", Label: "话题", Value: get("collector.xiaohongshu.topics", strings.Join(app.Collector.Xiaohongshu.Topics, "\n")), Type: "textarea", Group: "xiaohongshu", Hint: "每行一个话题，如「#北京租房」。行首「# 空格」当注释。"},
+					{Key: "collector.xiaohongshu.users", Label: "用户", Value: get("collector.xiaohongshu.users", strings.Join(app.Collector.Xiaohongshu.Users, "\n")), Type: "textarea", Group: "xiaohongshu", Hint: "每行一个用户，粘主页地址或只填 ID。行首「# 空格」当注释。"},
+					{Key: "collector.xiaohongshu.interval", Label: "请求间隔(秒)", Value: get("collector.xiaohongshu.interval", strconv.Itoa(app.Collector.Xiaohongshu.Interval)), Type: "number", Group: "xiaohongshu", Wide: true, Hint: "同一轮里两次访问小红书停几秒，默认 600，用来降风控。不是上面的采集间隔。"},
+					{Key: "collector.xiaohongshu.max_pages", Label: "最大页数", Value: get("collector.xiaohongshu.max_pages", strconv.Itoa(app.Collector.Xiaohongshu.MaxPages)), Type: "number", Group: "xiaohongshu", Wide: true, Hint: "每轮每渠道最多翻几页，默认 5。"},
+				},
+			},
+			{
+				Title: "小红书 Cookie", Class: "bg-amber-50 border-amber-200", Group: "xiaohongshu", Tools: "cookie",
+				Items: []configField{
+					{Key: config.KeyXiaohongshuCookieMode, Label: "Cookie 模式", Value: get(config.KeyXiaohongshuCookieMode, env.Collector.Xiaohongshu.CookieMode), Type: "select", Options: []string{config.CookieModeNone.String(), config.CookieModeRaw.String(), config.CookieModeCookieCloud.String()}, Group: "xiaohongshu"},
+					{Key: config.KeyXiaohongshuCookieRaw, Label: "Cookie 原文", Value: get(config.KeyXiaohongshuCookieRaw, env.Collector.Xiaohongshu.CookieRaw), Type: "password", CanClear: true, ShowWhen: config.CookieModeRaw.String(), Group: "xiaohongshu"},
+					{Key: config.KeyXiaohongshuCookieCloudURL, Label: "CookieCloud 地址", Value: get(config.KeyXiaohongshuCookieCloudURL, env.Collector.Xiaohongshu.CookiecloudURL), Type: "text", ShowWhen: config.CookieModeCookieCloud.String(), Group: "xiaohongshu"},
+					{Key: config.KeyXiaohongshuCookieCloudKey, Label: "CookieCloud UUID", Value: get(config.KeyXiaohongshuCookieCloudKey, env.Collector.Xiaohongshu.CookiecloudKey), Type: "password", ShowWhen: config.CookieModeCookieCloud.String(), Group: "xiaohongshu"},
+					{Key: config.KeyXiaohongshuCookieCloudPwd, Label: "CookieCloud 密码", Value: get(config.KeyXiaohongshuCookieCloudPwd, env.Collector.Xiaohongshu.CookiecloudPass), Type: "password", ShowWhen: config.CookieModeCookieCloud.String(), Group: "xiaohongshu", Wide: true},
 				},
 			},
 		}),

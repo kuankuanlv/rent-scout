@@ -6,6 +6,8 @@ import (
 	"html/template"
 	"math"
 	"net/http"
+	"strings"
+
 	"rent-scout/internal/admin/pages"
 	"rent-scout/internal/admin/ports"
 	"rent-scout/internal/config"
@@ -105,7 +107,7 @@ func (s *Server) SetNotifyManual(p ports.NotifyManual) {
 // Handler 路由装配
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.Handle("/static/", http.FileServer(http.FS(staticFS)))
+	staticHandler := http.FileServer(http.FS(staticFS))
 	mux.HandleFunc("/healthz", s.handleHealthz)
 	mux.HandleFunc("/metrics", s.handleMetrics)
 	s.posts.Routes(mux)
@@ -123,7 +125,14 @@ func (s *Server) Handler() http.Handler {
 		}
 		http.Redirect(w, r, "/admin", http.StatusSeeOther)
 	})
-	return s.auth(s.setup.Gate(mux))
+	inner := s.auth(s.setup.Gate(mux))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/static/") {
+			staticHandler.ServeHTTP(w, r)
+			return
+		}
+		inner.ServeHTTP(w, r)
+	})
 }
 
 // handleHealthz 健康检查（无鉴权）

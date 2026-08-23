@@ -110,6 +110,9 @@ func (r *Repo) ListDistinctTexts() ([]models.FilterTag, error) {
 		if !models.IsChipText(t.Text) {
 			continue
 		}
+		if t.Text == "未命中" || t.Text == "隔断" || t.Text == "求租" {
+			continue
+		}
 		out = append(out, t)
 	}
 	if out == nil {

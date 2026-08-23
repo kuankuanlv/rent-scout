@@ -218,7 +218,7 @@ func (h *PostsHandler) handleAdmin(w http.ResponseWriter, r *http.Request) {
 		pkglog.Component(pkglog.Admin).Warn("标签加载失败", "err", err)
 	}
 	if err := h.opts.DB.AttachAIReasons(posts); err != nil {
-		pkglog.Component(pkglog.Admin).Warn("AI 原因加载失败", "err", err)
+		pkglog.Component(pkglog.Admin).Warn("AI 意见加载失败", "err", err)
 	}
 	chipPosts(posts)
 	tags, err := h.opts.DB.ListFilterTags()
@@ -434,7 +434,7 @@ func (h *PostsHandler) handlePosts(w http.ResponseWriter, r *http.Request) {
 		pkglog.Component(pkglog.Admin).Warn("标签加载失败", "err", err)
 	}
 	if err := h.opts.DB.AttachAIReasons(list); err != nil {
-		pkglog.Component(pkglog.Admin).Warn("AI 原因加载失败", "err", err)
+		pkglog.Component(pkglog.Admin).Warn("AI 意见加载失败", "err", err)
 	}
 	chipPosts(list)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")

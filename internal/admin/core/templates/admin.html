@@ -112,7 +112,7 @@
         <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">价格</th>
         <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">联系</th>
         <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">标签</th>
-        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">AI 原因</th>
+        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">AI 意见</th>
         <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">源</th>
         <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">状态</th>
         <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">时间</th>
@@ -162,7 +162,7 @@
       </div>
       <div class="text-xs text-gray-600 mb-2">价格：{{if .Price}}{{.Price}}{{else}}暂无{{end}}</div>
       <div class="text-xs text-gray-600 mb-2">联系：{{if .Contact}}{{.Contact}}{{else}}暂无{{end}}</div>
-      <div class="text-xs text-gray-600 mb-2">{{if .AIReason}}AI：{{.AIReason}}{{else}}AI 未审核{{end}}</div>
+      <div class="text-xs text-gray-600 mb-2">{{if .AIReason}}AI 意见：{{.AIReason}}{{else}}AI 未审核{{end}}</div>
       <div class="text-xs text-gray-500 mb-3">#{{.ID}} · {{sourceLabel .Source}}<span class="handled-badge {{if not .HandledAt}}hidden{{end}}"> · 已查看</span></div>
       <button type="button" class="mark-open-btn w-full bg-brand-600 text-white text-sm py-2 rounded-lg" data-post-id="{{.ID}}">人工标记</button>
       <form method="post" action="/admin/handled{{if $.FilterQuery}}?{{$.FilterQuery}}{{end}}" class="mt-2">

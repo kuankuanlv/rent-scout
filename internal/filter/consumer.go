@@ -139,6 +139,9 @@ func (c *Consumer) processAI(ctx context.Context, batch []models.RentPost) error
 			log.Info(reason)
 			return nil
 		} else {
+			if setter, ok := ev.(interface{ SetExpectation(string) }); ok {
+				setter.SetExpectation(c.rt.Get().Filter.AIExpectation)
+			}
 			c.chain.SetAI(ev)
 		}
 	} else if !c.chain.HasAI() {

@@ -20,7 +20,20 @@ const CookieTestPath = "/admin/config/cookie/test"
 // CookieCloudTestPath 只测 CookieCloud 连通和解密，不打豆瓣
 const CookieCloudTestPath = "/admin/config/cookiecloud/test"
 
-const aiSectionDesc = `本配置当前版本仅用于审核帖子：大模型不参与采集，也不改帖子主状态（collected / passed / rejected）。硬规则（白名单地点、黑名单词）先筛一遍，通过的帖再交给 AI 打徽章，并尽量补全月租、联系方式、通勤描述。
+func previewPrompt(exp string) string {
+	exp = strings.TrimSpace(exp)
+	r := []rune(exp)
+	if len(r) > 120 {
+		r = r[:120]
+	}
+	exp = string(r)
+	if exp == "" {
+		return models.BuiltInAIRuleValue
+	}
+	return models.BuiltInAIRuleValue + "\n\n用户期许：" + exp
+}
+
+const aiSectionDesc = `本配置当前版本仅用于审核帖子：大模型不参与采集，也不改帖子主状态（collected / passed / rejected）。硬规则仅白名单地点先筛一遍（已不支持黑名单 — 帖子含“中介/隔断”等词不再直接拒绝），通过的帖再交给 AI 打徽章，并尽量补全月租、联系方式、通勤描述。
 
 系统提示词固定为「租房信息筛选助手」，筛选标准内置（靠谱个人房源：非中介、非骗子、非不实；不确定宁可拒绝），规则页 AI 条目只作开关、文案只读。passed 不依赖月租或联系是否齐全；这两项与通勤一并尽力抽取，没有就空着。只依据帖文、不做无依据推测。理由限中文约 30 字。user 侧只放本批精简帖，不重复规则。
 
@@ -367,6 +380,14 @@ func buildConfigSections(app *config.AppConfig, env *config.Secrets, kv map[stri
 					{Key: "secret.filter.llm.base_url", Label: "Base URL", Value: llmBase, Type: "text", CanClear: true, Hint: "默认 DeepSeek 官方 " + config.DefaultLLMBaseURL},
 					{Key: "secret.filter.llm.api_key", Label: "API Key", Value: llmKey, Type: "password", CanClear: true, Hint: "填 DeepSeek API Key（platform.deepseek.com 获取）"},
 					{Key: "secret.filter.llm.model", Label: "主模型", Value: llmModel, Type: "model_select", Options: modelOpts, Wide: true, Hint: "默认 deepseek-chat；先填 URL 与 Key 再拉取可用列表"},
+				},
+			},
+			{
+				Title: "AI 意见（内置 Prompt + 你的期许）", Hint: "鼠标悬停在“内置 Prompt”标签上可查看完整固定提示；你的期许会拼在内置提示之后一并发送给模型，120 字以内", Class: "bg-amber-50/60 border-amber-200",
+				Items: []configField{
+					{Key: "filter.ai_expectation.builtin", Label: "内置固定 Prompt (?)", Value: models.BuiltInAIRuleValue, Type: "textarea", Readonly: true, Hint: models.BuiltInAIRuleValue, Wide: true},
+					{Key: "filter.ai_expectation", Label: "你的期许（0/120）", Value: get("filter.ai_expectation", app.Filter.AIExpectation), Type: "textarea", Placeholder: "例如：不要可能是中介的、推荐明显是房东本人的", Hint: "可选，120 字以内；提交后将与内置提示拼接为最终 System Prompt，下方预览实时更新", Wide: true},
+					{Key: "filter.ai_expectation.preview", Label: "最终 Prompt 预览", Value: previewPrompt(app.Filter.AIExpectation), Type: "textarea", Readonly: true, Wide: true, Hint: "只读预览：内置 Prompt + 你的期许"},
 				},
 			},
 			{

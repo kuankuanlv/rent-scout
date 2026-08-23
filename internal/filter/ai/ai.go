@@ -19,12 +19,32 @@ type llmChat interface {
 // AIBatchEvaluator AI 批量评估器（规格 5.4 + 调整 C）：
 // system 固定（规则集+判定标准+Schema，全批共享一次） + user 只放 N 条精简帖
 type AIBatchEvaluator struct {
-	llm llmChat
+	llm         llmChat
+	expectation string
 }
 
 // NewAIBatchEvaluator 创建批量评估器；截断统一用 rule.DefaultTrimLimit（不再读配置 map）
 func NewAIBatchEvaluator(c llmChat) *AIBatchEvaluator {
 	return &AIBatchEvaluator{llm: c}
+}
+
+func (e *AIBatchEvaluator) SetExpectation(s string) {
+	if e == nil {
+		return
+	}
+	s = strings.TrimSpace(s)
+	r := []rune(s)
+	if len(r) > 120 {
+		r = r[:120]
+	}
+	e.expectation = string(r)
+}
+
+func (e *AIBatchEvaluator) expectationSuffix() string {
+	if e == nil || e.expectation == "" {
+		return ""
+	}
+	return "\n\n用户期许：" + e.expectation
 }
 
 // EvaluateBatch 批量判定：返回 map[PostID]*AIResult（index 与输入对齐）。
@@ -48,7 +68,7 @@ func (e *AIBatchEvaluator) EvaluateBatch(ctx context.Context, posts []models.Ren
 			sb.WriteString("---\n")
 		}
 	}
-	system := buildSystemPrompt(aiRules, len(posts))
+	system := buildSystemPrompt(aiRules, len(posts)) + e.expectationSuffix()
 	user := fmt.Sprintf("本批共 %d 条帖子，verdicts 必须恰好 %d 项（index 为 0 到 %d），一帖一条综合判定，禁止把同一帖拆成多条。\n\n%s",
 		len(posts), len(posts), len(posts)-1, sb.String())
 	raw, model, err := e.chat(ctx, system, user)

@@ -421,6 +421,44 @@
   })();
   </script>
   {{end}}
+  {{if eq .Tab "filter"}}
+  <script>
+  (function(){
+    var exp = document.querySelector('textarea[name="filter.ai_expectation"]');
+    var preview = document.querySelector('textarea[name="filter.ai_expectation.preview"]');
+    var builtinLabel = document.querySelector('textarea[name="filter.ai_expectation.builtin"]');
+    if (builtinLabel) {
+      var label = builtinLabel.closest('div') && builtinLabel.closest('div').querySelector('label');
+      if (label && !label.getAttribute('title')) {
+        label.setAttribute('title', builtinLabel.value);
+        label.style.cursor = 'help';
+      }
+    }
+    if (exp && preview) {
+      var base = preview.value.split("\n\n用户期许：")[0];
+      exp.setAttribute('maxlength', '120');
+      function update(){
+        var v = exp.value || '';
+        if ([...v].length > 120) {
+          v = [...v].slice(0,120).join('');
+          exp.value = v;
+        }
+        var count = [...v].length;
+        var counter = document.getElementById('ai-expectation-counter');
+        if (counter) counter.textContent = count + '/120';
+        else {
+          var lab = exp.closest('div') && exp.closest('div').querySelector('label');
+          if (lab) lab.textContent = '你的期许（' + count + '/120）';
+        }
+        if (v.trim()) preview.value = base + "\n\n用户期许：" + v.trim();
+        else preview.value = base;
+      }
+      exp.addEventListener('input', update);
+      update();
+    }
+  })();
+  </script>
+  {{end}}
   {{if eq .Tab "notifier"}}
   <script>
   (function(){

@@ -224,13 +224,16 @@ func TestListFilterTags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]bool{"望京": true, "14号线": true, "中介": true, models.RejectedByUnmatched: true}
+	want := map[string]bool{"望京": true, "14号线": true, "中介": true}
 	if len(got) != len(want) {
-		t.Fatalf("tags = %v, want %v（不含 AI 徽章）", got, want)
+		t.Fatalf("tags = %v, want %v（不含 AI 徽章，且强制排除 未命中/隔断/求租）", got, want)
 	}
 	for _, ft := range got {
 		if !want[ft.Text] {
 			t.Errorf("多余标签 %q", ft.Text)
+		}
+		if ft.Text == models.RejectedByUnmatched || ft.Text == "隔断" || ft.Text == "求租" {
+			t.Errorf("强制排除标签不应出现: %q", ft.Text)
 		}
 	}
 

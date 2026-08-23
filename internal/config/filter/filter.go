@@ -3,10 +3,11 @@ package filter
 import "strings"
 
 type Config struct {
-	AIEnabled   *bool
-	BatchSize   int
-	AIBatchSize int
-	AILinger    int
+	AIEnabled     *bool
+	BatchSize     int
+	AIBatchSize   int
+	AILinger      int
+	AIExpectation string
 }
 
 type SecretsFilter struct {

@@ -16,6 +16,9 @@ import (
 //go:embed templates/*.html
 var templatesFS embed.FS
 
+//go:embed static/tailwind.js
+var staticFS embed.FS
+
 // Server 管理面 HTTP 服务
 type Server struct {
 	db             *store.Store
@@ -102,6 +105,7 @@ func (s *Server) SetNotifyManual(p ports.NotifyManual) {
 // Handler 路由装配
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.Handle("/static/", http.FileServer(http.FS(staticFS)))
 	mux.HandleFunc("/healthz", s.handleHealthz)
 	mux.HandleFunc("/metrics", s.handleMetrics)
 	s.posts.Routes(mux)

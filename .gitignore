@@ -30,3 +30,5 @@ logs/
 # 子代理开发临时文件（进度账本/任务简报/审查包）
 .superpowers/
 .codegraph/
+/.opencode/
+/docs/

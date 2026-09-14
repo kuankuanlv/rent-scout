@@ -146,15 +146,23 @@ func (s *Xiaohongshu) searchNotes(ctx context.Context, t crawlTarget, page int) 
 	}
 	bodyBytes, _ := json.Marshal(bodyMap)
 	path := "/api/sns/web/v1/search/notes"
-	signed := map[string]string{}
-	if s.signer != nil {
-		res, err := s.signer.Sign(ctx, SignRequest{Method: "POST", Path: path, Body: string(bodyBytes)})
-		if err != nil {
-			return nil, err
+	// 原 signer.Sign(ctx, SignRequest...) 改为 direct SignHeaders 调用
+	// 取出必要 cookie 和 body
+	ckMap := map[string]string{}
+	// 这里简化，实际应从 cookie.Provider 获取或传递
+	if ck, err := s.cookie.Get(ctx, models.SourceXiaohongshu.String()); err == nil {
+		// 简单拆分cookie
+		for _, part := range strings.Split(ck, ";") {
+			kv := strings.SplitN(strings.TrimSpace(part), "=", 2)
+			if len(kv) == 2 {
+				ckMap[kv[0]] = kv[1]
+			}
 		}
-		signed["x-s"] = res.XS
-		signed["x-t"] = res.XT
-		signed["x-s-common"] = res.XSCommon
+	}
+	
+	signed, err := SignHeaders(path, bodyBytes, ckMap)
+	if err != nil {
+		return nil, err
 	}
 	url := s.searchBase() + path
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyBytes))

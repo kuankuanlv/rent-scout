@@ -10,6 +10,12 @@ import (
 	"testing"
 )
 
+type mockCookie struct{}
+
+func (m *mockCookie) Get(ctx context.Context, name string) (string, error) {
+	return "a1=19bxxxxxxxx", nil
+}
+
 func TestXiaohongshuIntegration(t *testing.T) {
 	t.Run("DefaultDisabled", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -17,7 +23,7 @@ func TestXiaohongshuIntegration(t *testing.T) {
 		}))
 		defer server.Close()
 
-		s := New(Options{SearchURL: server.URL})
+		s := New(Options{SearchURL: server.URL, Cookie: &mockCookie{}})
 
 		targets := s.targets()
 		if len(targets) != 0 {
@@ -37,7 +43,7 @@ func TestXiaohongshuIntegration(t *testing.T) {
 		}))
 		defer server.Close()
 
-		s := New(Options{Config: cfg, SearchURL: server.URL})
+		s := New(Options{Config: cfg, SearchURL: server.URL, Cookie: &mockCookie{}})
 		targets := s.targets()
 
 		if len(targets) == 0 {
@@ -60,7 +66,7 @@ func TestXiaohongshuIntegration(t *testing.T) {
 		}))
 		defer server.Close()
 
-		s := New(Options{Config: cfg, SearchURL: server.URL})
+		s := New(Options{Config: cfg, SearchURL: server.URL, Cookie: &mockCookie{}})
 		targets := s.targets()
 
 		_, err := s.searchNotes(context.Background(), targets[0], 1)
